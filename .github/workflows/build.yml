@@ -1,0 +1,83 @@
+# Tests, then the engine and the app on Windows, Linux and macOS, uploaded as artifacts.
+# Each system's engine (PyInstaller) has to be built on that system, so each app is built there too.
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    name: tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # no Git LFS: the tests use no pictures, and the app job draws its icons with tools/make_icon.py
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - name: the engine's tests
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then PY=python; VPY=.venv/Scripts/python; else PY=python3; VPY=.venv/bin/python; fi
+          $PY -m venv .venv
+          $VPY -m pip install --disable-pip-version-check -q -r requirements.txt
+          $VPY -m unittest discover -s tests
+
+  app:
+    name: app (${{ matrix.os }})
+    needs: tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+    steps:
+      # no Git LFS: the tests use no pictures, and the app job draws its icons with tools/make_icon.py
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          lfs: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - name: the engine (PyInstaller)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then PY=python; VPY=.venv/Scripts/python; EXE=dist/deltapatcher-cli.exe; else PY=python3; VPY=.venv/bin/python; EXE=dist/deltapatcher-cli; fi
+          $PY -m venv .venv
+          $VPY -m pip install --disable-pip-version-check -q -r requirements-build.txt
+          $VPY tools/make_icon.py
+          $VPY -m PyInstaller packaging/deltapatcher.spec --noconfirm --distpath dist --workpath build/pyinstaller
+          $EXE --json --no-log version
+          if [ "$RUNNER_OS" = "Windows" ]; then dist/engine/deltapatcher-engine.exe --json --no-log version; else dist/engine/deltapatcher-engine --json --no-log version; fi
+      - name: the app (Electron)
+        working-directory: app
+        shell: bash
+        run: |
+          npm ci --no-audit --no-fund
+          npm run typecheck
+          npm run dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deltapatcher-${{ runner.os }}
+          if-no-files-found: error
+          path: |
+            dist/deltapatcher-cli*
+            dist/app/*.exe
+            dist/app/*.AppImage
+            dist/app/*.tar.gz
+            dist/app/*.dmg
+            dist/app/*.zip

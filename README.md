@@ -121,6 +121,9 @@ The details are in [SECURITY.md](SECURITY.md).
 
 ## For developers
 
+New to the code? [CONTEXT.md](CONTEXT.md) explains how it fits together and why, and [CLAUDE.md](CLAUDE.md)
+is the checklist for changing it, for people and for Claude Code alike.
+
 <details>
 <summary><b>Build from source</b></summary>
 

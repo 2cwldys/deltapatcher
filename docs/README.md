@@ -29,15 +29,15 @@ Click a picture to see it full size.
 
 **Update**: bring a folder up to date from the address players use.
 
-[![The Update page](images/app-update.png)](images/app-update.png)
+[![The Update page](images/app-update.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png)
 
 **Release**: what to release, where players download it from (your server over SSH, a folder, or this
 computer to test), and one button that sends only what changed.
 
-[![The Release page](images/app-release.png)](images/app-release.png)
+[![The Release page](images/app-release.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-release.png)
 
 **Settings**: every setting of `deltapatcher.ini`, and the log.
 
-[![The Settings page](images/app-settings.png)](images/app-settings.png)
+[![The Settings page](images/app-settings.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-settings.png)
 
 The log at the bottom shows exactly what each step did. **Stop** cancels a running download.

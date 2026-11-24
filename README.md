@@ -13,11 +13,10 @@ Publish a folder, host it anywhere, and players download only what changed.</p>
   <img alt="Windows, Linux, macOS" src="https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-f2a33a">
 </p>
 
-<p align="center"><b>New here?</b> Start with the <a href="https://github.com/2cwldys/deltapatcher/wiki">wiki</a>: a five-minute quick start,
-updating a game as a player, releasing to your own server, the command line, Docker and Pterodactyl.</p>
+<p align="center"><b>New here?</b> Start with the <a href="https://github.com/2cwldys/deltapatcher/wiki"><b>wiki</b></a>: step-by-step guides for players and publishers.</p>
 
 <p align="center">
-  <img src="docs/images/app-update.png" alt="The DeltaPatcher app: Update" width="860">
+  <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png"><img src="docs/images/app-update.png" alt="The DeltaPatcher app: Update" width="860"></a>
 </p>
 
 DeltaPatcher never looks inside a file. A `.pk3`, a `.zip`, a map, a texture pack or an executable is
@@ -44,10 +43,17 @@ identical files are stored once.
 
 ## The app
 
-| Release | Settings |
-| --- | --- |
-| [![Release](docs/images/app-release.png)](docs/images/app-release.png) | [![Settings](docs/images/app-settings.png)](docs/images/app-settings.png) |
-| What to release (with what to leave out and what players keep), where players download it from (your server over SSH, a folder, or this computer to test), and one **Release** button that sends only what changed. | Every setting of `deltapatcher.ini`, explained, with the log one click away. |
+Click a picture to see it full size.
+
+**Release**: what to release (with what to leave out and what players keep), where players download it
+from (your server over SSH, a folder, or this computer to test), and one button that sends only what
+changed.
+
+[![The Release page](docs/images/app-release.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-release.png)
+
+**Settings**: every setting of `deltapatcher.ini`, explained, with the log one click away.
+
+[![The Settings page](docs/images/app-settings.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-settings.png)
 
 ## How it works
 

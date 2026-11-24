@@ -1,0 +1,22 @@
+# gitleaks configuration: the default rules, plus DeltaPatcher's own (the same list as tools/secret_scan.py).
+title = "DeltaPatcher secret rules"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "deltapatcher-private-key"
+description = "A private key (an SSH key or a DeltaPatcher signing key)"
+regex = '''-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----'''
+
+[[rules]]
+id = "deltapatcher-putty-key"
+description = "A PuTTY private key"
+regex = '''PuTTY-User-Key-File-\d'''
+
+[allowlist]
+description = "The scanner quotes its own patterns"
+paths = [
+  '''tools/secret_scan\.py$''',
+  '''\.gitleaks\.toml$''',
+]

@@ -114,6 +114,10 @@ Step by step: [Quick start](docs/QUICKSTART.md).
 | [Security](SECURITY.md) | What DeltaPatcher protects, what it leaves to you, how to report a problem |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Every error message and what to do |
 
+The same guides are on the [wiki](https://github.com/2cwldys/deltapatcher/wiki), made from these files by
+`tools/wiki.py` (`python tools/wiki.py <a clone of the wiki>`, then commit and push there): edit the files
+here, not the wiki.
+
 ## Security in short
 
 Releases can be signed, and players' updaters then refuse anything not signed by your key. Every file
@@ -131,7 +135,7 @@ app/              the app (Electron, React, Tailwind): the window, which runs th
 cli/              deltapatcher.bat / deltapatcher.sh: the command line straight from the repository
 packaging/        the PyInstaller spec: the engine as one self-contained file, and as a folder for the app
 tests/            the engine's tests
-tools/            the icon, the README screenshots, the social preview, the secret scan, the release files, CI annotations, the version
+tools/            the icon, the README screenshots, the social preview, the secret scan, the release files, CI annotations, the version, the wiki
 docs/             the guides
 ```
 

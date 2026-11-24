@@ -11,6 +11,11 @@ Which file:
   3. otherwise the user's config folder: %APPDATA%\\DeltaPatcher\\deltapatcher.ini on Windows,
      ~/.config/deltapatcher/deltapatcher.ini elsewhere.
 
+That file is also the Default project. Other projects are files of their own with only a project's
+sections (project, update, publish, server; see projects.py), while DeltaPatcher's own settings (window,
+general) stay in the main file. load() and save() take the project: its own settings come from and go
+to its file, DeltaPatcher's own from and to the main file.
+
 Only addresses, folders, names and public keys are kept. A passphrase or private key never goes in
 here: keys are named by their file path.
 """
@@ -31,6 +36,8 @@ ENV = "DELTAPATCHER_CONFIG"
 
 # (section, key, default, what it does)
 SCHEMA = [
+    ("project", "title", "", "This project's name in DeltaPatcher's lists. Empty: the file's name (Default for the "
+                             "main settings file)."),
     ("update", "source_url", DEFAULT_URL, "Where releases come from: an http(s) address or a folder."),
     ("update", "install_dir", "", "The folder to keep up to date (a game folder, for instance)."),
     ("update", "trust_key", "", "The publisher's public key (ed25519:...). Empty: unsigned releases are fine, and the key "
@@ -62,12 +69,25 @@ SCHEMA = [
     ("window", "close_to_tray", False, "Closing the window keeps DeltaPatcher in the tray (yes/no)."),
     ("window", "check_updates", True, "Look for a newer DeltaPatcher once a day and say so (yes/no). Nothing is "
                                       "downloaded without asking."),
+    ("general", "parallel_updates", 3, "How many projects Update all updates at the same time."),
+    ("general", "project_files", "", "Project files kept elsewhere (a game's folder, a share), listed with the projects: "
+                                     "their paths, separated by ;. The projects folder beside this file is always listed."),
+    ("general", "current_project", "", "The project the app shows: its file's name in the projects folder, or its full "
+                                       "path. Empty: Default."),
 ]
 DEFAULTS = {key: default for _s, key, default, _w in SCHEMA}
 SECTION = {key: section for section, key, _d, _w in SCHEMA}
+APP_SECTIONS = ("window", "general")        # DeltaPatcher's own settings: in the main file only
+PROJECT_KEYS = [key for section, key, _d, _w in SCHEMA if section not in APP_SECTIONS]
+APP_KEYS = [key for section, key, _d, _w in SCHEMA if section in APP_SECTIONS]
 FORBIDDEN = ("pass", "secret", "token", "private")
 HEADER = """; DeltaPatcher settings. Edit with any text editor; a line starting with ; is a comment.
 ; The window saves its fields here too (comments and order stay). An empty value means the default.
+; Never put a passphrase or a private key in this file: keys are named by their file path only.
+"""
+PROJECT_HEADER = """; A DeltaPatcher project: the folder it keeps up to date, the folder it releases, and where that goes.
+; Edit with any text editor; a line starting with ; is a comment. The window saves its fields here too
+; (comments and order stay). An empty value means the default.
 ; Never put a passphrase or a private key in this file: keys are named by their file path only.
 """
 
@@ -99,16 +119,26 @@ def _text(value):
     return str(value)
 
 
-def placeholder():
-    """The text of a new settings file: every setting with its default and what it does."""
-    lines = [HEADER.rstrip("\n")]
+def placeholder(project=False, title=""):
+    """The text of a new settings file: every setting with its default and what it does. project=True: a
+    project's own file, with a project's settings only (and its title)."""
+    lines = [(PROJECT_HEADER if project else HEADER).rstrip("\n")]
     current = None
     for section, key, default, what in SCHEMA:
+        if project and section in APP_SECTIONS:
+            continue
         if section != current:
             lines += ["", "[%s]" % section]
             current = section
-        lines += ["; " + what, "%s = %s" % (key, _text(default))]
+        lines += ["; " + what, "%s = %s" % (key, title if key == "title" and title else _text(default))]
     return "\n".join(lines) + "\n"
+
+
+def own_file(project):
+    """The file a project's own settings live in; None for Default (the main file) or no project."""
+    if project is None or getattr(project, "main", False):
+        return None
+    return project.path
 
 
 def ensure():
@@ -149,19 +179,33 @@ def _convert(key, raw):
     return raw
 
 
-def load():
-    cfg = dict(DEFAULTS)
-    p = ensure()
+def file_values(path, keys=None):
+    """{key: value} of the settings the file has, of `keys` (default: all), each read like load() reads it;
+    {} when the file cannot be read."""
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     try:
-        with open(p, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8") as f:
             parser.read_file(f)
     except (OSError, configparser.Error, UnicodeDecodeError):
-        return cfg
-    for key in DEFAULTS:
-        section = SECTION[key]
-        if parser.has_option(section, key):
-            cfg[key] = _convert(key, parser.get(section, key))
+        return {}
+    out = {}
+    for key in (DEFAULTS if keys is None else keys):
+        if parser.has_option(SECTION[key], key):
+            out[key] = _convert(key, parser.get(SECTION[key], key))
+    return out
+
+
+def load(project=None):
+    """Every setting, its default where the file has none. project (a projects.Project; None: Default): its
+    own settings from its file, DeltaPatcher's own from the main file."""
+    cfg = dict(DEFAULTS)
+    main = ensure()
+    own = own_file(project)
+    if own is None:
+        cfg.update(file_values(main))
+    else:
+        cfg.update(file_values(main, APP_KEYS))
+        cfg.update(file_values(own, PROJECT_KEYS))
     return cfg
 
 
@@ -169,8 +213,9 @@ _LINE = re.compile(r"^\s*([A-Za-z0-9_]+)\s*=")
 _SECT = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 
 
-def save(cfg):
-    """Write the known settings into the file, changing only their values (comments and order stay)."""
+def save(cfg, project=None):
+    """Write the known settings, changing only their values (comments and order stay). project (a
+    projects.Project; None: Default): its own settings go to its file, DeltaPatcher's own to the main file."""
     values = {}
     for k, v in cfg.items():
         if k not in DEFAULTS or any(f in k.lower() for f in FORBIDDEN):
@@ -179,12 +224,25 @@ def save(cfg):
         if "\n" in text or "\r" in text:
             continue
         values[k] = text
-    p = ensure()
+    own = own_file(project)
+    if own is None:
+        _write(ensure(), values, placeholder())
+        return
+    mine = {k: v for k, v in values.items() if SECTION[k] not in APP_SECTIONS}
+    app = {k: v for k, v in values.items() if SECTION[k] in APP_SECTIONS}
+    if mine:
+        _write(own, mine, placeholder(project=True))
+    if app:
+        _write(ensure(), app, placeholder())
+
+
+def _write(p, values, template):
+    """Put `values` ({key: text}) into the file p, in place; a file that is not there starts as `template`."""
     try:
         with open(p, "r", encoding="utf-8") as f:
             lines = f.read().splitlines()
     except OSError:
-        lines = placeholder().splitlines()
+        lines = template.splitlines()
     done, section = set(), None
     for i, line in enumerate(lines):
         m = _SECT.match(line)

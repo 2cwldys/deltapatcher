@@ -5,17 +5,20 @@ import Modals from './components/Modals'
 import UpdatePage, { runUpdate } from './pages/UpdatePage'
 import ReleasePage, { publishRelease } from './pages/ReleasePage'
 import SettingsPage from './pages/SettingsPage'
+import ProjectsPage from './pages/ProjectsPage'
 import { Page, useApp } from './store/app'
 
 const TITLES: Record<Page, [string, string]> = {
+  projects: ['Projects', 'Every game, mod or server DeltaPatcher keeps up to date or releases: check them, update them all at once, or open one.'],
   update: ['Update', 'Bring a folder up to the latest release, downloading only what changed.'],
   release: ['Release', 'Send players a new version. Only what changed is sent, and players download only that.'],
-  settings: ['Settings', 'deltapatcher.ini, the log, and about.']
+  settings: ['Settings', "This project's settings file, DeltaPatcher's own, the log, and about."]
 }
 
-// README screenshots (app --capture=DIR): publish and check a demo release, then show each page
+// README screenshots (app --capture=DIR): publish and check a demo release, check every demo project, then
+// show each page
 async function captureTour(): Promise<void> {
-  const pages: Page[] = ['update', 'release', 'settings']
+  const pages: Page[] = ['projects', 'update', 'release', 'settings']
   const st = useApp.getState()
   // serve the demo store, publish its new version, and check the demo game against it
   st.startServe()
@@ -27,6 +30,8 @@ async function captureTour(): Promise<void> {
     await new Promise((r) => setTimeout(r, 100))
   }
   await publishRelease()
+  useApp.setState({ autoChecked: true })
+  await st.runAll(true)
   await runUpdate(true)
   let i = 0
   const next = (): void => {
@@ -70,6 +75,8 @@ export default function App(): JSX.Element {
         <div key={page} className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
           {!loaded ? (
             <div className="text-sm text-ink-400">Starting the engine...</div>
+          ) : page === 'projects' ? (
+            <ProjectsPage />
           ) : page === 'update' ? (
             <UpdatePage />
           ) : page === 'release' ? (

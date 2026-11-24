@@ -2,10 +2,18 @@
 
 export type Style = 'ok' | 'warn' | 'err' | 'code' | 'head' | null
 
+// update --all: a line about one project carries its name and its settings file
+export interface ProjectRef {
+  project: string
+  file: string
+}
+
 export interface LogEvent {
   event: 'log'
   text: string
   style: Style
+  project?: string
+  file?: string
 }
 
 export interface ProgressEvent {
@@ -13,6 +21,8 @@ export interface ProgressEvent {
   done: number
   total: number
   label: string
+  project?: string
+  file?: string
 }
 
 export interface ServingEvent {
@@ -20,7 +30,29 @@ export interface ServingEvent {
   url: string
 }
 
-export type EngineEvent = LogEvent | ProgressEvent | ServingEvent
+// update --all: the projects it runs (jobs at a time) and the ones it leaves out
+export interface QueueEvent {
+  event: 'queue'
+  check: boolean
+  jobs: number
+  run: ProjectRef[]
+  skipped: (ProjectRef & { reason: string })[]
+}
+
+export interface ProjectStartEvent extends ProjectRef {
+  event: 'project-start'
+}
+
+export interface ProjectEndEvent extends ProjectRef {
+  event: 'project-end'
+  ok: boolean
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  data?: Record<string, any>
+  message?: string
+  code?: string
+}
+
+export type EngineEvent = LogEvent | ProgressEvent | ServingEvent | QueueEvent | ProjectStartEvent | ProjectEndEvent
 
 export interface EngineOutcome {
   ok: boolean
@@ -49,4 +81,6 @@ export interface AppInfo {
 }
 
 // the engine commands the window may run; anything else is refused by the main process
-export const ENGINE_COMMANDS = ['update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve', 'self-update'] as const
+export const ENGINE_COMMANDS = [
+  'update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve', 'self-update', 'projects', 'project'
+] as const

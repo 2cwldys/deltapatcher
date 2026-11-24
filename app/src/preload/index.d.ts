@@ -10,6 +10,7 @@ declare global {
       pickFolder: (start: string) => Promise<string | null>
       pickFile: (start: string) => Promise<string | null>
       open: (path: string) => Promise<string>
+      show: (path: string) => Promise<string>
       copy: (text: string) => Promise<void>
       info: () => Promise<AppInfo>
       setCloseToTray: (on: boolean) => Promise<void>

@@ -4,7 +4,9 @@
 
 It makes a small demo game, publishes version 1.4 signed with a demo key, installs it, changes the
 release to 1.5, then runs the app with --capture: the app serves the store, publishes 1.5, checks
-the demo game against it and saves docs/images/app-<page>.png. The demo folder is removed after.
+the demo game against it and saves docs/images/app-<page>.png. Two more projects stand beside the
+game (Default) on the Projects page, each updated from a folder: a map pack that is up to date, and a
+server with an update waiting. The demo folder is removed after.
 Needs the engine (dist/deltapatcher-cli, from build.ps1 -EngineOnly) and the app's packages (npm ci in app/).
 """
 
@@ -49,8 +51,8 @@ def main():
             sys.exit("engine %s failed: %s" % (args[0], last))
         return last
 
-    def put(rel, data):
-        p = os.path.join(demo, "MyGame-release", *rel.split("/"))
+    def put(rel, data, folder="MyGame-release"):
+        p = os.path.join(demo, folder, *rel.split("/"))
         os.makedirs(os.path.dirname(p), exist_ok=True)
         with open(p, "wb") as f:
             f.write(data)
@@ -80,6 +82,31 @@ def main():
     put("maps/arena2.bsp", os.urandom(700 << 10))
     engine("config", "set", "version=1.5")
 
+    # the Projects page: a map pack, released to a folder and installed from it (up to date), and a
+    # dedicated server updated from a folder, with a newer release waiting there
+    pack, pack_store = os.path.join(demo, "MapPack-release"), os.path.join(demo, "mappack-store")
+    put("maps/dm_canyon.bsp", os.urandom(1200 << 10), "MapPack-release")
+    put("maps/dm_canyon.nav", os.urandom(80 << 10), "MapPack-release")
+    put("textures/canyon.wad", os.urandom(1500 << 10), "MapPack-release")
+    engine("publish", pack, pack_store, "--name", "Map Pack", "--version", "2.0")
+    engine("project", "new", "Map Pack")
+    engine("--project", "Map Pack", "config", "set", "install_dir=" + os.path.join(demo, "MapPack"),
+           "source_url=" + pack_store, "publish_src=" + pack, "store_dir=" + pack_store, "name=Map Pack",
+           "version=2.0", "deploy_mode=folder", "deploy_folder=" + os.path.join(demo, "www", "maps"))
+    engine("--project", "Map Pack", "update")
+    server, server_store = os.path.join(demo, "Server-release"), os.path.join(demo, "server-store")
+    put("server.bin", os.urandom(900 << 10), "Server-release")
+    put("cfg/server.cfg", b"maxplayers 24\n", "Server-release")
+    put("maps/arena.bsp", os.urandom(900 << 10), "Server-release")
+    engine("publish", server, server_store, "--name", "Dedicated Server", "--version", "1.2")
+    engine("project", "new", "Dedicated Server")
+    engine("--project", "Dedicated Server", "config", "set", "install_dir=" + os.path.join(demo, "Server"),
+           "source_url=" + server_store)
+    engine("--project", "Dedicated Server", "update")
+    put("server.bin", os.urandom(950 << 10), "Server-release")
+    put("maps/canyon.bsp", os.urandom(1200 << 10), "Server-release")
+    engine("publish", server, server_store, "--name", "Dedicated Server", "--version", "1.3")
+
     if packaged:
         subprocess.run([packaged, "--capture=" + out_dir], env=env, check=True, timeout=180)
     else:
@@ -93,7 +120,7 @@ def main():
         if not os.path.exists(demo):
             break
         time.sleep(0.5)
-    for name in ("update", "release", "settings"):
+    for name in ("projects", "update", "release", "settings"):
         p = os.path.join(out_dir, "app-%s.png" % name)
         print(p, os.path.getsize(p) if os.path.isfile(p) else "MISSING")
 

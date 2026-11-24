@@ -8,22 +8,33 @@ object a line, which is how the app (app/, Electron) drives this program:
     {"event": "result", "ok": true, "data": {...}}                  the last line on success
     {"event": "error", "message": "...", "code": "...", "data": {...}}   the last line on failure
 
+update --all (and check --all) runs several projects at the same time. Every log and progress line
+about one of them carries its name and its settings file ("project": "...", "file": "..."), and
+these follow each one:
+    {"event": "queue", "run": [{"project": ..., "file": ...}], "skipped": [...], "jobs": 3, "check": false}
+    {"event": "project-start", "project": ..., "file": ...}
+    {"event": "project-end", "project": ..., "file": ..., "ok": true, "data": {...}}
+    {"event": "project-end", "project": ..., "file": ..., "ok": false, "message": "...", "code": "..."}
+
 In --json mode standard input carries what a person would type: with --passphrase-stdin the first
 line is the passphrase (never put on a command line or in the environment), and a later line
 "cancel" stops a download, leaving the folder as it was.
 """
 
 import argparse
+import concurrent.futures
 import getpass
 import json
 import os
 import re
+import shutil
 import socket
 import sys
 import threading
 import time
+import traceback
 
-from . import APP_NAME, __version__, client, config, deploy, logs, publish, selfupdate, serve, signing, ssh
+from . import APP_NAME, __version__, client, config, deploy, logs, projects, publish, selfupdate, serve, signing, ssh
 from .color import enable as color_enable
 from .color import paint, plain
 from .manifest import ManifestError
@@ -54,6 +65,11 @@ more:
   %%(prog)s publish ./game ./store      (only the release's files, sent nowhere)
   %%(prog)s config                      (where the settings file and the log are)
 
+several games or mods: a project each, with settings of its own (commands use Default otherwise):
+  %%(prog)s project new "My Mod"        (then: --project "My Mod" before or after any command)
+  %%(prog)s projects                    (every project, and what each one updates and releases)
+  %%(prog)s update --all                (every project's folder, several at the same time)
+
 The log: %s (--log FILE elsewhere, --no-log for none).
 """ % logs.default_path().replace("%", "%%")
 
@@ -77,17 +93,24 @@ class CliError(Exception):
 
 
 class Output(object):
-    """Where messages go: a terminal (text, colour, a progress bar) or the app (JSON lines)."""
+    """Where messages go: a terminal (text, colour, a progress bar) or the app (JSON lines). update --all
+    shares it between projects running in threads: each line is written whole, under one lock, and a
+    project's lines carry its name (and, for the app, its file)."""
 
     def __init__(self, json_mode=False):
         self.json = json_mode
-        self.last = 0.0
+        self.last = {}           # when progress was last shown, by project file (None: a command's only one)
         self.shown = False
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
+        self.bars = None         # update --all in a terminal: {file: (name, done, total)}, shown on one line
+        self.drawn = 0           # how long that line is on the screen
 
-    def _emit(self, obj):
-        """One JSON line to the app. When the app has gone away (its end of the pipe is closed), there is
-        nobody to tell: the line is dropped instead of turning a finished job into a failure."""
+    def _emit(self, obj, project=None):
+        """One JSON line to the app; a project's carries its name and file. When the app has gone away (its
+        end of the pipe is closed), there is nobody to tell: the line is dropped instead of turning a finished
+        job into a failure."""
+        if project is not None:
+            obj = dict(obj, **project.tag())
         with self.lock:
             if getattr(self, "gone", False):
                 return
@@ -97,42 +120,98 @@ class Output(object):
             except (OSError, ValueError):
                 self.gone = True
 
-    def say(self, text, style=None):
+    def say(self, text, style=None, project=None):
         if style is None:
             for start, s in STYLE_BY_START:
                 if text.startswith(start):
                     style = s
                     break
-        logs.write(plain(text))
+        logs.write(plain(text), None if project is None else ("" if project.main else project.title))
         if self.json:
-            self._emit({"event": "log", "text": plain(text), "style": style})
+            self._emit({"event": "log", "text": plain(text), "style": style}, project)
             return
-        self.end()
-        print(paint(text, style) if style else text)
+        with self.lock:
+            if project is None:
+                self.end()
+                print(paint(text, style) if style else text)
+                return
+            self._clear_bars()
+            print("%s %s" % (paint("[%s]" % project.title, "head"), paint(text, style) if style else text))
+            sys.stdout.flush()
+            self._draw_bars()
 
-    def progress(self, done, total, label):
-        now = time.time()
-        if now - self.last < (0.1 if self.json else 0.2) and done < total:
-            return
-        self.last = now
-        if self.json:
-            self._emit({"event": "progress", "done": done, "total": total, "label": label})
-            return
-        frac = (float(done) / total) if total else 1.0
-        n = int(frac * 30)
-        if label in ("downloading", "uploading"):
-            amount = "%s / %s" % (publish.human(done), publish.human(total))
-        else:
-            amount, label = "%d / %d files" % (done, total), ("hashing" if label not in ("installing", "done") else label)
-        meter = paint("[%s%s]" % ("#" * n, "." * (30 - n)), "bar", "err")
-        sys.stderr.write("\r  %-12s %s %3d%%  %s   " % (label[:12], meter, frac * 100, amount))
-        sys.stderr.flush()
-        self.shown = True
+    def progress(self, done, total, label, project=None):
+        key = None if project is None else project.path
+        with self.lock:
+            now = time.time()
+            if now - self.last.get(key, 0.0) < (0.1 if self.json else 0.2) and done < total:
+                return
+            self.last[key] = now
+            if self.json:
+                self._emit({"event": "progress", "done": done, "total": total, "label": label}, project)
+                return
+            if project is not None:
+                if self.bars is not None:
+                    self.bars[key] = (project.title, done, total)
+                    self._draw_bars()
+                return
+            frac = (float(done) / total) if total else 1.0
+            n = int(frac * 30)
+            if label in ("downloading", "uploading"):
+                amount = "%s / %s" % (publish.human(done), publish.human(total))
+            else:
+                amount = "%d / %d files" % (done, total)
+                label = "hashing" if label not in ("installing", "done") else label
+            meter = paint("[%s%s]" % ("#" * n, "." * (30 - n)), "bar", "err")
+            sys.stderr.write("\r  %-12s %s %3d%%  %s   " % (label[:12], meter, frac * 100, amount))
+            sys.stderr.flush()
+            self.shown = True
 
     def end(self):
-        if self.shown:
-            sys.stderr.write("\n")
-            self.shown = False
+        with self.lock:
+            if self.shown:
+                sys.stderr.write("\n")
+                self.shown = False
+
+    def begin_projects(self):
+        """update --all in a terminal: from now on the running projects' progress shares one line (none when
+        the output goes to a file or another program)."""
+        with self.lock:
+            try:
+                shown = not self.json and sys.stderr.isatty()
+            except (AttributeError, ValueError):
+                shown = False
+            if shown:
+                self.bars = {}
+
+    def project_done(self, project):
+        with self.lock:
+            if self.bars is not None and self.bars.pop(project.path, None) is not None:
+                self._clear_bars()
+                self._draw_bars()
+
+    def end_projects(self):
+        with self.lock:
+            self._clear_bars()
+            self.bars = None
+
+    def _draw_bars(self):
+        if not self.bars:
+            return
+        parts = ["%s %d%%" % (name, int(100.0 * done / total) if total else 100) for name, done, total in self.bars.values()]
+        width = max(20, shutil.get_terminal_size((80, 24)).columns - 1)
+        line = "  " + "   ".join(parts)
+        if len(line) > width:
+            line = line[:width - 3] + "..."
+        sys.stderr.write("\r" + line + " " * max(0, self.drawn - len(line)))
+        sys.stderr.flush()
+        self.drawn = len(line)
+
+    def _clear_bars(self):
+        if self.drawn:
+            sys.stderr.write("\r" + " " * self.drawn + "\r")
+            sys.stderr.flush()
+            self.drawn = 0
 
     def result(self, data):
         if self.json:
@@ -144,13 +223,53 @@ class Output(object):
             self._emit({"event": "error", "message": message, "code": code, "data": data or {}})
             return
         self.end()
+        try:
+            sys.stdout.flush()              # the lines before it first, also when the output is a pipe
+        except (OSError, ValueError):
+            pass
         sys.stderr.write("\n%s\n" % paint("%s: %s" % (APP_NAME, message), "err", "err"))
+
+
+class ProjectOutput(object):
+    """One project's share of the output in update --all: its lines and its progress, with its name."""
+
+    def __init__(self, out, project):
+        self.out = out
+        self.project = project
+
+    def say(self, text, style=None):
+        self.out.say(text, style, self.project)
+
+    def progress(self, done, total, label):
+        self.out.progress(done, total, label, self.project)
+
+    def end(self):
+        pass
 
 
 OUT = Output()
 CANCEL = threading.Event()           # stops a download: set by the person (USER_CANCEL) or by a failed download
 USER_CANCEL = threading.Event()      # the person asked to stop ("cancel" on standard input)
 STDIN_CLOSED = threading.Event()     # --json: the app closed our standard input (asked us to stop, or went away)
+
+
+class ProjectCancel(object):
+    """One project's stop in update --all: its own failed download stops only its own other downloads,
+    while the person's stop (USER_CANCEL) stops every project."""
+
+    def __init__(self):
+        self.own = threading.Event()
+
+    def is_set(self):
+        return self.own.is_set() or USER_CANCEL.is_set()
+
+    def set(self):
+        self.own.set()
+
+
+# what a command can fail with, short of a bug: said in a line, no traceback
+FAILURES = (client.UpdateError, deploy.DeployError, publish.PublishError, ssh.SshError, signing.SignError,
+            SourceError, ManifestError, OSError)
 
 
 def say(text, style=None):
@@ -424,30 +543,163 @@ def cmd_serve(a, cfg):
 
 
 def cmd_update(a, cfg):
+    if getattr(a, "all", False):
+        return update_all(a, cfg)
+    return update_one(a, cfg, OUT, CANCEL)
+
+
+def cmd_check(a, cfg):
+    a.check = True
+    return cmd_update(a, cfg)
+
+
+def update_one(a, cfg, out, cancel):
+    """Update (or check) one folder: the one given, else the project's. Its messages go to `out`; `cancel`
+    stops its downloads. cfg is the project's settings: nothing here reads any other."""
+    install = a.install or cfg["install_dir"]
+    if not install:
+        raise CliError("give the folder to update, or save it once:  deltapatcher config set install_dir=FOLDER",
+                       "no-folder")
     url = a.source or cfg["source_url"] or DEFAULT_URL
     if insecure_remote(url):
-        say("Warning: %s is plain http to another machine. Every file is checked against the manifest's SHA-256, "
-            "but the manifest itself could be changed on the way. Use https, or a signed release, for anything but a "
-            "trusted network." % url)
+        out.say("Warning: %s is plain http to another machine. Every file is checked against the manifest's SHA-256, "
+                "but the manifest itself could be changed on the way. Use https, or a signed release, for anything but "
+                "a trusted network." % url)
     headers = dict(h.split(":", 1) for h in (a.header or []) if ":" in h)
     headers = {k.strip(): v.strip() for k, v in headers.items()}
     workers = a.workers or int(cfg.get("workers") or 4)
-    plan = client.update(url, a.install, check_only=a.check, workers=max(1, workers), headers=headers,
-                         progress=OUT.progress, log=say, cancel=CANCEL,
+    plan = client.update(url, install, check_only=a.check, workers=max(1, workers), headers=headers,
+                         progress=out.progress, log=out.say, cancel=cancel,
                          trust_key=a.trust_key or cfg.get("trust_key") or None)
-    OUT.end()
+    out.end()
     need = plan.download()
     data = {"empty": plan.empty(), "summary": plan.summary(), "add": len(plan.add), "replace": len(plan.replace),
             "remove": len(plan.remove), "same": plan.same, "download_blobs": len(need),
             "download_bytes": sum(need.values()), "kept": plan.kept_changed + plan.protected,
-            "publisher_key": client.State(os.path.abspath(a.install)).publisher_key}
+            "publisher_key": client.State(os.path.abspath(install)).publisher_key}
     if a.check and not plan.empty():
         data["exit"] = 2
     return data
 
 
+def project_args(a):
+    """update --all: the arguments of one project's update, its folder and source left to its own settings."""
+    pa = argparse.Namespace(**vars(a))
+    pa.install, pa.source, pa.trust_key, pa.header, pa.all = None, None, None, None, False
+    return pa
+
+
+def outcome(row, check):
+    """A project's line in the summary of update --all, and its colour."""
+    if not row["ok"]:
+        return ("stopped" if row["code"] == "stopped" else "FAILED: %s" % row["message"]), "err"
+    d = row["data"]
+    if d["empty"]:
+        return "up to date", "ok"
+    parts = ["%d new" % d["add"], "%d changed" % d["replace"]] + (["%d removed" % d["remove"]] if d["remove"] else [])
+    if check:
+        return "an update is waiting: %s, %s to download" % (", ".join(parts), publish.human(d["download_bytes"])), "warn"
+    return "updated: %s, %s downloaded" % (", ".join(parts), publish.human(d["download_bytes"])), "ok"
+
+
+def update_all(a, cfg):
+    """update --all and check --all: every project with a folder to update, up to --jobs of them at the same
+    time, each in a thread of its own with its own settings, output and stop, so one failing leaves the
+    others running. One failed project makes the whole run fail, after every other one has finished."""
+    if a.install or a.source or a.trust_key or a.header:
+        raise CliError("--all updates each project from its own settings: leave out the folder, --source, "
+                       "--trust-key and --header", "all-with-folder")
+    run, skipped = [], []
+    for p in projects.all_projects():
+        if p.missing:
+            skipped.append((p, "its settings file is gone"))
+            continue
+        pcfg = config.load(p)
+        if pcfg["install_dir"] and pcfg["source_url"]:
+            run.append((p, pcfg))
+        else:
+            skipped.append((p, "no folder to update"))
+    check = bool(a.check)
+    jobs = a.jobs if a.jobs is not None else cfg["parallel_updates"]
+    jobs = max(1, min(int(jobs or 1), max(1, len(run))))
+    data = {"check": check, "jobs": jobs, "projects": [], "skipped": [dict(p.tag(), reason=why) for p, why in skipped]}
+    if OUT.json:
+        OUT._emit({"event": "queue", "check": check, "jobs": jobs, "run": [p.tag() for p, _c in run],
+                   "skipped": data["skipped"]})
+    if not run:
+        say("No project has a folder to update yet:  deltapatcher --project NAME config set install_dir=FOLDER "
+            "source_url=ADDRESS", "warn")
+        return data
+    say("%s %d project%s, %d at a time" % ("Checking" if check else "Updating", len(run), "" if len(run) == 1 else "s",
+                                            jobs), "head")
+    for p, why in skipped:
+        say("  skipped %s: %s" % (p.title, why))
+
+    def one(p, pcfg):
+        if USER_CANCEL.is_set():
+            res = {"ok": False, "message": "stopped before it started", "code": "stopped"}
+        else:
+            if OUT.json:
+                OUT._emit({"event": "project-start"}, p)
+            try:
+                res = {"ok": True, "data": update_one(project_args(a), pcfg, ProjectOutput(OUT, p), ProjectCancel())}
+            except CliError as e:
+                res = {"ok": False, "message": str(e), "code": e.code}
+            except FAILURES as e:
+                res = {"ok": False, "message": str(e), "code": "stopped" if USER_CANCEL.is_set() else "failed"}
+            except Exception as e:          # a surprise in one project must not stop the others
+                logs.write(traceback.format_exc(), "" if p.main else p.title)
+                res = {"ok": False, "message": "%s: %s" % (type(e).__name__, e), "code": "internal"}
+        if not res["ok"]:
+            logs.write("FAILED: %s" % res["message"], "" if p.main else p.title)
+        OUT.project_done(p)
+        if OUT.json:
+            OUT._emit(dict({"event": "project-end"}, **res), p)
+        return res
+
+    OUT.begin_projects()
+    pool = concurrent.futures.ThreadPoolExecutor(max_workers=jobs)
+    futures = [pool.submit(one, p, pcfg) for p, pcfg in run]
+    try:
+        waiting = set(futures)
+        while waiting:                      # in short waits, so Ctrl+C is seen
+            _done, waiting = concurrent.futures.wait(waiting, timeout=0.25)
+    except KeyboardInterrupt:
+        USER_CANCEL.set()
+        CANCEL.set()
+        concurrent.futures.wait(futures)
+        raise
+    finally:
+        pool.shutdown(wait=True)
+        OUT.end_projects()
+
+    failed = []
+    for (p, _c), f in zip(run, futures):
+        row = dict(p.tag(), **f.result())
+        data["projects"].append(row)
+        if not row["ok"]:
+            failed.append(p.title)
+    width = max(len(r["project"]) for r in data["projects"])
+    for row in data["projects"]:
+        text, style = outcome(row, check)
+        say("  %-*s  %s" % (width, row["project"], text), style)
+    data["failed"] = len(failed)
+    if failed:
+        if USER_CANCEL.is_set():
+            raise CliError("stopped: %d of %d projects did not finish" % (len(failed), len(run)), "stopped", data)
+        raise CliError("%d of %d projects failed: %s" % (len(failed), len(run), ", ".join(failed)),
+                       "projects-failed", data)
+    if check and any(not r["data"]["empty"] for r in data["projects"]):
+        data["exit"] = 2
+    return data
+
+
 def cmd_rollback(a, cfg):
-    n = client.rollback(a.install, log=say)
+    install = a.install or cfg["install_dir"]
+    if not install:
+        raise CliError("give the folder to roll back, or save it once:  deltapatcher config set install_dir=FOLDER",
+                       "no-folder")
+    n = client.rollback(install, log=say)
     return {"undone": n}
 
 
@@ -631,8 +883,15 @@ def cmd_ssh(a, cfg):
     raise CliError("ssh what? keygen, pubkey, unlock, status, scan, trust, test or fix-permissions")
 
 
+def project_of(a):
+    """The project a command works on (main() picks it); Default for a command run without main()."""
+    return getattr(a, "proj", None) or projects.main_project()
+
+
 def cmd_config(a, cfg):
+    project = project_of(a)
     p = config.ensure()
+    own = p if project.main else project.path           # the project's own settings file
     if a.config_cmd == "set":
         changes = {}
         for item in a.values or []:
@@ -643,18 +902,98 @@ def cmd_config(a, cfg):
             if k not in config.DEFAULTS:
                 raise CliError("there is no setting %r" % k, "no-such-setting")
             changes[k] = config._convert(k, v)
-        config.save(changes)          # only these keys change in the file; everything else stays as it is
-        return {"path": p, "settings": config.load()}
-    data = {"path": p, "log": logs.path() or logs.default_path(), "log_dir": os.path.dirname(logs.path() or logs.default_path()),
-            "settings": config.load(), "schema": [{"section": s, "key": k, "default": d, "what": w}
-                                                  for s, k, d, w in config.SCHEMA]}
+        if changes.get("title"):
+            changes["title"] = projects.check_name(changes["title"], project)
+        config.save(changes, project)     # only these keys change, each in its own file; everything else stays
+        return {"path": own, "settings": config.load(project)}
+    data = {"path": own, "main_path": p, "project": dict(project.tag(), kind=project.kind),
+            "log": logs.path() or logs.default_path(), "log_dir": os.path.dirname(logs.path() or logs.default_path()),
+            "settings": config.load(project), "schema": [{"section": s, "key": k, "default": d, "what": w}
+                                                         for s, k, d, w in config.SCHEMA]}
     if not OUT.json:
+        if not project.main:
+            say("Project:  %s, %s" % (project.title, paint(own, "code")))
         say("Settings: %s" % paint(p, "code"))
         say("Log:      %s" % paint(data["log"], "code"))
         if a.show:
-            with open(p, "r", encoding="utf-8") as f:
+            with open(own, "r", encoding="utf-8") as f:
                 print(f.read().rstrip())
     return data
+
+
+def cmd_projects(a, cfg):
+    every = projects.all_projects()
+    chosen = projects.current()
+    rows = []
+    for p in every:
+        row = projects.describe(p)
+        row["current"] = projects.same(p, chosen)
+        rows.append(row)
+    data = {"projects": rows, "main": every[0].path, "folder": projects.folder(), "current": chosen.path,
+            "parallel_updates": max(1, int(cfg["parallel_updates"] or 1))}
+    if not OUT.json:
+        say("%d project%s; DeltaPatcher's own settings are in %s" % (len(rows), "" if len(rows) == 1 else "s",
+                                                                    paint(every[0].path, "code")))
+        for p, row in zip(every, rows):
+            print()
+            say("%s  %s%s" % (paint(p.title, "head"), paint(p.path, "code"),
+                              "  (its file is gone)" if row["missing"] else "  (added)" if p.kind == "added" else ""))
+            say("  update   %s" % (("%s  from  %s" % (row["install_dir"], row["source_url"])) if row["install_dir"]
+                                   else "not set up"))
+            say("  release  %s" % (("%s  to  %s" % (row["publish_src"], row["where"] or "nowhere yet"))
+                                   if row["publish_src"] else "not set up"))
+        print()
+        if len(rows) > 1:
+            say("Commands work on Default unless --project names another:  %s"
+                % paint('%s --project "%s" update' % (prog_name(), rows[1]["title"]), "code"))
+        else:
+            say("Another game or mod gets a project of its own:  %s" % paint(prog_name() + " project new NAME", "code"))
+    return data
+
+
+def cmd_project(a, cfg):
+    c = a.project_cmd
+    if c == "new":
+        p = projects.new(a.name)
+        say("Made the project %s: %s" % (p.title, paint(p.path, "code")), "ok")
+        if not OUT.json:
+            say("Set it up:  %s" % paint('%s --project "%s" config set install_dir=FOLDER source_url=ADDRESS'
+                                         % (prog_name(), p.title), "code"))
+        return projects.describe(p)
+    if c == "add":
+        p = projects.add(a.file, a.name)
+        say("Added the project %s: %s" % (p.title, paint(p.path, "code")), "ok")
+        return projects.describe(p)
+    if c == "rename":
+        p = projects.resolve(a.target)
+        old = p.title
+        projects.rename(p, a.new)
+        say("Renamed the project %s to %s" % (old, p.title), "ok")
+        return projects.describe(p)
+    if c == "remove":
+        p = projects.resolve(a.target, allow_missing=True)
+        projects.check_removable(p)
+        if not a.yes:
+            if not interactive():
+                raise CliError("removing a project asks first: add --yes to remove %s without asking" % p.title,
+                               "confirm-needed", p.tag())
+            if p.kind == "folder":
+                say("Remove the project %s? Its settings file is deleted: %s" % (p.title, p.path), "warn")
+            else:
+                say("Remove the project %s from the list? Its file stays where it is: %s" % (p.title, p.path), "warn")
+            try:
+                sure = ask_yes("Remove it", default=False)
+            except EOFError:
+                sure = False
+            if not sure:
+                raise CliError("not removed", "cancelled")
+        done = projects.remove(p)
+        if done == "deleted":
+            say("Removed the project %s and deleted its settings file." % p.title, "ok")
+        else:
+            say("Took the project %s off the list; its file stays where it is." % p.title, "ok")
+        return dict(p.tag(), removed=done)
+    raise CliError("project what? new, add, rename or remove")
 
 
 def cmd_version(a, cfg):
@@ -774,6 +1113,7 @@ def build_parser():
     p.add_argument("--json", action="store_true", help="JSON lines on standard output, for programs (the DeltaPatcher app)")
     p.add_argument("--close", action="store_true", help="close as soon as the command is done: a window of its own "
                                                         "(double-clicked, a shortcut) otherwise waits for Enter")
+    p.add_argument("--project", metavar="NAME", help=PROJECT_HELP + "; also DELTAPATCHER_PROJECT")
     sub = p.add_subparsers(dest="cmd")
 
     def pass_stdin(sp):
@@ -834,17 +1174,31 @@ def build_parser():
     s.add_argument("--port", type=int, help="default: the saved serve_port, else 8000")
     s.add_argument("--verbose", action="store_true")
 
+    def update_args(sp, check_option):
+        sp.add_argument("install", nargs="?", help="the folder (default: the saved one)")
+        sp.add_argument("--source", help="http(s) URL or folder of the store (default: the saved one, else %s)"
+                                         % DEFAULT_URL)
+        if check_option:
+            sp.add_argument("--check", action="store_true",
+                            help="say what would change; change nothing (exit 2 when out of date)")
+        sp.add_argument("--trust-key", metavar="KEY", help="the publisher key (ed25519:...) the release must be signed "
+                                                          "with; off: do not check signatures")
+        sp.add_argument("--workers", type=int, default=None,
+                        help="downloads at the same time (default: the setting, else 4)")
+        sp.add_argument("--header", action="append", help="an extra request header, 'Name: value' (repeatable)")
+        sp.add_argument("--all", action="store_true", help="every project with a folder to update, several at the same "
+                                                           "time, each from its own settings")
+        sp.add_argument("--jobs", type=int, metavar="N", help="with --all: how many projects at the same time (default: "
+                                                              "the setting parallel_updates, else 3)")
+
     s = sub.add_parser("update", help="bring a folder up to the source's release")
-    s.add_argument("install")
-    s.add_argument("--source", help="http(s) URL or folder of the store (default: the saved one, else %s)" % DEFAULT_URL)
-    s.add_argument("--check", action="store_true", help="say what would change; change nothing (exit 2 when out of date)")
-    s.add_argument("--trust-key", metavar="KEY", help="the publisher key (ed25519:...) the release must be signed with; "
-                                                     "off: do not check signatures")
-    s.add_argument("--workers", type=int, default=None, help="downloads at the same time (default: the setting, else 4)")
-    s.add_argument("--header", action="append", help="an extra request header, 'Name: value' (repeatable)")
+    update_args(s, True)
+
+    s = sub.add_parser("check", help="say what an update would change; change nothing (exit 2 when out of date)")
+    update_args(s, False)
 
     s = sub.add_parser("rollback", help="undo the last update of a folder")
-    s.add_argument("install")
+    s.add_argument("install", nargs="?", help="the folder (default: the saved one)")
 
     s = sub.add_parser("deploy", help="send a store to a server (sftp) or a folder, only the missing blobs")
     s.add_argument("store", nargs="?", help="default: the saved store, else the saved folder's")
@@ -897,13 +1251,47 @@ def build_parser():
     k = cs.add_parser("set", help="change settings: key=value ...")
     k.add_argument("values", nargs="*")
 
+    sub.add_parser("projects", help="every project: the folder it updates and where from, the folder it releases and "
+                                    "where to")
+    s = sub.add_parser("project", help="make, add, rename or remove a project (a settings file of its own)")
+    ss = s.add_subparsers(dest="project_cmd")
+    k = ss.add_parser("new", help="a new project, its settings file in the projects folder beside the main one")
+    k.add_argument("name", help="its name: letters, digits, spaces and - _ . ( ), up to %d characters"
+                                % projects.NAME_MAX)
+    k = ss.add_parser("add", help="list a project file kept elsewhere (in a game's folder, on a share)")
+    k.add_argument("file")
+    k.add_argument("--name", help="give it this name (written into the file)")
+    k = ss.add_parser("rename", help="give a project another name (its file stays where it is)")
+    k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
+    k.add_argument("new", metavar="NEW")
+    k = ss.add_parser("remove", help="remove a project: one in the projects folder is deleted, an added one only "
+                                     "leaves the list")
+    k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
+    k.add_argument("--yes", action="store_true", help="do not ask first")
+
     sub.add_parser("version", help="the version")
+    _project_everywhere(p)
     return p
 
 
+PROJECT_HELP = "the project whose settings to use: its name or its settings file (default: Default)"
+
+
+def _project_everywhere(parser):
+    """--project after the command works too (deltapatcher update --project NAME), at every level."""
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            for sp in action.choices.values():
+                sp.add_argument("--project", metavar="NAME", default=argparse.SUPPRESS, help=PROJECT_HELP)
+                _project_everywhere(sp)
+
+
 HANDLERS = {"publish": cmd_publish, "release": cmd_release, "serve": cmd_serve, "update": cmd_update,
-            "rollback": cmd_rollback, "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign, "config": cmd_config,
-            "version": cmd_version, "self-update": cmd_self_update}
+            "check": cmd_check, "rollback": cmd_rollback, "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign,
+            "config": cmd_config, "projects": cmd_projects, "project": cmd_project, "version": cmd_version,
+            "self-update": cmd_self_update}
+# commands that work on no single project
+WITHOUT_PROJECT = ("version", "self-update", "projects", "project")
 
 
 def split_line(line):
@@ -929,12 +1317,15 @@ def split_line(line):
         kernel32.LocalFree(ctypes.cast(words, ctypes.c_void_p))
 
 
-def prompt_loop(back="closes this window"):
-    """A prompt that takes one command after another until exit (the menu's "Type commands yourself")."""
+def prompt_loop(back="closes this window", project=None):
+    """A prompt that takes one command after another until exit (the menu's "Type commands yourself").
+    project: the one the menu works on, which the commands use unless they name another."""
     print()
     print(paint("Type a command and press Enter, for example:", "head"))
     print("  " + paint('update "D:\\My Game" --source https://example.com/game/', "code"))
     print("help lists the commands, help update explains one, exit %s." % back)
+    if project is not None and not project.main:
+        print("Commands work on the project %s (--project NAME picks another)." % paint(project.title, "head"))
     names = {prog_name().lower(), "deltapatcher", "deltapatcher-cli"}
     while True:
         try:
@@ -961,15 +1352,27 @@ def prompt_loop(back="closes this window"):
             print(paint("--json is for programs (the DeltaPatcher app), not for typing here.", "warn"))
             continue
         try:
-            main(argv, prompt=False)
+            main(argv, prompt=False, project=project)
         except SystemExit:
             pass                                            # the help was printed, or a mistake explained
         except KeyboardInterrupt:
             print()
 
 
-def main(argv=None, prompt=True):
-    """The command line. prompt=False: a command typed at the prompt, whose window already stays open."""
+def pick_project(a, given=None):
+    """The project a command works on: --project, else `given` (the menu's, for a command typed at its
+    prompt), else DELTAPATCHER_PROJECT, else Default. Never the app's choice: a launcher's command line
+    means the same project whatever the app shows."""
+    if getattr(a, "project", None):
+        return projects.resolve(a.project)
+    if given is not None:
+        return given
+    return projects.resolve(os.environ.get("DELTAPATCHER_PROJECT"))
+
+
+def main(argv=None, prompt=True, project=None):
+    """The command line. prompt=False: a command typed at the prompt, whose window already stays open.
+    project: the menu's project, for a command typed at its prompt."""
     global OUT
     argv = sys.argv[1:] if argv is None else argv
     if prompt and getattr(sys, "frozen", False):
@@ -984,13 +1387,22 @@ def main(argv=None, prompt=True):
             p.parse_args(["ssh", "--help"])
         if a.cmd == "sign" and not a.sign_cmd:
             p.parse_args(["sign", "--help"])
+        if a.cmd == "project" and not a.project_cmd:
+            p.parse_args(["project", "--help"])
     except SystemExit:
         if stay:
             wait_to_close()                # the help was printed, or a mistake explained: let it be read
         raise
     if a.cmd == "menu" or (not a.cmd and stay):
         from . import menu
-        menu.run_menu()                    # double-clicked (or asked for): plain questions, not commands
+        try:
+            chosen = pick_project(a, project)
+        except projects.ProjectError as e:
+            sys.stderr.write("%s\n" % paint("%s: %s" % (APP_NAME, e), "err", "err"))
+            if stay:
+                wait_to_close()
+            return 1
+        menu.run_menu(chosen)              # double-clicked (or asked for): plain questions, not commands
         return 0
     if not a.cmd:
         p.print_help()
@@ -1004,20 +1416,29 @@ def main(argv=None, prompt=True):
     color_enable(not a.no_color and not a.json)
     if not a.no_log:
         logs.setup(a.log)
+    unknown = None
+    try:
+        a.proj = projects.main_project() if a.cmd in WITHOUT_PROJECT or getattr(a, "all", False) else \
+            pick_project(a, project)
+    except projects.ProjectError as e:
+        a.proj, unknown = projects.main_project(), e
+    if not a.proj.main:
+        logs.set_project(a.proj.title)     # the log says which project each line is about
     logs.write("== deltapatcher %s" % logs.redact_argv(argv))
     if a.json and not getattr(a, "passphrase_stdin", False):
         start_control_reader()
-    cfg = config.load()
+    cfg = config.load(a.proj)
     rc = 0
     try:
+        if unknown is not None:
+            raise unknown
         data = HANDLERS[a.cmd](a, cfg) or {}
         rc = data.pop("exit", 0) if isinstance(data, dict) else 0
         OUT.result(data)
-    except CliError as e:
+    except (CliError, projects.ProjectError) as e:
         OUT.error(str(e), e.code, e.data)
         rc = 1
-    except (client.UpdateError, deploy.DeployError, publish.PublishError, ssh.SshError, signing.SignError,
-            SourceError, ManifestError, OSError) as e:
+    except FAILURES as e:
         # "stopped" only when the person asked; a failed download also stops the others, but it is a failure
         code = "stopped" if USER_CANCEL.is_set() else "failed"
         OUT.error(str(e), code)

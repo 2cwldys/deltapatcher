@@ -1,7 +1,7 @@
-// The dialogs: confirm, passphrase, host keys, information. Passphrases live only in this component's
-// state until they are handed to the engine, then they are cleared.
+// The dialogs: confirm, passphrase, host keys, information, a name. Passphrases live only in this
+// component's state until they are handed to the engine, then they are cleared.
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Copy, KeyRound, ShieldCheck } from 'lucide-react'
+import { AlertTriangle, Copy, KeyRound, PenLine, ShieldCheck } from 'lucide-react'
 import { useModal } from '../store/modal'
 import { Button } from './ui'
 
@@ -26,14 +26,42 @@ export default function Modals(): JSX.Element | null {
   const [p1, setP1] = useState('')
   const [p2, setP2] = useState('')
   const [err, setErr] = useState('')
+  const [text, setText] = useState('')
 
   useEffect(() => {
     setP1('')
     setP2('')
     setErr('')
+    setText(spec?.kind === 'prompt' ? spec.value : '')
   }, [spec])
 
   if (!spec) return null
+
+  if (spec.kind === 'prompt') {
+    const ok = (): void => {
+      const problem = spec.check ? spec.check(text) : text.trim() ? '' : 'Type something first.'
+      if (problem) return setErr(problem)
+      close(text.trim())
+    }
+    return (
+      <Frame title={spec.title} icon={<PenLine size={18} className="text-delta" />}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => close(null)}>Cancel</Button>
+            <Button variant="primary" onClick={ok}>{spec.confirm}</Button>
+          </>
+        }>
+        <p className="whitespace-pre-wrap">{spec.body}</p>
+        <input autoFocus className="input mt-4" value={text} spellCheck={false} maxLength={200}
+          onChange={(e) => {
+            setText(e.target.value)
+            setErr('')
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && ok()} />
+        {err && <p className="mt-2 text-xs text-rose-300">{err}</p>}
+      </Frame>
+    )
+  }
 
   if (spec.kind === 'confirm') {
     return (

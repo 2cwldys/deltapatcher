@@ -1,4 +1,5 @@
-// The bottom of the window: what is running, its progress, Stop, and the log console.
+// The bottom of the window: what is running, its progress, Stop, and the log console. Update all (and
+// Check all) runs beside the other pages' jobs: it shows here while none of those does.
 import { useEffect, useRef } from 'react'
 import { ChevronDown, ChevronUp, FolderOpen, Square, Terminal } from 'lucide-react'
 import { useApp } from '../store/app'
@@ -13,8 +14,9 @@ const STYLE: Record<string, string> = {
 }
 
 export default function ActivityBar(): JSX.Element {
-  const { busy, progress, status, statusKind, cancellable, consoleOpen, logs, logDir } = useApp()
+  const { busy, progress, status, statusKind, cancellable, consoleOpen, logs, logDir, allJob } = useApp()
   const cancel = useApp((s) => s.cancel)
+  const stopAll = useApp((s) => s.stopAll)
   const toggle = useApp((s) => s.toggleConsole)
   const end = useRef<HTMLDivElement>(null)
 
@@ -22,12 +24,16 @@ export default function ActivityBar(): JSX.Element {
     if (consoleOpen) end.current?.scrollIntoView({ block: 'end' })
   }, [logs.length, consoleOpen])
 
-  const pct = progress && progress.total > 0 ? Math.min(100, (100 * progress.done) / progress.total) : busy ? null : 0
-  const amount =
-    progress && (progress.label === 'downloading' || progress.label === 'uploading')
+  const all = !busy && allJob ? allJob : null
+  const pct = all
+    ? all.total > 0 ? Math.min(100, (100 * all.done) / all.total) : null
+    : progress && progress.total > 0 ? Math.min(100, (100 * progress.done) / progress.total) : busy ? null : 0
+  const amount = all
+    ? all.total > 0 ? `${all.done} of ${all.total} projects` : ''
+    : progress && (progress.label === 'downloading' || progress.label === 'uploading')
       ? `${human(progress.done)} of ${human(progress.total)}`
       : progress
-        ? `${progress.done} of ${progress.total} files`
+        ? `${progress.done} of ${progress.total} ${progress.label === 'projects' ? 'projects' : 'files'}`
         : ''
   const dot =
     statusKind === 'busy' ? 'bg-blob animate-pulse' : statusKind === 'ok' ? 'bg-delta' : statusKind === 'err' ? 'bg-rose-400' : 'bg-ink-500'
@@ -63,6 +69,11 @@ export default function ActivityBar(): JSX.Element {
         </div>
         {busy && cancellable && (
           <Button small variant="secondary" icon={Square} onClick={cancel}>
+            Stop
+          </Button>
+        )}
+        {all && (
+          <Button small variant="secondary" icon={Square} onClick={stopAll}>
             Stop
           </Button>
         )}

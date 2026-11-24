@@ -1,22 +1,19 @@
 import { Download, Search, Undo2, ShieldCheck, ShieldAlert, FolderSync } from 'lucide-react'
-import { useApp } from '../store/app'
+import { ProjectRun, running, UpdateResult, useApp } from '../store/app'
 import { ask } from '../store/modal'
 import { Banner, Button, Card, Chip, Field, Stat, human } from '../components/ui'
 
-interface Result {
-  empty: boolean
-  add: number
-  replace: number
-  remove: number
-  same: number
-  download_bytes: number
-  download_blobs: number
-  publisher_key: string
-  kept: string[]
+interface Result extends UpdateResult {
   check: boolean
 }
 
-function insecure(url: string): boolean {
+function busyElsewhere(r: ProjectRun): string {
+  const who = r.inAll ? (r.check ? 'Check all' : 'Update all') : 'The Projects page'
+  const what = r.state === 'waiting' ? 'has this project in its queue' : r.state === 'checking' ? 'is checking this project' : 'is updating this project'
+  return `${who} ${what}. Update, Check and Roll back come back here when it is done.`
+}
+
+export function insecure(url: string): boolean {
   const m = /^http:\/\/([^/:]+|\[[^\]]+\])/i.exec(url.trim())
   return Boolean(m) && !['localhost', '127.0.0.1', '[::1]'].includes(m![1].toLowerCase())
 }
@@ -41,10 +38,12 @@ export async function runUpdate(check: boolean): Promise<Result | null> {
   const key = String(st.settings.trust_key || '').trim()
   if (key) args.push(`--trust-key=${key}`)
   if (check) args.push('--check')
+  const project = st.project
   const r = await st.run(check ? 'Check' : 'Update', args, { cancellable: !check })
   if (!r.ok) return null
   const result = { ...(r.data as Result), check }
-  st.setResult('update', result)
+  if (useApp.getState().project === project) st.setResult('update', result)
+  st.noteResult(project, r.data as UpdateResult, check)
   return result
 }
 
@@ -52,6 +51,10 @@ export default function UpdatePage(): JSX.Element {
   const busy = useApp((s) => s.busy)
   const source = useApp((s) => String(s.settings.source_url || ''))
   const result = useApp((s) => s.results.update as Result | undefined)
+  // the Projects page is checking or updating this project (on its own, or in Update all)
+  const elsewhere = useApp((s) => s.runs[s.project])
+  const blocked = running(elsewhere)
+  const stopped = Boolean(busy) || blocked
 
   const rollback = async (): Promise<void> => {
     const folder = String(useApp.getState().settings.install_dir || '')
@@ -73,10 +76,15 @@ export default function UpdatePage(): JSX.Element {
           <Field label="Publisher key (optional)" setting="trust_key" placeholder="ed25519:..." mono
             hint={"Paste the key the publisher gave you: only releases they signed are installed.\nEmpty: the first signed release's key is trusted, and only that key after it."} />
         </div>
+        {blocked && elsewhere && (
+          <div className="mt-5">
+            <Banner kind="info">{busyElsewhere(elsewhere)}</Banner>
+          </div>
+        )}
         <div className="mt-6 flex flex-wrap gap-2">
-          <Button variant="primary" icon={Download} disabled={Boolean(busy)} onClick={() => runUpdate(false)}>Update</Button>
-          <Button icon={Search} disabled={Boolean(busy)} onClick={() => runUpdate(true)}>Check</Button>
-          <Button variant="ghost" icon={Undo2} disabled={Boolean(busy)} onClick={rollback}>Roll back</Button>
+          <Button variant="primary" icon={Download} disabled={stopped} onClick={() => runUpdate(false)}>Update</Button>
+          <Button icon={Search} disabled={stopped} onClick={() => runUpdate(true)}>Check</Button>
+          <Button variant="ghost" icon={Undo2} disabled={stopped} onClick={rollback}>Roll back</Button>
         </div>
       </Card>
 

@@ -14,6 +14,7 @@ const api = {
   pickFolder: (start: string): Promise<string | null> => ipcRenderer.invoke('dialog:folder', start),
   pickFile: (start: string): Promise<string | null> => ipcRenderer.invoke('dialog:file', start),
   open: (path: string): Promise<string> => ipcRenderer.invoke('shell:open', path),
+  show: (path: string): Promise<string> => ipcRenderer.invoke('shell:show', path),
   copy: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
   setCloseToTray: (on: boolean): Promise<void> => ipcRenderer.invoke('app:close-to-tray', on),

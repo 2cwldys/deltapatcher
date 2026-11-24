@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpCircle, BookOpen, Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
+import { ArrowUpCircle, BookOpen, Boxes, Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
 import { Page, useApp } from '../store/app'
 import { REPO_URL } from '@shared/project'
+import ProjectPicker from './ProjectPicker'
 
 const LINKS: { page: Page; label: string; hint: string; Icon: LucideIcon }[] = [
+  { page: 'projects', label: 'Projects', hint: 'Every game, mod or server', Icon: Boxes },
   { page: 'update', label: 'Update', hint: 'Get the latest release', Icon: RefreshCw },
   { page: 'release', label: 'Release', hint: 'Send players a new version', Icon: Rocket },
   { page: 'settings', label: 'Settings', hint: 'deltapatcher.ini', Icon: SlidersHorizontal }
@@ -29,6 +31,7 @@ export default function Sidebar(): JSX.Element {
           <div className="text-[11px] text-ink-400">SHA-256 delta patching</div>
         </div>
       </div>
+      <ProjectPicker />
       <nav className="flex flex-col gap-1 px-3">
         {LINKS.map(({ page: p, label, hint, Icon }) => {
           const on = p === page
@@ -62,7 +65,7 @@ export default function Sidebar(): JSX.Element {
           <span>
             <span className="block text-sm font-medium">Update DeltaPatcher</span>
             <span className="block font-mono text-[11px] text-ink-300">
-              {appUpdate.current} {'→'} {appUpdate.latest}
+              {appUpdate.current} {'\u2192'} {appUpdate.latest}
             </span>
           </span>
         </button>

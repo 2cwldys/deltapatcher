@@ -1,4 +1,4 @@
-// Dialogs as promises: confirm, a passphrase (once or twice), a server's host keys.
+// Dialogs as promises: confirm, a passphrase (once or twice), a server's host keys, a name.
 import { create } from 'zustand'
 
 export interface HostKey {
@@ -11,6 +11,8 @@ export type ModalSpec =
   | { kind: 'passphrase'; title: string; body: string; twice: boolean; minLength: number; allowEmpty?: boolean }
   | { kind: 'hostkeys'; host: string; keys: HostKey[] }
   | { kind: 'info'; title: string; body: string; code?: string }
+  // one line of text; `check` says what is wrong with it ('' when nothing)
+  | { kind: 'prompt'; title: string; body: string; value: string; confirm: string; check?: (v: string) => string }
 
 interface ModalState {
   spec: ModalSpec | null
@@ -27,7 +29,9 @@ export const useModal = create<ModalState>((set, get) => ({
     new Promise((resolve) => {
       const prev = get().resolve
       const prevSpec = get().spec
-      if (prev && prevSpec) prev(prevSpec.kind === 'passphrase' ? null : prevSpec.kind === 'info' ? undefined : false)
+      if (prev && prevSpec) {
+        prev(prevSpec.kind === 'passphrase' || prevSpec.kind === 'prompt' ? null : prevSpec.kind === 'info' ? undefined : false)
+      }
       set({ spec, resolve })
     }),
   close: (value) => {
@@ -45,5 +49,7 @@ export const ask = {
   hostKeys: (host: string, keys: HostKey[]): Promise<boolean> =>
     useModal.getState().open({ kind: 'hostkeys', host, keys }) as Promise<boolean>,
   info: (title: string, body: string, code?: string): Promise<void> =>
-    useModal.getState().open({ kind: 'info', title, body, code }) as Promise<void>
+    useModal.getState().open({ kind: 'info', title, body, code }) as Promise<void>,
+  prompt: (title: string, body: string, value = '', confirm = 'OK', check?: (v: string) => string): Promise<string | null> =>
+    useModal.getState().open({ kind: 'prompt', title, body, value, confirm, check }) as Promise<string | null>
 }

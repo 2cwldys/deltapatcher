@@ -182,6 +182,12 @@ function registerIpc(): void {
     if (!isDir && !/\.(ini|log|txt)$/i.test(path)) return 'refused'
     return shell.openPath(path)
   })
+  // shows a file in its folder (a project's settings file), selected: nothing is opened or run
+  handle('shell:show', (_e, path: string) => {
+    if (typeof path !== 'string' || !existsSync(path)) return 'not found'
+    shell.showItemInFolder(path)
+    return ''
+  })
   handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text)))
   handle('app:info', () => ({
     version: app.getVersion(),

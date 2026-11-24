@@ -1,4 +1,4 @@
-// The project picker at the top of the sidebar: the project Update, Release and Settings show, and a list to
+// The project picker in the sidebar, under Projects: the project Update, Release and Settings show, and a list to
 // pick another (it scrolls, and a search box finds one in a long list), rename or remove one, make a new one,
 // or add a project file.
 import { useEffect, useState } from 'react'

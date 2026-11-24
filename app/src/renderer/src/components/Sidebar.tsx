@@ -24,6 +24,33 @@ export default function Sidebar(): JSX.Element {
     window.api.info().then((i) => setVersion(i.version))
   }, [])
 
+  const link = ({ page: p, label, hint, Icon }: (typeof LINKS)[number]): JSX.Element => {
+    const on = p === page
+    return (
+      <button
+        key={p}
+        type="button"
+        onClick={() => setPage(p)}
+        className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
+          on ? 'bg-delta/15 text-slate-100 ring-1 ring-delta/30' : 'text-ink-300 hover:bg-ink-800 hover:text-slate-100'
+        }`}
+      >
+        <Icon size={17} className={on ? 'text-delta' : 'text-ink-400 group-hover:text-ink-300'} />
+        <span className="min-w-0 flex-1">
+          <span className="block text-sm font-medium">{label}</span>
+          <span className="block text-[11px] text-ink-400">{hint}</span>
+        </span>
+        {p === 'projects' && waiting > 0 && (
+          <span title={`${waiting} ${waiting === 1 ? 'project has' : 'projects have'} an update`}
+            className="shrink-0 rounded-full bg-blob px-1.5 text-[11px] font-semibold leading-5 tabular-nums text-ink-950">
+            {waiting}
+          </span>
+        )}
+      </button>
+    )
+  }
+
+  // Projects (every project), then the picker (which one), then the pages for the picked project
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900/95">
       <div className="flex items-center gap-3 px-5 pb-6 pt-6">
@@ -33,34 +60,9 @@ export default function Sidebar(): JSX.Element {
           <div className="text-[11px] text-ink-400">SHA-256 delta patching</div>
         </div>
       </div>
+      <nav className="flex flex-col gap-1 px-3 pb-3">{LINKS.filter((l) => l.page === 'projects').map(link)}</nav>
       <ProjectPicker />
-      <nav className="flex flex-col gap-1 px-3">
-        {LINKS.map(({ page: p, label, hint, Icon }) => {
-          const on = p === page
-          return (
-            <button
-              key={p}
-              type="button"
-              onClick={() => setPage(p)}
-              className={`group flex items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors ${
-                on ? 'bg-delta/15 text-slate-100 ring-1 ring-delta/30' : 'text-ink-300 hover:bg-ink-800 hover:text-slate-100'
-              }`}
-            >
-              <Icon size={17} className={on ? 'text-delta' : 'text-ink-400 group-hover:text-ink-300'} />
-              <span className="min-w-0 flex-1">
-                <span className="block text-sm font-medium">{label}</span>
-                <span className="block text-[11px] text-ink-400">{hint}</span>
-              </span>
-              {p === 'projects' && waiting > 0 && (
-                <span title={`${waiting} ${waiting === 1 ? 'project has' : 'projects have'} an update`}
-                  className="shrink-0 rounded-full bg-blob px-1.5 text-[11px] font-semibold leading-5 tabular-nums text-ink-950">
-                  {waiting}
-                </span>
-              )}
-            </button>
-          )
-        })}
-      </nav>
+      <nav className="flex flex-col gap-1 px-3">{LINKS.filter((l) => l.page !== 'projects').map(link)}</nav>
       {appUpdate && (
         <button
           type="button"

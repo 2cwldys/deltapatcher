@@ -100,8 +100,8 @@ as possible without becoming hard to use.
    stay in the main file: `[window]`, and `[general]` with `parallel_updates`, `project_files` and
    `current_project`. The command line takes `--project NAME` on every command and uses Default without
    it, so a script never follows the window's choice; `update --all` and `check --all` run up to
-   `parallel_updates` projects at once, in one process. The app has a project picker at the top of the
-   sidebar and a Projects page with every project's state, Check all and Update all.
+   `parallel_updates` projects at once, in one process. The app's sidebar has the Projects page (every
+   project's state, Check all and Update all), then the project picker, then the picked project's pages.
 2. **Project files** (built). One file with one or more projects (name, address, publisher key, and the
    description, website, where it goes and its folder name), to share, as an `.html` page anyone can read
    and as a `.deltapatch` file DeltaPatcher opens with a double-click: the same text either way

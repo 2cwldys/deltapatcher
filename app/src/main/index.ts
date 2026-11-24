@@ -83,12 +83,13 @@ function system(): System {
   return {
     platform: process.platform,
     packaged: app.isPackaged,
-    execPath: process.execPath,
+    // the portable .exe runs from a folder of its own that changes each time: the login item names the .exe itself
+    execPath: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath,
     env: process.env,
     home: homedir(),
     setLoginItem: (item) => app.setLoginItemSettings(item),
     isLoginItem: () => {
-      const now = app.getLoginItemSettings()
+      const now = app.getLoginItemSettings({ path: process.env.PORTABLE_EXECUTABLE_FILE || process.execPath, args: [HIDDEN_ARG] })
       return process.platform === 'win32' ? (now.launchItems ?? []).some((i) => i.name === LOGIN_ITEM_NAME) : now.openAtLogin
     },
     readFile: (path) => {

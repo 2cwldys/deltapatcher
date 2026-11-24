@@ -25,7 +25,7 @@ it, and watch a change travel on its own.
 Everything you type is saved in `deltapatcher.ini` (the **Settings** page), so it is there next time.
 **Console** at the bottom shows every step; **Logs** opens the log files.
 
-When it works, pick **Your server (SSH)** in step 2 to send releases to a VPS instead: see
+When it works, pick **Your server (SSH)** under **Where players get it** to send releases to a VPS instead: see
 [Setting up a VPS](VPS-SETUP.md).
 
 ## With the command line

@@ -97,7 +97,7 @@ server never serves it. Turn off **.htaccess for Apache**, or use `--no-htaccess
 
 ## 4. Test it on your PC
 
-App: **Release** page, step 2 **This computer, to test**, then **Release**; then **Update** a test folder
+App: **Release** page, **Where players get it**: **This computer, to test**, then **Release**; then **Update** a test folder
 from `http://localhost:8000/`.
 Command line: `deltapatcher release --to local`, then `deltapatcher update ./test --source http://localhost:8000/`.
 
@@ -105,8 +105,8 @@ Command line: `deltapatcher release --to local`, then `deltapatcher update ./tes
 
 The store is plain static files: any web server can serve it. Choose one:
 
-- **A VPS**: **Release** page, step 2 **Your server (SSH)**. See [Setting up a VPS](VPS-SETUP.md).
-- **A folder**: step 2 **A folder**, for a web root on this machine or a network share. Command line:
+- **A VPS**: **Release** page, **Where players get it**: **Your server (SSH)**. See [Setting up a VPS](VPS-SETUP.md).
+- **A folder**: **A folder** there, for a web root on this machine or a network share. Command line:
   `deltapatcher release --to folder --to-folder D:/www/game`.
 - **Any static host** (object storage, a CDN): upload `manifest.json`, `manifest.previous.json`,
   `blobs/` and `sigs/` (and `.htaccess` for Apache). Upload the blobs and signatures first and
@@ -200,12 +200,12 @@ The log named is read, not the older rotated ones (`access.log.1`); a compressed
 ## Backups
 
 A backup is a copy of your **live release**, what players download now, read from where you send it (your
-server over SFTP, or the folder) and kept on this computer. The **Backups** card on the **Release** page has
-**Back up now**, the list, and **Restore...**. On the command line:
+server over SFTP, or the folder) and kept on this computer. The **Backups** section of the **Settings** page has
+**Back up now**, the list (open it from its summary line), and **Restore...**. On the command line:
 
 ```
 deltapatcher backup                    one backup now
-deltapatcher backup list               the backups: date, release, files, size
+deltapatcher backup list               the backups: date (UTC), release, files, size; the last scheduled run
 deltapatcher backup restore DATE       put that backup back where players download from (asks first)
 deltapatcher backup prune              apply the limits now
 deltapatcher backup schedule daily     the system makes backups without the app: daily, hourly or off
@@ -218,15 +218,20 @@ deltapatcher backup schedule daily     the system makes backups without the app:
   **backup_keep_monthly** (0) and **backup_max_size** (empty: no limit). After each backup the newest of each
   kept day, week and month stays and the others go; then the oldest go while the folder is over the size.
   The newest backup always stays.
-- **Where they are**: **backup_dir**, else `backups/<the project's file name>` beside the main settings
-  file.
+- **Where they are**: a folder for each project, named after its settings file with a short id
+  (`My Game-1a2b3c4d`), inside **backup_dir** (else inside `backups` beside the main settings file). Two
+  projects never share one, and it can never be the project's store or a folder it releases, sends to or
+  keeps up to date.
 - **Restore** is a release of the backup: its files first and its manifest last, and nothing at your
   server or folder is removed. It asks first; `--dry-run` says what it would send.
 - **By itself**: **backup_every_hours** (0, off, by default) has the app make backups while it runs, window
   shown or in the tray, never while something else runs. With the app closed, `backup schedule daily` (or
-  `hourly`) has the system run it: Task Scheduler on Windows, your crontab on Linux and macOS; `off` removes
-  only that project's entry. A cron job cannot reach your ssh-agent, so on Linux and macOS a scheduled
-  backup over SFTP stops with *key-locked*: let the app make them instead (**backup_every_hours**).
+  `hourly`) has the system start it every hour, and it makes a backup when the last one is about a day (or
+  an hour) old, so a computer that was asleep or off catches up: Task Scheduler on Windows (hidden, no
+  window), your crontab on Linux and macOS. `off` removes only that project's entry; `backup list` and the
+  Settings page show the last scheduled run. A cron job cannot reach your ssh-agent, so on Linux and macOS
+  a scheduled backup over SFTP stops with *key-locked* (DeltaPatcher warns when you schedule it): let the
+  app make them instead (**backup_every_hours**).
 
 A release sent only to this computer (*This computer, to test*) has nothing to back up.
 

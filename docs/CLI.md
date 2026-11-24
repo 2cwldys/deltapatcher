@@ -51,6 +51,7 @@ file, so a script never follows what the window has picked. `deltapatcher projec
 | `--no-log` | Write no log file |
 | `--no-color` | Plain text. Colour is used only in a terminal that shows it, never in files or pipes; `NO_COLOR=1` works too. |
 | `--close` | Close as soon as the command is done: no prompt, no waiting for Enter in a window of its own (see above) |
+| `--unattended` | Nobody is there (a scheduler runs it): never ask (what would be asked fails at once, saying why) and never wait for Enter |
 | `--project NAME` | The project to work on: its name or its settings file. Left out: the environment variable `DELTAPATCHER_PROJECT`, else Default. |
 
 In a terminal the output uses the app's colours: white for what was done, beige-yellow for what needs
@@ -202,10 +203,10 @@ still there. See [Publishing, Statistics](PUBLISHING.md#statistics).
 | Command | |
 | --- | --- |
 | `deltapatcher backup [now]` | Back up the live release, read from the server or folder it is sent to, onto this computer. An unchanged release makes no new backup. |
-| `deltapatcher backup list` | The backups: date, release, files, size |
+| `deltapatcher backup list` | The backups: date (UTC), release, files, size, and the last scheduled run |
 | `deltapatcher backup restore DATE [--dry-run] [--yes]` | Put a backup (`YYYY-MM-DD`) back where players download from: its blobs first, its manifest last; nothing there is removed. Asks first. |
 | `deltapatcher backup prune` | Apply the limits now (`backup_keep_daily`, `_weekly`, `_monthly`, `backup_max_size`) |
-| `deltapatcher backup schedule daily\|hourly\|off` | The system runs the backup without the app: Task Scheduler on Windows, the user's crontab elsewhere. `off` removes only this project's entry. |
+| `deltapatcher backup schedule daily\|hourly\|off` | The system runs the backup without the app: it starts every hour and makes a backup when the last one is about a day (or an hour) old. Task Scheduler on Windows (hidden), the user's crontab elsewhere. `off` removes only this project's entry. |
 
 See [Publishing, Backups](PUBLISHING.md#backups).
 

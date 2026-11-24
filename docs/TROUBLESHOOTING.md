@@ -42,8 +42,8 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `signing needs the 'cryptography' package` | From source: `pip install cryptography`. The built programs include it. |
 | `a passphrase on a new SSH key needs the bcrypt package` | From source: `pip install bcrypt`. The built programs include it. |
 | `the store must not be inside the folder it publishes` | Leave Settings' `store_dir` empty (DeltaPatcher then keeps the store in its own folder), or choose one outside the release folder. |
-| `give the folder to release, or save it once` | Choose *Folder to release* (Release page, step 1), or `deltapatcher config set publish_src=FOLDER`. |
-| `save the server once` / `give the folder to send it to` | Fill in step 2 of the Release page (or the menu's *Set up where releases go*): the server's host, user and remote folder, or the folder to copy to. |
+| `give the folder to release, or save it once` | Choose *Folder to release* (Release page, **What to release**), or `deltapatcher config set publish_src=FOLDER`. |
+| `save the server once` / `give the folder to send it to` | Fill in **Where players get it** on the Release page (or the menu's *Set up where releases go*): the server's host, user and remote folder, or the folder to copy to. |
 | `X: Y is not in Z (yet)` | A file or folder in *Leave out* or *Players keep their own copy* is not in the release folder. Harmless; remove it from the list if it is gone for good. |
 | `X is not inside the folder you publish` | `--leave-out` and `--protect` take paths inside the release folder (or a pattern such as `*.log`). |
 | `X cannot be published: ...` | A file name that cannot be used on every system (a device name like `CON`, a name ending in a dot or space, a `:`). Rename it. |
@@ -64,6 +64,8 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `nothing is released at ... yet` | Release once; there is nothing to back up before that. |
 | `the blob ... is damaged` | A file on the server is not what its name says. No backup was kept. Release again to put good files back, then back up. |
 | `another backup of this project is running` | Wait for it (the app, or a scheduled one) and try again. |
+| `... holds the backups of another project` | That folder is another project's backup folder. Leave **backup_dir** empty, or name a folder of its own. |
+| `the backup ... cannot be read` | Nothing is removed until it can be read (an antivirus or a sync tool may hold it for a moment). If it stays damaged, delete that dated folder by hand. |
 
 ## Deploying and SSH
 
@@ -78,7 +80,7 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `putting a key on a server needs the paramiko package` | From source: `pip install paramiko`. The built programs include it. |
 | `the server's host key is not the one you confirmed` | Either the server was reinstalled (check its new fingerprint, then `deltapatcher ssh trust --host HOST --forget` and confirm again), or something is intercepting the connection. In that case, do not deploy. |
 | `the private key can be read by other users` | Click **Fix permissions** (or answer yes on the command line). OpenSSH refuses keys that others can read. |
-| `ssh-keygen cannot read ...` | The key file is damaged or not an SSH key. Make a new one with **New key** (Release page, step 2). |
+| `ssh-keygen cannot read ...` | The key file is damaged or not an SSH key. Make a new one with **New key** (Release page, **Where players get it**). |
 | `the remote folder must not contain ...` | Use forward slashes and no quotes or wildcards: `/var/www/game`, `C:/www/game`. |
 | `logged in; the remote folder ... does not exist yet` | Fine: the first deploy creates it (its parent folder must exist). |
 | `... blobs are still missing or the wrong size on the target after the upload` | The upload did not complete (disk full, quota, connection). The server still serves the old release. Fix the cause and deploy again. |
@@ -95,4 +97,4 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `... does not match the SHA-256 GitHub gives for it: not used` | The download was damaged or changed on the way; nothing was installed. Try again, or download it from the release page. |
 | `this DeltaPatcher runs from source` (self-update) | Update the repository instead: `git pull`. |
 | The build says `The build needs Python 3.11 or later` | Install a newer Python, delete `.venv`, and run `build.ps1` / `build.sh` again (on Linux: `PYTHON=python3.12 ./build.sh`). |
-| `Cannot serve: ... address already in use` | Another program uses the port. Pick another port (Release page, step 2, **This computer**), or `--port`. |
+| `Cannot serve: ... address already in use` | Another program uses the port. Pick another port (Release page, **Where players get it**, **This computer**), or `--port`. |

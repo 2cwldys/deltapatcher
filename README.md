@@ -66,9 +66,9 @@ identical files are stored once.
 
 **Release**: what to release (with what to leave out and what players keep), where players download it
 from (your server over SSH, a folder, or this computer to test), and one button that sends only what
-changed.
+changed, with the project's statistics under it.
 
-**Settings**: every setting of the project and of DeltaPatcher, explained, with the log one click away.
+**Settings**: every setting of the project and of DeltaPatcher, explained, the project's backups, and the log one click away.
 
 ## How it works
 

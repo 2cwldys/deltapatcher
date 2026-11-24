@@ -39,11 +39,11 @@ other pages show.
 [![The Update page](images/app-update.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png)
 
 **Release**: what to release, where players download it from (your server over SSH, a folder, or this
-computer to test), and one button that sends only what changed.
+computer to test), one button that sends only what changed, and the project's statistics under it.
 
 [![The Release page](images/app-release.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-release.png)
 
-**Settings**: every setting of `deltapatcher.ini`, and the log.
+**Settings**: every setting of `deltapatcher.ini`, the project's backups, and the log.
 
 [![The Settings page](images/app-settings.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-settings.png)
 

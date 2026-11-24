@@ -109,7 +109,7 @@ and give players your public key (see [Sign your releases](PUBLISHING.md#3b-sign
 
 ## Part 2: a key on your PC
 
-In DeltaPatcher, open the **Release** page, pick **Your server (SSH)** in step 2, and click **New key**:
+In DeltaPatcher, open the **Release** page, pick **Your server (SSH)** under **Where players get it**, and click **New key**:
 
 - Keep the suggested file (`deltapatcher_ed25519` in your `.ssh` folder).
 - Type a passphrase twice: at least 10 characters (a few words work well). It is not saved anywhere.
@@ -141,7 +141,7 @@ off, needs this second way.)
 
 ## Part 3: connect and release
 
-On the **Release** page, step 2, **Your server (SSH)**:
+On the **Release** page, under **Where players get it**, **Your server (SSH)**:
 
 1. *Host* `game.example.com` (or the IP address), *User* `deploy`, *Port* `22`, *Remote folder*
    `/var/www/game`, and *Players download from* `https://game.example.com/` (without a domain name:
@@ -155,7 +155,7 @@ On the **Release** page, step 2, **Your server (SSH)**:
 3. **Check host key**: compare the fingerprints shown with the ones you wrote down in Part 1. Click **They match: trust this server** only if they do. DeltaPatcher remembers the server, and refuses it later if its key
    ever changes.
 4. **Test connection**: the log says `logged in`.
-5. Fill in step 1 (the folder to release) and click **Release**. Turn on **Dry run** first to see what
+5. Fill in **What to release** (the folder to release) and click **Release**. Turn on **Dry run** first to see what
    would be sent.
 
 Command line, the same steps:

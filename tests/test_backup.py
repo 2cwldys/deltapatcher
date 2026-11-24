@@ -7,6 +7,7 @@ import contextlib
 import io
 import json
 import os
+import shlex
 import subprocess
 import sys
 import unittest
@@ -311,7 +312,7 @@ class Schedule(TempCase):
         self.assertNotIn(mine, lines)
         self.assertTrue(lines[2].endswith("# deltapatcher-backup %s" % pid))
         self.assertRegex(lines[2], r"^\d{1,2} \* \* \* \* ")                                # every hour
-        self.assertIn("--close --project '%s' backup" % mod.path, lines[2])
+        self.assertIn("--close --project %s backup" % shlex.quote(mod.path), lines[2])    # quoted only when it needs it
         self.assertEqual(r["entry"], lines[2])
         self.answers[("crontab", "-l")] = ("", "no crontab for player\n", 1)            # none yet
         backup.schedule(mod, "daily", platform="linux")

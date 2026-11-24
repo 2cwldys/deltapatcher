@@ -124,7 +124,8 @@ deltapatcher serve [STORE] [--bind 127.0.0.1] [--port 8000] [--verbose]
 ```
 
 Serve a store over HTTP, for testing or a LAN. It serves only `manifest.json`,
-`manifest.previous.json`, `blobs/<hash>` and `sigs/<hash>.sig`, never a listing. `--bind 0.0.0.0` makes it reachable
+`manifest.previous.json`, `blobs/<hash>` and `sigs/<hash>.sig` (and, for a release shared by torrent,
+`release.torrent` and `release.item`, also under `/<torrent name>/`), never a listing. `--bind 0.0.0.0` makes it reachable
 from other machines. For the internet, use a real web server with HTTPS.
 
 ## update
@@ -148,6 +149,9 @@ folder path or a `file://` URL; default: the remembered one, else `http://localh
 
 With `--all`, each project's lines start with its name, and a summary closes the run: up to date, updated,
 or failed and why. One project failing never stops the others.
+
+A project shared by torrent also downloads from other players ([Torrents](#torrents)). Its address stays the
+floor: whatever no peer has comes from it, and an update never fails because of torrents.
 
 ## check
 
@@ -199,6 +203,33 @@ last. The first time a server is used, its host key is shown for you to confirm.
 | `project accept NAME` | Apply it (asks first; `--yes` does not). `--not-now` puts it off until the publisher changes the project again; `--expect HASH` applies only the change you saw. A new address or publisher key is taken only when it is signed with the key you trust now. |
 
 With `--json`, a check carries `data.publisher_change` and, when file names are shown, `data.changes`.
+
+## Torrents
+
+```
+deltapatcher seed [--project NAME | --all] [--json]
+deltapatcher version --torrent
+```
+
+A publisher can share a project's releases by BitTorrent too (off by default; it needs signed releases):
+players' DeltaPatchers then download from each other as well as from the address, and a project with no
+address updates by torrent only. See [Sharing by torrent](PUBLISHING.md#sharing-by-torrent), and for players
+[Downloading from other players](PLAYERS.md#downloading-from-other-players).
+
+| Command or option | |
+| --- | --- |
+| `config set torrent=yes seeds=game.example.com:6881` | Share the project by torrent (it needs `sign = yes`), then release with `--sign` as before. Its torrent id is made once and never changes. |
+| `seed --all` | Share every project set to seed (`seed = yes`) with other players until stopped: Ctrl+C, or with `--json` a line `cancel` or the end of standard input (it ends within two seconds). Only files DeltaPatcher has checked are offered. |
+| `seed --project NAME` | Seed that project for this run: the command is the yes. |
+| `version --torrent` | Test this DeltaPatcher's BitTorrent support: a session on 127.0.0.1, a small torrent made and checked. Exit 1 when it fails. |
+| `project import FILE --seed` | Seed the file's projects shared by torrent (otherwise a terminal asks; the default is no) |
+
+`seed` prints what it seeds, then a line for each project every 5 seconds: its peers, its upload rate and
+what it sent. `projects` shows which projects a seed run is seeding. `torrents` takes `allow` or `refuse`
+only (in the settings file, anything but `allow` refuses). A publish of a project with no address says how
+players find it: once a seed run of its store has put its release item in the DHT. Publishing with
+`torrent = no` takes `release.torrent` and `release.item` out of the store. The settings are in
+[Settings and logs](#settings-and-logs).
 
 ## stats
 
@@ -264,7 +295,7 @@ it releases and where that goes.
 
 ```
 deltapatcher project new NAME
-deltapatcher project import FILE [--folder DIR [--as-is]] [--only NAME]... [--name NEW] [--dry-run] [--yes]
+deltapatcher project import FILE [--folder DIR [--as-is]] [--only NAME]... [--name NEW] [--dry-run] [--yes] [--as-new] [--seed]
 deltapatcher project export NAME... --out FILE [--sign [KEYFILE]] [--updates | --no-updates]
 deltapatcher project changes NAME
 deltapatcher project accept NAME [--yes] [--not-now] [--expect HASH]
@@ -286,11 +317,13 @@ deltapatcher project remove --all [--yes]
   later. `--as-is`, with `--folder` and one project, uses `DIR` itself, without the publisher's folder name.
   `--only NAME`
   adds only that project of the file (repeatable), `--name NEW` gives a single project another name here,
-  and `--dry-run` says what the file holds, adding nothing.
+  and `--dry-run` says what the file holds, adding nothing. `--seed` seeds the file's projects shared by
+  torrent (otherwise a terminal asks; the default is no).
 - `export`: write a project file holding these projects, to give to players. `FILE.deltapatch` opens
   DeltaPatcher with a double-click; `FILE.html` is a page anyone can read in a browser. For each project it
   holds the name, the http(s) address players update from (`public_url`, else `source_url`), the publisher
-  key, and a description and website when set. Never a folder, a server login or a key file. `--sign` signs
+  key, and a description and website when set; for a project shared by torrent, also its torrent id, name
+  and seeds (the file must then name the publisher key). Never a folder, a server login or a key file. `--sign` signs
   it with your signing key (it asks the passphrase; `--passphrase-stdin` for programs).
 - `add`: list a project's settings file (`.ini`) kept somewhere else (in a game's folder, on a share).
   `--name` gives it a name, written into that file. A project file is added with `import`.
@@ -367,7 +400,9 @@ The last line is `result` or `error`. Standard input carries what a person would
 `--passphrase-stdin` the first line is the passphrase; a later line `cancel` stops the run at its next
 safe point: an update during its download or before it moves its first file (the folder stays as it
 was), a publish, release, deploy or backup restore before its new manifest goes up (players keep the
-release before); closing standard input stops `serve`.
+release before); closing standard input stops `serve`. A `seed` run ends within two seconds of `cancel` or
+the end of standard input; it sends `{"event": "seeding", ...}` for each project every 5 seconds (its state,
+peers, upload rate and what it sent).
 
 `update --all` and `check --all` add `queue`, `project-start` and `project-end` events, and every line
 about one project carries its name (`project`) and settings file (`file`); the full list is at the top of
@@ -383,6 +418,7 @@ about one project carries its name (`project`) and settings file (`file`); the f
 | `sign status` | Is there a signing key, and does it have a passphrase |
 | `projects` | Every project and what is set up in it |
 | `version` | The version |
+| `version --torrent` | Test BitTorrent support (exit 1 when it fails) |
 
 Error codes the app acts on: `host-unknown` (with the host's keys), `host-changed`, `key-permissions`,
 `passphrase-needed`, `passphrase-short`, `no-signing-key`, `exists`, `stopped`.
@@ -401,11 +437,16 @@ your comments. Which file is used:
 project, and so is any settings file listed in `project_files`. A project's file holds its own settings only:
 `[project]` (`title`, and the `description`, `website`, `install_hint` and `install_folder` shown with it and
 carried by project files), `[update]`,
-`[publish]` and `[server]`. DeltaPatcher's own stay in the main file: `[window]` (`close_to_tray`,
-`minimize_to_tray`, `start_with_system`, `check_updates`) and `[general]`: `parallel_updates` (how many
-projects Update all runs at once), `check_every_hours` (how often the window checks every project; 0: only
-when it starts), `auto_update` (update what a check finds, by itself), `project_files` and `current_project`
-(the project the app shows).
+`[publish]`, `[server]`, `[backup]` and `[torrent]` (`torrent`: share it by torrent; `torrent_id`, kept by
+DeltaPatcher; `torrent_name`; `seeds`; `seed`: seed it here). DeltaPatcher's own stay in the main file:
+`[window]` (`close_to_tray`, `minimize_to_tray`, `start_with_system`, `check_updates`) and `[general]`:
+`parallel_updates` (how many projects Update all runs at once), `check_every_hours` (how often the window
+checks every project; 0: only when it starts), `auto_update` (update what a check finds, by itself),
+`project_files` and `current_project` (the project the app shows), `torrents` (`allow`, or `refuse`: never
+BitTorrent, whatever a project says), `torrent_port` (6881: the port seeding listens on),
+`seed_upload_kbps` (0: no limit) and `torrent_port_mapping` (`no`: nothing asks the router to forward the
+port). `seeding.json` beside the main file says what the seed runs are seeding (they take turns writing it
+through `seeding.json.lock`).
 
 **Logs**:
 - everything DeltaPatcher shows, with the time: `%APPDATA%\DeltaPatcher\logs\deltapatcher.log` (Windows)

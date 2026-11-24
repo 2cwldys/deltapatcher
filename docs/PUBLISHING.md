@@ -184,6 +184,42 @@ release: a release with only new details is a new release too.
   release adds, changes and removes (the manifest is public either way). **What is new, for players** on the
   Release page, or `--notes`, adds your own notes to the release.
 
+## Sharing by torrent
+
+Players' DeltaPatchers can download a release from each other as well as from your address: less traffic
+for your server, or no server at all. It is off by default, set per project, and needs signed releases
+([3b](#3b-sign-your-releases-optional)).
+
+1. Turn it on: *Share by torrent too* (Settings), and *Seeds*, the computers players connect to first
+   (`deltapatcher config set torrent=yes seeds=game.example.com:6881`). DeltaPatcher makes the project's
+   torrent id once; it never changes.
+2. Release as before. The store also gets `release.torrent` (the release as a BitTorrent v2 torrent: the
+   manifest, its signature and the blobs) and `release.item` (a signed pointer to it), sent before the
+   manifest.
+3. Export the project file again: it now carries the torrent's id, name and seeds, and must name your
+   publisher key. Players who follow you are asked about a changed list of seeds, as about a new address.
+4. Keep a seed running where players can reach it: `deltapatcher seed --all` with *Seed this project* on, on
+   your computer or on a server or in a container ([docker/README.md](../docker/README.md#seeding-from-a-container)).
+   At home, forward the *Torrent port* (6881, TCP and UDP) on your router to that computer, or turn on *Port
+   mapping*, and let it through that computer's firewall.
+
+- **With an address**, the address stays the floor: what no peer has comes from it, and an update never
+  fails because of torrents.
+- **With no address** (no `source_url`, no `public_url`), the project updates by torrent only: players find
+  your newest release in a DHT, by your publisher key and the project's torrent id. A new player needs at
+  least one seed they can reach: list several, and keep one always on. With nobody seeding, nobody new can
+  start.
+- **Peers are found** from the project file's seeds, peers met before, peer exchange, the local network
+  while seeding, and (with no address) a DHT that starts only from those: no tracker, no public DHT router.
+- **A restore** (Backups) of a project shared by torrent only does not move players to it: publish its
+  release again.
+- **Turning it off**: the next publish takes `release.torrent` and `release.item` out of the store. A copy
+  left on the server names an older release, so players pass over it and use the address.
+- **Players decide**: seeding is their yes, per project, and they can refuse torrents completely (then they
+  update from your address only).
+
+What you answer for: [Torrents: the law and your privacy](../SECURITY.md#torrents-the-law-and-your-privacy).
+
 ## Statistics
 
 The **Statistics** card on the **Release** page, or on the command line:

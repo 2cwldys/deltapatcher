@@ -86,6 +86,12 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
   point: an update before it moves its first file, a publish, deploy or restore before its new manifest
   goes up. Lifting it starts nothing that was stopped; the automatic schedules count from then. It covers
   what the app runs, not the command line or the MCP server.
+- **Torrents need nothing outside DeltaPatcher.** Peers come from the project file's seeds, peers met
+  before, peer exchange and the local network, and a project with no address finds its release in a DHT
+  started only from those: no tracker, no public DHT router. The DHT protocol cannot be closed to an
+  outside node that reaches it, so integrity never depends on it: every item is signed and every file
+  hashed. libtorrent's own check of a seeded file is not used (it misses a file changed in place): the
+  engine hashes, and tells libtorrent which pieces it has.
 
 ## State
 
@@ -93,7 +99,8 @@ Version 0.3.0: one Release page for publishing and sending, a menu of plain ques
 self-update, putting a key on a server with its password, Docker and Pterodactyl, the wiki. Since then:
 several projects, project files to share them, Reset and Remove all, hourly checks with an optional
 auto-update, minimize to tray and start with the computer, the wiki from the command line, and an MCP
-server for AI assistants, statistics for publishers, backups of the live release, and Force stop. A
+server for AI assistants, statistics for publishers, backups of the live release, Force stop, projects
+that follow their publisher, and torrents beside HTTP. A
 compatibility test keeps what each released version wrote working.
 
 ## Where it is going
@@ -139,6 +146,10 @@ as possible without becoming hard to use.
     must be signed with the key trusted now; a project file can be update capable (version 2) or one-off;
     players see what changed (file names, release notes) when the publisher allows it; containers take a
     project file (`update --project-file`).
-12. **Being looked into: torrents beside HTTP**, set by the publisher per project, off by default: the store
-    as a BitTorrent v2 torrent, the newest release found through the DHT under the publisher key, players
-    seeding by choice. A research spike comes before any of it is built.
+12. **Torrents beside HTTP** (the engine is built). Set by the publisher per project, off by default,
+    signed releases only (`deltapatcher/torrent/`): the store as a BitTorrent v2 torrent
+    (`release.torrent`), and for a project with no address its newest release found in a DHT by the
+    publisher key (`release.item`, numbered so a player never goes back). libtorrent 2.0.15 is frozen into
+    the engine; no tracker, no public DHT router, no port mapping unless asked. Players can refuse torrents
+    completely; seeding is their yes per project, from their own folder, offering only files the engine
+    checked, paused while an update changes them.

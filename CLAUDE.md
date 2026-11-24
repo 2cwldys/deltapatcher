@@ -12,6 +12,7 @@ From the repository's root. The build makes `.venv`; use its Python.
 | --- | --- |
 | Every test | `python -m unittest discover -s tests` |
 | One test file | `python -m unittest tests.test_release` |
+| The torrent tests | `pip install -r requirements-torrent.txt`, then `python -m unittest tests.test_torrent tests.test_torrent_swarm` (the second needs libtorrent; `DP_REQUIRE_TORRENT=1` turns its skips into failures) |
 | The app: types, tests, then a build | `cd app && npm ci && npm run typecheck && npm test && npm run build` |
 | The app from source | `cd app && npm run dev` (without a built engine it runs `python -m deltapatcher`) |
 | Engine, app and release files | `powershell -ExecutionPolicy Bypass -File build.ps1` or `./build.sh` (`-EngineOnly`, `-Test`) |
@@ -86,6 +87,13 @@ Releasing a new version of DeltaPatcher is in the README, under For developers.
 - `git commit -- <path>` drops a mode change made with `git update-index --chmod=+x` (the shell scripts need
   theirs): stage with `git add`, then commit.
 - Images and binaries are in Git LFS (`.gitattributes`); without `git lfs install` the pictures are pointers.
-- The build needs Python 3.11 or later (Pillow); CI uses 3.12. The engine itself runs on 3.8 or later.
+- The build needs Python 3.11 to 3.13 (Pillow, and libtorrent 2.0.15's wheels); CI uses 3.12. The engine
+  itself runs on 3.8 or later; torrents from source need 3.9 to 3.13.
+- libtorrent's defaults reach the public network (listening on 0.0.0.0:6881, DHT routers, UPnP, NAT-PMP,
+  local discovery): every session is made in `deltapatcher/torrent/session.py` from one settings pack.
+  Tests listen on 127.0.0.x only (`DELTAPATCHER_TORRENT_TEST_IP`); local discovery binds 0.0.0.0:6771
+  whatever the listen address, so it is off on loopback. Never run a seed on all interfaces on a desktop
+  to test: Windows asks about the firewall. macOS answers only on 127.0.0.1 until
+  `sudo ifconfig lo0 alias 127.0.0.N up`.
 - Tests never share settings: `TempCase` in `tests/helpers.py` gives each test its own `DELTAPATCHER_CONFIG`.
   A test that touches settings or logs uses it.

@@ -14,11 +14,15 @@ store/
     ...                    one file per distinct content, named by its SHA-256 (64 lowercase hex characters)
   sigs/                    signed releases only
     <sha256 of manifest.json>.sig
+  release.torrent          shared by torrent only: the release as a BitTorrent v2 torrent
+  release.item             shared by torrent only: the signed pointer to that torrent
   .htaccess                for Apache (optional): serve the release, nothing else
 ```
 
 A blob's name is the SHA-256 of its bytes, so a blob never changes once written. It can be cached
-forever and checked by anyone.
+forever and checked by anyone. A store shared by torrent also holds `.deltapatcher-torrentcache.json` (what
+each blob hashes to in the torrent, so publishing again hashes only new blobs) and, while it is seeded,
+`.deltapatcher/seeding/`: neither is sent with the release.
 
 ## Signatures (sigs/)
 
@@ -86,13 +90,18 @@ With the publisher's *share_updates* on, it holds the project's details as a pro
 with it off (or no address players update from) only `show_files` and `notes`. It is part of the manifest,
 so it is signed with it. `show_files` says whether DeltaPatcher shows players the names of the files a
 release adds, changes and removes; `notes` are the release notes (plain text, at most 4000 characters).
+A project shared by torrent also carries `"torrent": {"id", "name", "seeds"}`, as its project file does;
+players who follow the publisher are asked about a change to it, as about a new address.
 Readers pass over fields they do not know.
 
 ### Project files
 
 A project file (`.deltapatch`, or the `.html` page that carries the same JSON) is version 1, or version 2
 when it is update capable (`"updates": true`: players are asked when the publisher changes the project
-later). DeltaPatcher 0.3.0 reads version 1 and asks to be updated for version 2.
+later), or version 3 when a project in it is shared by torrent: that project's entry has `"torrent":
+{"id": "<32 hex>", "name": "...", "seeds": ["host:port", ...]}`, must name its publisher key, and may
+have no address (it updates by torrent only). A file is written with the lowest version its contents need,
+and a DeltaPatcher asks to be updated for a version newer than it reads.
 
 ### Path rules
 
@@ -106,6 +115,33 @@ A client must refuse the whole manifest if any path:
 - starts with the client's own folder `.deltapatcher` (or its 8.3 name `DELTAP~1`)
 - is the same as another path ignoring case, or names a file that another path uses as a folder
 
+## Torrents (release.torrent, release.item)
+
+A release shared by torrent (its publisher's `[torrent] torrent = yes`, which needs signed releases) has two
+more files beside its manifest, written before the manifest goes in place and sent before it:
+
+- `release.torrent`: the store's own files as a BitTorrent v2 torrent (BEP 52): `manifest.json`,
+  `sigs/<sha256 of manifest.json>.sig` and `blobs/<sha256>` for every blob the manifest names, under the
+  torrent's name. It names no tracker, and a web seed (the address's parent folder) only when the address
+  ends in the torrent's name.
+- `release.item`: the signed pointer to that torrent as the DHT keeps it (a BEP 44 mutable item), bencoded:
+
+| Key | |
+| --- | --- |
+| `k` | The publisher key's 32 bytes: the key the release is signed with |
+| `salt` | The project's torrent id: 32 hexadecimal characters, made once and never changed |
+| `seq` | The release's publish time in whole seconds, or the number before it + 1 when that is not larger |
+| `v` | `{"ih": the torrent's v2 infohash (32 bytes), "m": the SHA-256 of manifest.json, hex}` |
+| `sig` | The Ed25519 signature of `4:salt<n>:<salt>3:seqi<seq>e1:v<v bencoded>` |
+
+A client takes nothing from a peer on trust. In order: the item's signature against the publisher key it
+trusts, and its number against the highest it accepted before (a lower one is refused, from anyone); the
+torrent's infohash against the item's `ih`; the manifest's SHA-256 against `m`, and its signature as in
+[Signatures](#signatures-sigs); then every blob against its SHA-256, as over HTTP. Peers can only disagree
+about bytes, never about names: every file of the torrent is named by its SHA-256, or is the signed manifest
+and its signature. A project with an address keeps its address as the authority; the item matters to a
+project with no address, which finds it in the DHT by the publisher key and the torrent id.
+
 ## Serving
 
 Clients make plain `GET` requests:
@@ -113,10 +149,12 @@ Clients make plain `GET` requests:
 - `<base>sigs/<sha256 of manifest.json>.sig` (404 when the release is not signed)
 - `<base>blobs/<sha256>`, with `Range: bytes=N-` to resume (a server without Range support still works;
   the download just restarts)
+- `<base>release.torrent` and `<base>release.item`, for a project shared by torrent
 
 They send `User-Agent: DeltaPatcher/<version>`. No directory listing is needed or wanted. Recommended
-headers: `Cache-Control: no-cache` on the manifests, and `Cache-Control: public, max-age=31536000,
-immutable` on blobs and signatures (the `.htaccess` sets exactly this on Apache).
+headers: `Cache-Control: no-cache` on the manifests, `release.torrent` and `release.item`, and
+`Cache-Control: public, max-age=31536000, immutable` on blobs and signatures (the `.htaccess` sets exactly
+this on Apache).
 
 ## The client's own folder
 
@@ -131,6 +169,10 @@ Inside every folder it updates, the client keeps `.deltapatcher/`:
 | `rollback/` | The last completed update: `journal.jsonl`, `files/` (the replaced and removed files), `state.prev.json` |
 | `rollback.new/` | The update in progress |
 | `lock` | Held with an operating-system lock while an update or rollback runs |
+| `release/` | A project shared by torrent: the release the folder has (`manifest.json`, `sigs/<sha256>.sig`, `release.torrent`, `release.item`), kept so it can be seeded |
+| `torrent.json` | A project shared by torrent: `{"<torrent id>": {"seq", "peers", "saved"}}`, the highest release item number accepted and the peers met |
+| `torrent/<pid>.<hex>/` | While a project with no address looks for its release: that run's own work folder (the manifest, signature and blobs from peers), removed when it ends |
+| `seeding/` | While a seed run seeds the folder: `<pid>.seeding`; an update's request `<pid>.pause` (`{"by", "at", "lock"}`, with the `<pid>.<random>.asking` file the update holds locked while it asks) and the seed run's answer `<pid>.paused` (`{"pid", "at"}`: it lets go of the folder's files before they change); `next/`, a newer release it seeds before the folder has it |
 
 `journal.jsonl` has one JSON object per line: a header `{"started", "had_state", "source",
 "version"}`, then one `{"op": "add"|"replace"|"remove", "path"}` before each change, and

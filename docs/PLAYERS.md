@@ -101,6 +101,28 @@ check shows **The publisher changed this project** on its row and on the Update 
 publisher's notes, when the publisher shows file names. The setting *Ask me when the publisher changes this
 project* (Settings) turns the questions off for that project.
 
+## Downloading from other players
+
+A publisher can share a project by torrent. DeltaPatcher then downloads from other players as well as from
+the publisher's address, or only from players for a project with no address. Everything from a player is
+checked as a download from a server is: the publisher's signature, then every file's SHA-256.
+
+- **Seeding** shares the project's files with other players while DeltaPatcher seeds. It is off unless you
+  say yes (*Seed this project*, Settings). Only files DeltaPatcher has checked are offered: never a file you
+  changed, never your own files the release keeps for you. Seeding pauses while an update changes the folder.
+- **Refusing torrents completely**: set *Torrents* to *refuse* (Settings). DeltaPatcher then never uses
+  BitTorrent, whatever a project file or its publisher says: a project with an address updates from it
+  only, and a project shared by torrent only cannot update.
+- **Other players see your IP address** while you download from them or seed to them.
+- **Your firewall may ask** whether DeltaPatcher may accept connections, the first time it seeds: Windows
+  does, and macOS does when its firewall is on. Allow it to seed well; refusing still lets you download. On
+  Linux, open the *Torrent port* in your firewall (ufw, firewalld) if you run one.
+- **Your router**: others reach you through the *Torrent port* (6881) when it is forwarded to your computer.
+  DeltaPatcher asks the router to do that only with *Port mapping* on.
+- **On a Mac**, torrents need macOS 14 or later; older ones update from the address.
+
+The law and your privacy: [SECURITY.md](../SECURITY.md#torrents-the-law-and-your-privacy).
+
 ## What it will and will not touch
 
 - It never deletes files you added yourself, or files that were in the folder before DeltaPatcher

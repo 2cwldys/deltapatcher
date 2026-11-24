@@ -87,6 +87,26 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `the server has no atomic rename: it was missing for a moment` | Not an error: an older SFTP server could not replace the manifest in one step. It was absent for about a second. |
 | A server without `internal-sftp` refuses the key | Use the line from `deltapatcher ssh pubkey --full` instead. |
 
+## Torrents
+
+| Message | What to do |
+| --- | --- |
+| `This project updates only by torrent, and torrents are refused in your settings` | *Torrents* is set to *refuse* (Settings; `torrents = refuse`). Set it to *allow*, or ask the publisher for an address to update from. |
+| `the release of this project could not be found: no seed or DHT node had it` | None of the project's seeds answered, and no peer met before either. Ask the publisher to keep a seed running, and check the seeds the project file lists. |
+| `This DeltaPatcher has no BitTorrent support (libtorrent is not installed)` | From source: `pip install -r requirements-torrent.txt` (Python 3.9 to 3.13), or `pip install ".[torrent]"`. The programs from a release have it built in; on a Mac it needs macOS 14 or later. `deltapatcher version --torrent` tests it. |
+| `the swarm is slow (...): the address sends blobs too, and the first to bring one wins` | Nothing to do: the address and the other players race, and the update never takes much longer than the address alone. |
+| `the release's torrent ...: everything comes from the address` | The address's `release.torrent` and `release.item` are missing, damaged or of another release (one going up while you updated): the update used the address alone. If it stays, the publisher publishes and deploys again. |
+| `torrents: allow or refuse` | *Torrents* takes only these two words. In the settings file, anything but `allow` refuses. |
+| `Warning: the settings file ... cannot be read (...): torrents are refused until it is fixed.` | A line in `deltapatcher.ini` is broken (each setting is `name = value`), or the file cannot be read. Fix the line the warning names; until then DeltaPatcher refuses torrents, to be safe. |
+| `the release found (number ...) is older than the one this folder accepted meanwhile (...): update again` | Two updates of one folder ran at once, and the other one took a newer release. Update again. |
+| `blob ... in the cache no longer matches its SHA-256` | A downloaded file changed on disk between its check and its install (a disk or antivirus problem). The update was undone; update again. |
+| `torrents need signed releases` | Turn signing on first (`sign = yes`, with a key from `deltapatcher sign keygen`), then share by torrent. |
+| `... is shared by torrent, and its project file must name its publisher key` (exporting) | Export it signed (`--sign`), or set the project's *Publisher key*. |
+| `port 6881 is taken: seeding on port ... instead` | Another program uses the port. Set *Torrent port* (Settings) to a free one, and forward that one on your router. |
+| `the swarm made no progress for 30 seconds` | Nothing to do: the rest comes from the address. |
+| `... not seeded: its folder keeps no release to seed yet: update it first` | Update the project once; its folder then keeps what seeding needs. |
+| Windows (or macOS, with its firewall on) asks whether DeltaPatcher may accept connections | It asks the first time DeltaPatcher seeds. Allow it so other players can reach you; refusing still lets you download. On Linux, open the *Torrent port* in your firewall (ufw, firewalld) yourself. |
+
 ## The programs
 
 | Problem | What to do |

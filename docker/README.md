@@ -100,6 +100,20 @@ to adapt (admin panel, **Nests**, **Import Egg**):
 Change the docker image (it needs glibc 2.35 or later, as above), the start command and the *done* text to
 fit your game. `--close` makes sure nothing waits for a key press.
 
+## Seeding from a container
+
+A container can be the always-on seed of a project shared by torrent:
+
+```
+deltapatcher-cli --no-log --close project import /data/game.deltapatch --folder /srv/game --yes --seed
+deltapatcher-cli --no-log --close update --all
+deltapatcher-cli --no-log --close seed --all
+```
+
+Publish the torrent port (`-p 6881:6881 -p 6881:6881/udp`) and list `<host>:6881` in the project's seeds.
+`seed` runs until the container stops. The command-line programs from a release have BitTorrent built in;
+installed with pip from the repository, use `pip install ".[torrent]"`.
+
 ## Good to know
 
 - **Settings and logs**: `--no-log` writes no log file. The settings file goes to `~/.config/deltapatcher/`;

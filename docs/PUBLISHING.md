@@ -1,7 +1,7 @@
 # Publishing a release
 
-You have a folder with your game, mod or asset pack. Publishing turns it into a *store* that clients
-update from.
+You have a folder with your game, mod or asset pack. Releasing it publishes it as a *store* (what
+players update from) and sends that where players download it. The app keeps the store in its own folder.
 
 ## 1. Lay out the release folder
 
@@ -10,7 +10,7 @@ works.
 
 Leave out what players should not get:
 
-- App: on the **Publish** page, *Leave out of the release*: **Add folder** or **Add file**, picked from
+- App: on the **Release** page, *Leave out of the release*: **Add folder** or **Add file**, picked from
   inside the release folder. A folder leaves out everything in it; a file is that one file only.
 - Command line: `--leave-out screenshots --leave-out notes.txt` (a path inside the release folder:
   typed, pasted or dragged into the window). Without it, the list saved by the app is used.
@@ -27,7 +27,8 @@ folder.
 
 ## 2. Publish
 
-App: the **Publish** page: choose *Folder to release* and *Store*, fill in *Name* and *Version*, click **Publish**.
+App: the **Release** page, step **1. What to release**: the folder, *Name* and *Version*. **Release** (step
+3) publishes it and sends it on; see section 5.
 
 Command line:
 
@@ -53,7 +54,7 @@ What happens:
 A *protected* file is created when a player does not have it, and never overwritten after that.
 Use it for default settings the game later changes:
 
-- App: on the **Publish** page, *Players keep their own copy*: **Add folder** or **Add file**. A folder
+- App: on the **Release** page, *Players keep their own copy*: **Add folder** or **Add file**. A folder
   covers everything in it (a `saves` folder, say); a file is that one file only.
 - Command line: `--protect config/user.cfg --protect saves` (paths inside the release folder).
   Without it, the list saved by the app is used.
@@ -69,7 +70,7 @@ http. Signing is your choice, and so is checking for players: an unsigned releas
 anyone who has not been told to expect a signature.
 
 1. Make a signing key once:
-   - App: **Publish** page > **New signing key** (asks a passphrase twice; the public key goes to the clipboard)
+   - App: **Release** page > **Sign releases** > **New signing key** (asks a passphrase twice; the public key goes to the clipboard)
    - Command line: `deltapatcher sign keygen`
 
    The key is `%APPDATA%\DeltaPatcher\signing-key.pem` (Windows) or `~/.config/deltapatcher/signing-key.pem`,
@@ -96,16 +97,17 @@ server never serves it. Turn off **.htaccess for Apache**, or use `--no-htaccess
 
 ## 4. Test it on your PC
 
-App: **Serve locally** (Publish page), then **Update** a test folder from `http://localhost:8000/`.
-Command line: `deltapatcher serve ./store`, then `deltapatcher update ./test --source http://localhost:8000/`.
+App: **Release** page, step 2 **This computer, to test**, then **Release**; then **Update** a test folder
+from `http://localhost:8000/`.
+Command line: `deltapatcher release --to local`, then `deltapatcher update ./test --source http://localhost:8000/`.
 
 ## 5. Put the store where players can read it
 
 The store is plain static files: any web server can serve it. Choose one:
 
-- **A VPS**: deploy over SSH from the **Server** page. See [Setting up a VPS](VPS-SETUP.md).
-- **A folder**: the **Server** page, *A folder*, for a web root on this machine or a network share. Command
-  line: `deltapatcher deploy ./store --to-folder D:/www/game`.
+- **A VPS**: **Release** page, step 2 **Your server (SSH)**. See [Setting up a VPS](VPS-SETUP.md).
+- **A folder**: step 2 **A folder**, for a web root on this machine or a network share. Command line:
+  `deltapatcher release --to folder --to-folder D:/www/game`.
 - **Any static host** (object storage, a CDN): upload `manifest.json`, `manifest.previous.json`,
   `blobs/` and `sigs/` (and `.htaccess` for Apache). Upload the blobs and signatures first and
   `manifest.json` last.

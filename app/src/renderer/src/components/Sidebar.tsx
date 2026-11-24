@@ -1,12 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Bug, RefreshCw, UploadCloud, Server, SlidersHorizontal, LucideIcon } from 'lucide-react'
+import { Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
 import { Page, useApp } from '../store/app'
 import { REPO_URL } from '@shared/project'
 
 const LINKS: { page: Page; label: string; hint: string; Icon: LucideIcon }[] = [
-  { page: 'update', label: 'Update', hint: 'Keep a folder up to date', Icon: RefreshCw },
-  { page: 'publish', label: 'Publish', hint: 'Make a release', Icon: UploadCloud },
-  { page: 'server', label: 'Server', hint: 'Deploy over SSH', Icon: Server },
+  { page: 'update', label: 'Update', hint: 'Get the latest release', Icon: RefreshCw },
+  { page: 'release', label: 'Release', hint: 'Send players a new version', Icon: Rocket },
   { page: 'settings', label: 'Settings', hint: 'deltapatcher.ini', Icon: SlidersHorizontal }
 ]
 

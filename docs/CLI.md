@@ -51,13 +51,44 @@ fingerprints, commands), and its teal for the progress bar.
 | 2 | `update --check`: an update is available |
 | 130 | Stopped with Ctrl+C |
 
+## release
+
+```
+deltapatcher release [SRC] [--version VERSION] [--name NAME] [--leave-out PATH]... [--protect PATH]... [--sign [KEYFILE]]
+                     [--to sftp|folder|local] [--to-folder FOLDER] [--host HOST] [--user USER] [--port 22] [--key KEYFILE]
+                     [--remote-root PATH] [--dry-run] [--no-htaccess] [--no-prune]
+```
+
+Publish the folder, then send it where players download it from, in one step: what `publish` and then
+`deploy` (or `serve`) do. Everything left out comes from the settings file, so once the server is saved
+a new version is just:
+
+```
+deltapatcher release --version 1.1
+```
+
+| Option | |
+| --- | --- |
+| `SRC` | The folder to release. Without it: the saved `publish_src`. |
+| `--to sftp` | The saved server over SSH (`ssh_host`, `ssh_user`, `remote_root`, or the options). |
+| `--to folder` | A folder: `--to-folder`, or the saved `deploy_folder`. |
+| `--to local` | This computer, to test: serves it at `http://localhost:<serve_port>/` until Ctrl+C. |
+| `--dry-run` | Publish, then say what would be sent; send nothing. |
+
+Without `--to`: the saved `deploy_mode`. The store is the saved `store_dir`, else a folder DeltaPatcher keeps
+beside its settings file, one per folder released. The same version again with changed files is fine (a
+*shadow patch*): only what changed is added and sent, and players get it. After a release it prints the
+saved `public_url`, the address players update from.
+
 ## publish
 
 ```
-deltapatcher publish SRC STORE [--name NAME] [--version VERSION] [--leave-out PATH]... [--protect PATH]... [--sign [KEYFILE]] [--no-htaccess] [--no-prune]
+deltapatcher publish [SRC] [STORE] [--name NAME] [--version VERSION] [--leave-out PATH]... [--protect PATH]... [--sign [KEYFILE]] [--no-htaccess] [--no-prune]
 ```
 
-Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `sigs/`, `.htaccess`). See
+Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `sigs/`, `.htaccess`), sent
+nowhere: `release` does this and the sending. Without `SRC`: the saved folder; without `STORE`: the saved
+store, else DeltaPatcher's own one for that folder. `--name` and `--version` default to the saved ones. See
 [Publishing a release](PUBLISHING.md).
 
 | Option | |
@@ -73,7 +104,7 @@ Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `s
 ## serve
 
 ```
-deltapatcher serve STORE [--bind 127.0.0.1] [--port 8000] [--verbose]
+deltapatcher serve [STORE] [--bind 127.0.0.1] [--port 8000] [--verbose]
 ```
 
 Serve a store over HTTP, for testing or a LAN. It serves only `manifest.json`,
@@ -107,8 +138,8 @@ Undo the last completed update of `FOLDER`.
 ## deploy
 
 ```
-deltapatcher deploy STORE --to-folder FOLDER [--dry-run] [--no-prune]
-deltapatcher deploy STORE [--host HOST] [--user USER] [--port 22] [--key KEYFILE] [--remote-root PATH] [--dry-run] [--no-prune]
+deltapatcher deploy [STORE] --to-folder FOLDER [--dry-run] [--no-prune]
+deltapatcher deploy [STORE] [--host HOST] [--user USER] [--port 22] [--key KEYFILE] [--remote-root PATH] [--dry-run] [--no-prune]
 ```
 
 Send a store to a folder, or to a server over SFTP. Only missing blobs are sent; the manifest goes in
@@ -200,18 +231,18 @@ Your releases on a VPS. Once: save the server, make a key, put its line on the s
 host key (the server itself: [Setting up a VPS](VPS-SETUP.md)):
 
 ```
-deltapatcher config set ssh_host=game.example.com ssh_user=deploy remote_root=/var/www/game
+deltapatcher config set publish_src=./game ssh_host=game.example.com ssh_user=deploy remote_root=/var/www/game
+deltapatcher config set public_url=https://game.example.com/
 deltapatcher ssh keygen
 deltapatcher ssh pubkey          (add the line it prints to ~/.ssh/authorized_keys on the server)
 deltapatcher ssh trust
 deltapatcher ssh test            (optional: can it log in?)
 ```
 
-Then for every release: publish it, and send the server only what it does not have yet:
+Then for every release, one line: it publishes `./game` and sends the server only what changed:
 
 ```
-deltapatcher publish ./game ./store --name "My Game" --version 1.1
-deltapatcher deploy ./store
+deltapatcher release --version 1.1
 ```
 
 Players update from the address the web server gives that folder:

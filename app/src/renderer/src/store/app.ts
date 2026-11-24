@@ -21,7 +21,7 @@ export interface Progress {
   total: number
   label: string
 }
-export type Page = 'update' | 'publish' | 'server' | 'settings'
+export type Page = 'update' | 'release' | 'settings'
 
 interface RunOptions {
   passphrase?: string
@@ -50,9 +50,9 @@ interface State {
   results: Record<string, any>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setResult: (kind: string, data: any) => void
-  // the local server ("Serve locally"): it keeps running whichever page is shown
+  // the release served on this computer (Release, "This computer"): it keeps running whichever page is shown
   serving: { jobId: string; url: string } | null
-  startServe: () => Promise<void>
+  startServe: (store?: string) => Promise<void>
   stopServe: () => void
   setPage: (p: Page) => void
   load: () => Promise<void>
@@ -115,16 +115,17 @@ export const useApp = create<State>((set, get) => ({
   results: {},
   serving: null,
 
-  startServe: async () => {
+  // serve a release on this computer: the store a release just wrote, else the saved store, else the engine's
+  // own store for the saved folder
+  startServe: async (store?: string) => {
     if (get().serving) return
-    const store = String(get().effective('store_dir') || '')
+    const chosen = store || String(get().effective('store_dir') || '')
     const port = String(get().effective('serve_port') || 8000)
-    if (!store) {
+    if (!chosen && !get().settings.publish_src) {
       await ask.info(
         'Nothing to serve yet',
-        `Serve locally shares the Store folder (where Publish writes a release) at http://localhost:${port}/, ` +
-          'for this computer only, so you can try the release on the Update page before you deploy it.\n\n' +
-          'Choose a folder to release and a Store folder, click Publish, then Serve locally.'
+        `"This computer" serves your release at http://localhost:${port}/, for this computer only, so you can ` +
+          'try it on the Update page before players get it.\n\nChoose the folder to release, then click Release.'
       )
       return
     }
@@ -133,7 +134,7 @@ export const useApp = create<State>((set, get) => ({
       if (e.event === 'serving') set({ serving: { jobId, url: e.url } })
     })
     set({ serving: { jobId, url: '' } })
-    const r = await window.api.run({ jobId, args: ['serve', store, `--port=${port}`] })
+    const r = await window.api.run({ jobId, args: chosen ? ['serve', chosen, `--port=${port}`] : ['serve', `--port=${port}`] })
     const started = Boolean(get().serving?.url)
     handlers.delete(jobId)
     set({ serving: null })

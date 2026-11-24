@@ -36,26 +36,28 @@ identical files are stored once.
 
 ## The app
 
-| Publish | Server | Settings |
-| --- | --- | --- |
-| [![Publish](docs/images/app-publish.png)](docs/images/app-publish.png) | [![Server](docs/images/app-server.png)](docs/images/app-server.png) | [![Settings](docs/images/app-settings.png)](docs/images/app-settings.png) |
-| Make a release, sign it, and try it on this PC. The console shows every step. | Deploy over SSH (SFTP) or to a folder. Key, agent and host key status at a glance. | Every setting of `deltapatcher.ini`, explained, with the log one click away. |
+| Release | Settings |
+| --- | --- |
+| [![Release](docs/images/app-release.png)](docs/images/app-release.png) | [![Settings](docs/images/app-settings.png)](docs/images/app-settings.png) |
+| What to release (with what to leave out and what players keep), where players download it from (your server over SSH, a folder, or this computer to test), and one **Release** button that sends only what changed. | Every setting of `deltapatcher.ini`, explained, with the log one click away. |
 
 ## How it works
 
 ```mermaid
 flowchart LR
-  A["Your folder<br/>pk3, zip, maps, textures, exe"] -->|publish| B[("The store<br/>manifest.json<br/>blobs/&lt;sha256&gt;<br/>sigs/&lt;sha256&gt;.sig")]
-  B -->|deploy: SFTP,<br/>only missing blobs| C["Your VPS<br/>or any web host"]
-  B -->|serve locally| D["localhost:8000"]
+  A["Your folder<br/>pk3, zip, maps, textures, exe"] -->|release: publish| B[("The store<br/>manifest.json<br/>blobs/&lt;sha256&gt;<br/>sigs/&lt;sha256&gt;.sig")]
+  B -->|release: SFTP,<br/>only missing blobs| C["Your VPS<br/>or any web host"]
+  B -->|this computer,<br/>to test| D["localhost:8000"]
   C -->|update: compare hashes,<br/>download only what changed| E["Players' folders"]
   D --> E
 ```
 
-1. **Publish** hashes every file and writes a *store*: `manifest.json` (every path, size and SHA-256),
-   `blobs/` (each distinct content once), and `sigs/` when you sign.
-2. **Deploy** sends the store to a VPS over SFTP or to a folder. Blobs first, then the signature, then
-   the manifest, so players never see half a release.
+1. **Release** first publishes: it hashes every file and writes a *store* (`manifest.json` with every
+   path, size and SHA-256, `blobs/` with each distinct content once, and `sigs/` when you sign).
+   DeltaPatcher keeps the store in its own folder; you never have to look at it.
+2. Then it sends the store where players download it from: a VPS over SFTP, or a folder. Only the blobs
+   the target lacks travel: first the blobs, then the signature, then the manifest, so players never see
+   half a release. Releasing the same version again with changed files works the same way.
 3. **Update** compares a player's folder with the manifest, downloads and checks the blobs it lacks,
    and swaps them in with a journal and a rollback copy.
 
@@ -78,16 +80,15 @@ commands in; `--close` makes it close by itself when it is done (for shortcuts a
 ## Quick start
 
 In the app:
-1. **Publish**: choose a folder and a store folder, then click **Publish**. **Serve locally** puts the
-   release at `http://localhost:8000/`.
-2. **Update**: choose a folder to keep up to date and click **Update**. Change a file, publish again,
-   and update again: only that file travels.
+1. **Release**: choose the folder to release, pick **This computer, to test**, and click **Release**. The
+   release is served at `http://localhost:8000/`.
+2. **Update**: choose a folder to keep up to date, put in that address and click **Update**. Change a
+   file, release again, and update again: only that file travels.
 
 On the command line (`deltapatcher-cli`, or `cli\deltapatcher.bat` / `cli/deltapatcher.sh` from this repository):
 
 ```
-deltapatcher publish ./game ./store --name "My Game" --version 1.0
-deltapatcher serve ./store
+deltapatcher release ./game --version 1.0 --to local
 deltapatcher update ./my-install --source http://localhost:8000/
 ```
 

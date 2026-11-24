@@ -60,19 +60,21 @@ def main():
     put("maps/arena.bsp", os.urandom(900 << 10))
     put("textures/hd.zip", os.urandom(3 << 20))
     put("config/user.cfg", b"sensitivity 3\n")
+    put("screenshots/menu.png", os.urandom(40 << 10))
     put("readme.txt", b"My Game 1.4\n")
     key = os.path.join(demo, "keys", "signing-key.pem")
     engine("sign", "keygen", "--path", key, "--passphrase-stdin", stdin="\n")
     settings = {
         "source_url": "http://localhost:8765/", "install_dir": os.path.join(demo, "MyGame"),
         "publish_src": os.path.join(demo, "MyGame-release"), "store_dir": os.path.join(demo, "store"),
-        "name": "My Game", "version": "1.4", "protect": "config/*.cfg", "sign": "yes", "signing_key": key,
+        "name": "My Game", "version": "1.4", "protect": "config/user.cfg", "leave_out": "screenshots/",
+        "sign": "yes", "signing_key": key,
         "serve_port": "8765", "ssh_host": "game.example.com", "ssh_user": "deploy",
         "ssh_key": os.path.join("C:\\Users\\you" if os.name == "nt" else "/home/you", ".ssh", "deltapatcher_ed25519"),
-        "remote_root": "/var/www/game", "deploy_mode": "sftp",
+        "remote_root": "/var/www/game", "deploy_mode": "sftp", "public_url": "https://game.example.com/",
     }
     engine("config", "set", *["%s=%s" % kv for kv in settings.items()])
-    engine("publish", settings["publish_src"], settings["store_dir"], "--name", "My Game", "--version", "1.4", "--sign", key)
+    engine("publish", settings["publish_src"], settings["store_dir"], "--name", "My Game", "--version", "1.4", "--sign", key)   # the saved lists
     engine("update", settings["install_dir"], "--source", settings["store_dir"])
     put("readme.txt", b"My Game 1.5\n")
     put("maps/arena2.bsp", os.urandom(700 << 10))
@@ -91,7 +93,7 @@ def main():
         if not os.path.exists(demo):
             break
         time.sleep(0.5)
-    for name in ("update", "publish", "server", "settings"):
+    for name in ("update", "release", "settings"):
         p = os.path.join(out_dir, "app-%s.png" % name)
         print(p, os.path.getsize(p) if os.path.isfile(p) else "MISSING")
 

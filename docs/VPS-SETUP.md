@@ -89,7 +89,7 @@ the usual default on shared hosting). A virtual host, for your own Apache:
 
 ## Part 2: a key on your PC
 
-In DeltaPatcher, open the **Server** page and click **New key**:
+In DeltaPatcher, open the **Release** page, pick **Your server (SSH)** in step 2, and click **New key**:
 
 - Keep the suggested file (`deltapatcher_ed25519` in your `.ssh` folder).
 - Type a passphrase twice: at least 10 characters (a few words work well). It is not saved anywhere.
@@ -112,11 +112,12 @@ sudo nano /home/deploy/.ssh/authorized_keys
 `restrict,command="internal-sftp"` means this key can only transfer files with SFTP: no shell, no
 port forwarding. That is all DeltaPatcher needs.
 
-## Part 3: connect and deploy
+## Part 3: connect and release
 
-On the **Server** page:
+On the **Release** page, step 2, **Your server (SSH)**:
 
-1. *Host* `game.example.com`, *User* `deploy`, *Port* `22`, *Remote folder* `/var/www/game`.
+1. *Host* `game.example.com`, *User* `deploy`, *Port* `22`, *Remote folder* `/var/www/game`, and
+   *Players download from* `https://game.example.com/`.
 2. **Unlock key**: type the passphrase once. `ssh-agent` keeps the key unlocked until you log out.
    - On Windows the agent service is off by default. In an administrator PowerShell, once:
      ```
@@ -126,8 +127,8 @@ On the **Server** page:
 3. **Check host key**: compare the fingerprints shown with the ones you wrote down in Part 1. Click **They match: trust this server** only if they do. DeltaPatcher remembers the server, and refuses it later if its key
    ever changes.
 4. **Test connection**: the log says `logged in`.
-5. Publish your release on the **Publish** page, then click **Deploy**. Turn on **Dry run** first to see
-   what would be sent.
+5. Fill in step 1 (the folder to release) and click **Release**. Turn on **Dry run** first to see what
+   would be sent.
 
 Command line, the same steps:
 
@@ -135,11 +136,12 @@ Command line, the same steps:
 deltapatcher ssh unlock
 deltapatcher ssh trust --host game.example.com
 deltapatcher ssh test --host game.example.com --user deploy --remote-root /var/www/game
-deltapatcher deploy ./store --host game.example.com --user deploy --remote-root /var/www/game
+deltapatcher config set publish_src=./game ssh_host=game.example.com ssh_user=deploy remote_root=/var/www/game
+deltapatcher release --version 1.0
 ```
 
-After one run, the host, user, key and folder are remembered by the window. The command line uses
-the remembered values when you leave them out.
+The window and the command line share these settings: whatever one saves, the other uses when you
+leave it out. After that, every new version is one `deltapatcher release`.
 
 ## Part 4: check it from outside
 

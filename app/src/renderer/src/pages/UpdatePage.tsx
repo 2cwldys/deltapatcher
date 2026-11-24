@@ -63,7 +63,7 @@ export default function UpdatePage(): JSX.Element {
 
   return (
     <div className="space-y-5">
-      <Card title="Release" icon={FolderSync}>
+      <Card title="Update a folder" icon={FolderSync}>
         <div className="grid gap-5">
           <Field label="Source" setting="source_url" mono
             hint={"Where the release is: an http(s) address or a folder.\nThe game's maker gives you this."} />

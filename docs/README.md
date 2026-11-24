@@ -15,7 +15,7 @@ Pick the page for what you want to do:
 
 ## The idea in one paragraph
 
-You **publish** a folder: DeltaPatcher hashes every file (SHA-256) and writes a *store*, which is a
+You **release** a folder: DeltaPatcher hashes every file (SHA-256) and writes a *store*, which is a
 `manifest.json` listing every file plus a `blobs/` folder holding each distinct file once, named by
 its hash. You put the store somewhere clients can read it: your own PC, a VPS, any web host or a
 shared folder. Clients **update** by comparing their folder with the manifest and downloading only
@@ -24,12 +24,13 @@ is just bytes with a hash.
 
 ## The window at a glance
 
-| Update | Publish | Server |
+| Update | Release | Settings |
 | --- | --- | --- |
-| ![Update](images/app-update.png) | ![Publish](images/app-publish.png) | ![Server](images/app-server.png) |
+| ![Update](images/app-update.png) | ![Release](images/app-release.png) | ![Settings](images/app-settings.png) |
 
-- **Update**: bring a folder up to date from a source address.
-- **Publish**: turn a folder into a store, and serve it from this PC to test.
-- **Server**: send a store to a VPS over SSH (SFTP) or to a folder.
+- **Update**: bring a folder up to date from the address players use.
+- **Release**: what to release, where players download it from (your server over SSH, a folder, or this
+  computer to test), and one button that sends only what changed.
+- **Settings**: every setting of `deltapatcher.ini`, and the log.
 
 The log at the bottom shows exactly what each step did. **Stop** cancels a running download.

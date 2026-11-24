@@ -3,21 +3,19 @@ import Sidebar from './components/Sidebar'
 import ActivityBar from './components/ActivityBar'
 import Modals from './components/Modals'
 import UpdatePage, { runUpdate } from './pages/UpdatePage'
-import PublishPage, { runPublish } from './pages/PublishPage'
-import ServerPage from './pages/ServerPage'
+import ReleasePage, { publishRelease } from './pages/ReleasePage'
 import SettingsPage from './pages/SettingsPage'
 import { Page, useApp } from './store/app'
 
 const TITLES: Record<Page, [string, string]> = {
   update: ['Update', 'Bring a folder up to the latest release, downloading only what changed.'],
-  publish: ['Publish', 'Turn a folder into a release. Publishing it again adds only what changed.'],
-  server: ['Server', 'Send a release to a VPS over SSH, or to a folder, sending only what is missing.'],
+  release: ['Release', 'Send players a new version. Only what changed is sent, and players download only that.'],
   settings: ['Settings', 'deltapatcher.ini, the log, and about.']
 }
 
 // README screenshots (app --capture=DIR): publish and check a demo release, then show each page
 async function captureTour(): Promise<void> {
-  const pages: Page[] = ['update', 'publish', 'server', 'settings']
+  const pages: Page[] = ['update', 'release', 'settings']
   const st = useApp.getState()
   // serve the demo store, publish its new version, and check the demo game against it
   st.startServe()
@@ -28,7 +26,7 @@ async function captureTour(): Promise<void> {
     }
     await new Promise((r) => setTimeout(r, 100))
   }
-  await runPublish()
+  await publishRelease()
   await runUpdate(true)
   let i = 0
   const next = (): void => {
@@ -39,9 +37,7 @@ async function captureTour(): Promise<void> {
     }
     const p = pages[i++]
     st.setPage(p)
-    if (p === 'update') useApp.setState({ consoleOpen: false })
-    if (p === 'publish') useApp.setState({ consoleOpen: true })
-    if (p === 'server' || p === 'settings') useApp.setState({ consoleOpen: false })
+    useApp.setState({ consoleOpen: false })
     setTimeout(() => window.api.capture.ready(p), 900)
   }
   window.api.capture.onNext(next)
@@ -75,10 +71,8 @@ export default function App(): JSX.Element {
             <div className="text-sm text-ink-400">Starting the engine...</div>
           ) : page === 'update' ? (
             <UpdatePage />
-          ) : page === 'publish' ? (
-            <PublishPage />
-          ) : page === 'server' ? (
-            <ServerPage />
+          ) : page === 'release' ? (
+            <ReleasePage />
           ) : (
             <SettingsPage />
           )}

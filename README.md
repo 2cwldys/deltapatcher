@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png"><img src="docs/images/app-update.png" alt="The DeltaPatcher app" width="880"></a>
+  <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-projects.png"><img src="docs/images/app-projects.png" alt="The DeltaPatcher app: every project at a glance" width="880"></a>
 </p>
 
 DeltaPatcher never looks inside a file. A `.pk3`, a `.zip`, a map, a texture pack or an executable is
@@ -46,6 +46,11 @@ identical files are stored once.
     <td valign="top"><b>Pick, do not type</b><br>Leave folders out, or let players keep their own settings and saves, by picking them.</td>
     <td valign="top"><b>Shadow patches</b><br>Release the same version again with fixes: only the changed files travel.</td>
     <td valign="top"><b>In your containers</b><br>Docker images and Pterodactyl eggs are brought up to date at every start.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Several projects</b><br>Every game, mod or server you keep up to date or release, each with its own settings. <i>Update all</i> runs three at once.</td>
+    <td valign="top"><b>Share a project</b><br>One <code>.deltapatch</code> or <code>.html</code> file sets a player up, signed so they know it is yours.</td>
+    <td valign="top"><b>Updates while you play</b><br>It checks every hour from the tray, says what is waiting, and can update by itself.</td>
   </tr>
 </table>
 

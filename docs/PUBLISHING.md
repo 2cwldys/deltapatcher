@@ -118,6 +118,18 @@ Deploying sends only the blobs the target does not have yet.
 
 Players need DeltaPatcher and your source address. Common ways:
 
+- **A project file**, the easiest for players: on the **Projects** page, **Export...**, tick the projects
+  to put in it, and pick its type: `.deltapatch` opens DeltaPatcher with a double-click, and `.html` is a
+  page anyone can read in a browser (players drag it onto DeltaPatcher). Players then tick the projects and
+  pick their folders; nothing to type. For each project the file holds its name, the address players update
+  from (*public_url*, else *source_url*), its publisher key, and a description and website when set (the
+  *description* and *website* settings); never a folder, a login or a key file. Say where it goes, too:
+  *install_hint* is a line players read as they pick its folder ("Pick the game's folder; this goes into its
+  Mods folder."), and *install_folder* the folder it goes into inside the one they pick ("Mods"). With a
+  signing key, the
+  file is signed: a copy changed after you signed it is refused, and players trust your key from their very
+  first download. Command line:
+  `deltapatcher project export "My Game" --out MyGame.deltapatch --sign`.
 - **Ship the DeltaPatcher app** (the unzipped Windows `.zip`, the AppImage on Linux) next to the game, with a `deltapatcher.ini` beside it that already holds
   `source_url` (and `trust_key` if you sign). Players just click **Update**. Without the file, tell them
   the address once; the window remembers it.

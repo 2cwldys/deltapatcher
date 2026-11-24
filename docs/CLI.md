@@ -13,8 +13,12 @@ deltapatcher <command> [options]
 - `python -m deltapatcher` from source, or the `deltapatcher` command after `pip install .`
 
 With no command it prints the help. `deltapatcher menu` asks plain questions instead of taking commands:
-release a new version, set up where releases go (your server, a folder, or this computer), update a folder,
-or type commands at a prompt. Every answer is saved, so the second time is mostly Enter.
+release a new version, set up where releases go (your server, a folder, or this computer), update a folder
+(with several projects: update them all), Projects, open the wiki, update DeltaPatcher, or type commands at
+a prompt. **Projects** holds the rest: choose another project, add projects from a project file, share
+projects as a project file, and remove one or all of them. Every answer is saved, so the second time is
+mostly Enter. A project file dropped onto the program (its path the only argument) is imported, as
+`project import FILE`.
 
 **Its window.** In a terminal it runs and returns, as any command does. In a window of its own on Windows
 it keeps that window open, so nothing vanishes before it is read:
@@ -221,22 +225,64 @@ it releases and where that goes.
 
 ```
 deltapatcher project new NAME
+deltapatcher project import FILE [--folder DIR [--as-is]] [--only NAME]... [--name NEW] [--dry-run] [--yes]
+deltapatcher project export NAME... --out FILE [--sign [KEYFILE]]
 deltapatcher project add FILE [--name NAME]
 deltapatcher project rename NAME NEW
 deltapatcher project remove NAME [--yes]
+deltapatcher project remove --all [--yes]
 ```
 
 - `new`: a new project, its settings file in the `projects` folder beside the main settings file. Fill it in
   with `deltapatcher --project NAME config set install_dir=... source_url=...`, or in the app.
-- `add`: list a project's settings file kept somewhere else (in a game's folder, on a share). `--name` gives
-  it a name, written into that file.
+- `import`: add the projects of a project file (`.deltapatch` or `.html`) a publisher gave you. It says
+  who signed the file: one changed after it was signed is refused, and an unsigned one is added with a
+  warning. Each project keeps one folder up to date. `--folder DIR` says which, so it does not ask: one
+  project goes into `DIR` (into `DIR` plus the folder name its publisher gave, when they gave one), and with
+  several projects each gets a folder of its own inside `DIR`. It is needed once: the folder is saved in the
+  project's settings, and every `update` and `update --all` after that uses it. A project file never holds
+  a folder. Without `--folder` it asks (showing where the publisher says it goes), or the folder is chosen
+  later. `--as-is`, with `--folder` and one project, uses `DIR` itself, without the publisher's folder name.
+  `--only NAME`
+  adds only that project of the file (repeatable), `--name NEW` gives a single project another name here,
+  and `--dry-run` says what the file holds, adding nothing.
+- `export`: write a project file holding these projects, to give to players. `FILE.deltapatch` opens
+  DeltaPatcher with a double-click; `FILE.html` is a page anyone can read in a browser. For each project it
+  holds the name, the http(s) address players update from (`public_url`, else `source_url`), the publisher
+  key, and a description and website when set. Never a folder, a server login or a key file. `--sign` signs
+  it with your signing key (it asks the passphrase; `--passphrase-stdin` for programs).
+- `add`: list a project's settings file (`.ini`) kept somewhere else (in a game's folder, on a share).
+  `--name` gives it a name, written into that file. A project file is added with `import`.
 - `rename`: the project's name changes; its file stays where it is.
 - `remove`: a project in the `projects` folder is deleted with its settings file; an added one only leaves
-  the list, and its file stays. The folders it updates or releases are never touched. It asks first in a
-  terminal; `--yes` answers for scripts. Default cannot be removed.
+  the list, and its file stays. The folders it updates or releases are never touched. `--all` removes every
+  project but Default. It asks first in a terminal; `--yes` answers for scripts. Default cannot be removed.
 
 A name has letters, digits, spaces and `- _ . ( )`, up to 60 characters, cannot start with a dash, and no
 two projects share one (letter case aside).
+
+## reset
+
+```
+deltapatcher reset [--yes]
+```
+
+DeltaPatcher as it was just installed: every project removed (as `project remove --all`), the main settings
+file back to its defaults, and the cached check for a newer DeltaPatcher cleared. A copy of the settings
+files is kept first, in a dated folder beside them (`settings-before-reset-...`), so a reset can be undone
+by hand. Never touched: the folders projects update or release and their files, the signing key and SSH
+keys. Trusted servers, the log and prepared releases stay too. Adding a project back later finds its
+folder's files, checks them, and downloads only what differs.
+
+## wiki
+
+```
+deltapatcher wiki [GUIDE]
+```
+
+Open the guides on the wiki in your browser (the address is printed too). `GUIDE` opens one of them:
+`quickstart`, `players`, `publishing`, `vps`, `cli`, `docker`, `mcp`, `format`, `troubleshooting` or
+`security`.
 
 ## self-update
 
@@ -309,10 +355,14 @@ your comments. Which file is used:
 3. otherwise `%APPDATA%\DeltaPatcher\deltapatcher.ini` (Windows) or `~/.config/deltapatcher/deltapatcher.ini`
 
 **Projects**: that file is also the Default project. Every `.ini` in the `projects` folder beside it is a
-project, and so is any settings file listed in `project_files`. A project's file holds its own settings only
-(`[project]`, `[update]`, `[publish]`, `[server]`); DeltaPatcher's own stay in the main file: `[window]`, and
-`[general]` with `parallel_updates` (how many projects Update all runs at once), `project_files` and
-`current_project` (the project the app shows).
+project, and so is any settings file listed in `project_files`. A project's file holds its own settings only:
+`[project]` (`title`, and the `description`, `website`, `install_hint` and `install_folder` shown with it and
+carried by project files), `[update]`,
+`[publish]` and `[server]`. DeltaPatcher's own stay in the main file: `[window]` (`close_to_tray`,
+`minimize_to_tray`, `start_with_system`, `check_updates`) and `[general]`: `parallel_updates` (how many
+projects Update all runs at once), `check_every_hours` (how often the window checks every project; 0: only
+when it starts), `auto_update` (update what a check finds, by itself), `project_files` and `current_project`
+(the project the app shows).
 
 **Logs**:
 - everything DeltaPatcher shows, with the time: `%APPDATA%\DeltaPatcher\logs\deltapatcher.log` (Windows)

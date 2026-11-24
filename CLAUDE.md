@@ -12,7 +12,7 @@ From the repository's root. The build makes `.venv`; use its Python.
 | --- | --- |
 | Every test | `python -m unittest discover -s tests` |
 | One test file | `python -m unittest tests.test_release` |
-| The app: types, then a build | `cd app && npm ci && npm run typecheck && npm run build` |
+| The app: types, tests, then a build | `cd app && npm ci && npm run typecheck && npm test && npm run build` |
 | The app from source | `cd app && npm run dev` (without a built engine it runs `python -m deltapatcher`) |
 | Engine, app and release files | `powershell -ExecutionPolicy Bypass -File build.ps1` or `./build.sh` (`-EngineOnly`, `-Test`) |
 | The version | `python tools/version.py X.Y.Z` (or `patch`, `minor`, `major`; alone: show and check) |

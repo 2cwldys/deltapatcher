@@ -85,7 +85,9 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
 
 Version 0.3.0: one Release page for publishing and sending, a menu of plain questions on the command line,
 self-update, putting a key on a server with its password, Docker and Pterodactyl, the wiki. Since then:
-several projects, and an MCP server for AI assistants.
+several projects, project files to share them, Reset and Remove all, hourly checks with an optional
+auto-update, minimize to tray and start with the computer, the wiki from the command line, and an MCP
+server for AI assistants. A compatibility test keeps what each released version wrote working.
 
 ## Where it is going
 
@@ -100,16 +102,21 @@ as possible without becoming hard to use.
    it, so a script never follows the window's choice; `update --all` and `check --all` run up to
    `parallel_updates` projects at once, in one process. The app has a project picker at the top of the
    sidebar and a Projects page with every project's state, Check all and Update all.
-2. **Project presets.** One file with one or more projects (title, source, publisher key), like a modlist,
-   as an `.html` page anyone can read and as a `.deltapatcher` file DeltaPatcher opens with a double-click.
-   Signed when the publisher has a signing key; never a folder, a server login or a key path. Imported by
-   drag-and-drop, from the Projects page, by double-click or on the command line. Setting a project up by
-   hand stays.
-3. **Telling players.** Every project is checked at start, Projects shows a count, and the tray gives a
-   desktop notification. An `auto_update` setting, off by default, updates them unattended.
-4. **Minimize to tray**, a setting, off by default.
-5. **No sidebar bloat.** Projects live in the picker, which scrolls and searches when the list is long;
-   Help gathers the wiki and issue links.
-6. **The wiki from the command line**: `deltapatcher wiki [guide]` opens it in the browser.
-7. **Perhaps: statistics for publishers.** Release statistics from the store; download statistics from the
+2. **Project files** (built). One file with one or more projects (name, address, publisher key, and the
+   description, website, where it goes and its folder name), to share, as an `.html` page anyone can read
+   and as a `.deltapatch` file DeltaPatcher opens with a double-click: the same text either way
+   (`deltapatcher/presets.py`). Signed when the publisher has a signing key; never a folder, a server login
+   or a key path. Imported by drag-and-drop, the Projects page, a double-click, a file dropped on the
+   command line, or `project import`. Setting a project up by hand stays.
+3. **Telling players** (built). Every project is checked at start and every `check_every_hours` (1 by
+   default); Projects shows a count, and the tray gives a desktop notification. `auto_update`, off by
+   default, updates them unattended.
+4. **The tray** (built): `minimize_to_tray` and `start_with_system`, both off by default.
+5. **No sidebar bloat** (built). Projects live in the picker, which scrolls and searches when the list is
+   long; Help gathers the wiki and issue links; the command line's menu keeps its project choices under one
+   Projects entry.
+6. **Starting over** (built): Reset and Remove all never touch a project's folders, and Reset keeps a copy
+   of the settings.
+7. **The wiki from the command line** (built): `deltapatcher wiki [guide]`.
+8. **Perhaps: statistics for publishers.** Release statistics from the store; download statistics from the
    web server's access log, read over SSH. Not decided.

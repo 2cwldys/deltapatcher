@@ -22,6 +22,17 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `the release's signature is refused: ...` | The signature does not match the manifest: the release was changed after it was signed. Do not install it; tell the publisher. |
 | Where is the log? | **Logs** at the bottom right of the app, or `deltapatcher config`. Each game folder also has `.deltapatcher/update.log`. |
 
+## Project files
+
+| Message | What to do |
+| --- | --- |
+| `... was changed after it was signed: refused` | Someone changed the file after the publisher signed it. Do not add it: get a fresh copy from the publisher. |
+| `this project file was made by a newer DeltaPatcher` | Update DeltaPatcher first (**Update DeltaPatcher** in the app, or `deltapatcher self-update`), then add the file again. |
+| `not a project file DeltaPatcher can read: ...`, `... holds no projects`, `... is over 1 MB` | It is not a DeltaPatcher project file, or it was damaged on the way. Ask for it again. |
+| `there is a project named ... already` | The app suggests another name in its dialog. On the command line, give one with `--name NEW`, or leave that project out with `--only`. |
+| `... has no http(s) address players update from` (exporting) | Set where players download it (*public_url*, on the **Release** page), then export again. |
+| `project add` refuses a `.deltapatch` or `.html` file | Project files are imported: `deltapatcher project import FILE`. `project add` is for a project's `.ini` settings file. |
+
 ## Publishing
 
 | Message | What to do |

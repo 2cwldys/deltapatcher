@@ -1,9 +1,28 @@
 # For players: keeping a game folder up to date
 
-The game's maker gives you two things: **the DeltaPatcher app** and a **source
-address**, for example `https://game.example.com/` or `http://203.0.113.10/`.
+The game's maker gives you **the DeltaPatcher app**, and either a **project file** (`.deltapatch` or
+`.html`) or a **source address**, for example `https://game.example.com/` or `http://203.0.113.10/`.
 
-## First time
+## First time, with a project file
+
+The easiest way: the file fills in everything for you.
+
+1. Double-click the `.deltapatch` file, or drag either file onto DeltaPatcher's window. (Or, on the
+   **Projects** page, **Add a project file...** and pick it.)
+2. DeltaPatcher shows what the file holds and who signed it. Tick the projects you want, and pick the
+   folder each one keeps up to date: the game's folder, or an empty folder for a fresh install.
+3. Click **Add**. With **Update them now** on, they download straight away.
+
+You pick each folder once: DeltaPatcher remembers it, and every update after that, Update all included,
+uses it. A project file never holds a folder (a folder on the publisher's computer means nothing on yours),
+but the publisher can say where a project goes: the dialog then shows that line above the folder picker,
+and adds the folder name they gave to the folder you pick (for example your game's folder, then Mods).
+
+The address and the publisher key come from the file, so even the first download is checked against the
+publisher's key. A file changed after it was signed is refused. An unsigned file can be added, with a
+warning: add it only if you trust where it came from.
+
+## First time, with an address
 
 1. Start DeltaPatcher. It opens on the **Update** page.
 2. *Source*: paste the address the game's maker gave you.
@@ -31,14 +50,38 @@ so a small patch is a small download even when the game is large.
 Each game, mod or server you keep up to date is a project, with its own source, folder and publisher key.
 The first one is called Default.
 
-- **Add one**: the project picker at the top left > **New project...**, give it a name, then fill in its
-  *Source*, *Folder* and *Publisher key* on the **Update** page, as above.
-- **Switch**: pick it in the project picker. The Update, Release and Settings pages show that project.
+- **Add one**: from a project file, as above; or the project picker at the top left > **New project...**,
+  give it a name, then fill in its *Source*, *Folder* and *Publisher key* on the **Update** page.
+- **Switch**: pick it in the project picker (with many projects, type to search). The Update, Release and
+  Settings pages then show that project, its name in their heading.
 - **All at once**: the **Projects** page lists every project with its state, such as "Up to date" or
-  "3 new, 1 changed, 700 KB to download". **Check all** runs by itself when you open it. **Update all**
-  brings every project up to date, three at the same time (the setting *parallel_updates*). One project
-  failing never stops the others, and **Stop** stops them all, each folder as it was.
-- **Remove one**: **Remove** on its card on the Projects page. Its settings go; its folder and files stay.
+  "3 new, 1 changed, 700 KB to download"; a filter finds one in a long list. **Check all** runs by itself
+  when DeltaPatcher starts. **Update all** brings every project up to date, three at the same time (the
+  setting *parallel_updates*). One project failing never stops the others, and **Stop** stops them all,
+  each folder as it was.
+- **Remove one**: in the project picker (point at it), on the **Settings** page (**Remove this
+  project...**), or on its row on the Projects page. **Remove all** on the Projects page removes every
+  project but Default. Their settings go; their folders and files always stay.
+
+## Updates while you play
+
+While DeltaPatcher runs, it checks every project every hour, and **Projects** shows how many have an
+update waiting. When it is hidden in the tray, a desktop notification says so. These settings are on the
+**Settings** page:
+
+- *check_every_hours*: how often it checks (1 by default; 0: only when it starts).
+- *auto_update*: projects with an update are updated by themselves, and a notification says what was
+  done. Off by default.
+- *minimize_to_tray*: minimizing hides the window to the tray, off the taskbar. Off by default.
+- *start_with_system*: DeltaPatcher starts with the computer, straight into the tray. Off by default.
+
+## Starting over
+
+**Reset DeltaPatcher**, at the bottom of the **Settings** page, puts DeltaPatcher back as it was just
+installed: every project removed, and the settings back to their defaults. Your game folders and their files
+stay exactly as they are, and a copy of the old settings is kept beside them
+(`settings-before-reset-...`). Adding a project back later finds its files, checks them, and downloads only
+what differs.
 
 ## What it will and will not touch
 
@@ -64,7 +107,8 @@ setting with a line explaining it.
 ## The tray icon
 
 While DeltaPatcher is open, its icon sits in the notification area (tray). Right-click it to show the
-window or quit.
+window or quit. With *minimize_to_tray* on, minimizing the window hides it there; a click on the icon
+brings it back.
 
 ## If something goes wrong
 

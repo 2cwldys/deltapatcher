@@ -2,7 +2,7 @@
 
     python tools/make_preview.py
 
-The logo and name on the left, the app's Update page (docs/images/app-update.png, from
+The logo and name on the left, the app's Projects page (docs/images/app-projects.png, from
 tools/capture_screens.py) on the right. Upload it in GitHub: Settings > General > Social preview.
 Needs Pillow; uses Segoe UI where it exists (Windows), else DejaVu Sans.
 """
@@ -76,7 +76,7 @@ def main():
     img = background().convert("RGBA")
 
     # the app, on the right, in a window frame with a shadow
-    shot = Image.open(os.path.join(IMAGES, "app-update.png")).convert("RGB")
+    shot = Image.open(os.path.join(IMAGES, "app-projects.png")).convert("RGB")
     sw = 700
     shot = shot.resize((sw, int(shot.size[1] * sw / shot.size[0])), Image.LANCZOS)
     frame_h = 30
@@ -105,8 +105,8 @@ def main():
     d.text((74, 394), "Any game. Any file. Only what changed.", font=font(False, 22), fill=MUTED)
     f = font(True, 16)
     x = 74
-    x = chip(d, x, 462, "Signed releases", f, TEAL_LIGHT)
-    x = chip(d, x, 462, "SFTP deploy", f, AMBER)
+    x = chip(d, x, 462, "Several projects", f, TEAL_LIGHT)
+    x = chip(d, x, 462, "Signed releases", f, AMBER)
     chip(d, 74, 506, "Windows  /  Linux  /  macOS", f, (167, 139, 250))
     d.text((74, 580), "MIT licence  -  open source", font=font(False, 16), fill=(91, 106, 128))
 

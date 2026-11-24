@@ -28,7 +28,13 @@ is just bytes with a hash.
 
 Click a picture to see it full size.
 
-**Update**: bring a folder up to date from the address players use.
+**Projects**: every game, mod or server DeltaPatcher keeps up to date or releases, with its state. Check
+all, Update all, and add, share or remove projects. The picker at the top left chooses the project the
+other pages show.
+
+[![The Projects page](images/app-projects.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-projects.png)
+
+**Update**: bring the picked project's folder up to date from the address players use.
 
 [![The Update page](images/app-update.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png)
 

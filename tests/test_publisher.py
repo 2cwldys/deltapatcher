@@ -302,6 +302,14 @@ class ThePrompt(Base):
         self.assertNotIn("publisher_change", self.check())
         self.assertFalse(self.ok(["project", "changes", "Map Pack"])["follow_publisher"])
 
+    def test_a_project_that_releases_is_never_asked(self):
+        # the publisher's own project, updated from where it tests its release: what the release says is its own
+        self.player_imports()
+        config.save({"publish_src": self.p("own-release")}, projects.resolve("Map Pack"))
+        self.publisher_project(self.store, self.url, description="Twelve arena maps")
+        self.release()
+        self.assertNotIn("publisher_change", self.check())
+
     def test_a_one_off_file_does_not_follow(self):
         self.player_imports("maps.html", "--no-updates")
         self.assertFalse(config.load(projects.resolve("Map Pack"))["follow_publisher"])

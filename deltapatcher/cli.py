@@ -761,8 +761,11 @@ def project_file_entry(a, out):
 
 
 def follows(cfg, url):
-    """A check or an update of the project's own source, in a project that asks about its publisher's changes."""
-    return bool(cfg.get("follow_publisher")) and publisher.same_address(url, cfg["source_url"])
+    """A check or an update of the project's own source, in a project that asks about its publisher's changes. A
+    project that releases (publish_src) is the publisher's own: what its releases say about it is never a change,
+    also when it is updated from somewhere else to test them (this computer, a folder)."""
+    return (bool(cfg.get("follow_publisher")) and not str(cfg.get("publish_src") or "").strip()
+            and publisher.same_address(url, cfg["source_url"]))
 
 
 def say_change(change, say_line, title="this project"):

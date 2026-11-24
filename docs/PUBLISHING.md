@@ -177,7 +177,8 @@ Each release carries the project's details (description, website, where it goes,
 update from, the publisher key), signed with it, when *share_updates* is on (Settings, *Publish*; on by
 default). Players whose project follows you are asked before a change is applied; a new address or key
 reaches them only signed with the key they trust now. Change the details on the Settings page, then
-release: a release with only new details is a new release too.
+release: a release with only new details is a new release too. Your own project, the one that releases, is
+never asked about them, also when you test a release from this computer or a folder.
 
 - **Export...** offers **update capable** (players are asked about your later changes) or a one-off file.
 - **Patch notes**: *show_files* (on by default) lets DeltaPatcher show players the names of the files a

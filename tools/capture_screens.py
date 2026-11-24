@@ -88,24 +88,27 @@ def main():
     put("maps/dm_canyon.bsp", os.urandom(1200 << 10), "MapPack-release")
     put("maps/dm_canyon.nav", os.urandom(80 << 10), "MapPack-release")
     put("textures/canyon.wad", os.urandom(1500 << 10), "MapPack-release")
-    engine("publish", pack, pack_store, "--name", "Map Pack", "--version", "2.0")
+    # each store is published under its own project, so what its releases say about their project is its own
     engine("project", "new", "Map Pack")
     engine("--project", "Map Pack", "config", "set", "install_dir=" + os.path.join(demo, "MapPack"),
            "source_url=" + pack_store, "publish_src=" + pack, "store_dir=" + pack_store, "name=Map Pack",
            "version=2.0", "deploy_mode=folder", "deploy_folder=" + os.path.join(demo, "www", "maps"))
+    engine("--project", "Map Pack", "publish")
     engine("--project", "Map Pack", "update")
     server, server_store = os.path.join(demo, "Server-release"), os.path.join(demo, "server-store")
     put("server.bin", os.urandom(900 << 10), "Server-release")
     put("cfg/server.cfg", b"maxplayers 24\n", "Server-release")
     put("maps/arena.bsp", os.urandom(900 << 10), "Server-release")
-    engine("publish", server, server_store, "--name", "Dedicated Server", "--version", "1.2")
     engine("project", "new", "Dedicated Server")
     engine("--project", "Dedicated Server", "config", "set", "install_dir=" + os.path.join(demo, "Server"),
            "source_url=" + server_store)
+    engine("--project", "Dedicated Server", "publish", server, server_store, "--name", "Dedicated Server",
+           "--version", "1.2")
     engine("--project", "Dedicated Server", "update")
     put("server.bin", os.urandom(950 << 10), "Server-release")
     put("maps/canyon.bsp", os.urandom(1200 << 10), "Server-release")
-    engine("publish", server, server_store, "--name", "Dedicated Server", "--version", "1.3")
+    engine("--project", "Dedicated Server", "publish", server, server_store, "--name", "Dedicated Server",
+           "--version", "1.3")
 
     if packaged:
         subprocess.run([packaged, "--capture=" + out_dir], env=env, check=True, timeout=180)

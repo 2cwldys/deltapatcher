@@ -3,12 +3,15 @@
     1. the engine: dist\deltapatcher-cli.exe, the command line in one file, and dist\engine\, the same
        engine as a folder for the app (PyInstaller, self-contained: no Python needed to run either)
     2. the app:    dist\app\DeltaPatcher-<version>-portable.exe and -setup.exe (Electron, with the engine inside)
+    3. the release files: dist\release\, both named for a GitHub release
+       (dist\ is not tracked by git: upload the files in dist\release\ to a release yourself)
 
-    powershell -ExecutionPolicy Bypass -File build.ps1            both
+    powershell -ExecutionPolicy Bypass -File build.ps1            all of it
     powershell -ExecutionPolicy Bypass -File build.ps1 -Test      run the tests first
     powershell -ExecutionPolicy Bypass -File build.ps1 -EngineOnly
 
-  Needs Python 3.8+ (the py launcher) and Node.js 20+ with npm. Python packages go into .venv,
+  Needs Python 3.11+ (the py launcher) and Node.js 20+ with npm: the build tools need 3.11, the engine
+  itself runs on Python 3.8 or later. Python packages go into .venv,
   Node packages into app\node_modules (from app\package-lock.json): nothing is installed system-wide.
 #>
 param([switch]$Test, [switch]$EngineOnly)
@@ -20,6 +23,10 @@ if (-not (Test-Path .venv\Scripts\python.exe)) {
     py -3 -m venv .venv
 }
 $py = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+& $py -c "import sys; sys.exit(sys.version_info < (3, 11))"
+if ($LASTEXITCODE) {
+    throw 'The build needs Python 3.11 or later (its tools do; the engine itself runs on 3.8+). Install a newer Python, delete .venv and run build.ps1 again.'
+}
 & $py -m pip install --disable-pip-version-check -q -r requirements-build.txt
 if ($LASTEXITCODE) { throw 'pip install failed' }
 
@@ -54,4 +61,7 @@ try {
 } finally {
     Pop-Location
 }
-Get-ChildItem dist\deltapatcher-cli.exe, dist\app\*.exe | ForEach-Object { '{0}  {1:N1} MB' -f $_.Name, ($_.Length / 1MB) }
+
+Write-Host '== release files'
+& $py tools\release_files.py
+if ($LASTEXITCODE) { throw 'release_files.py failed' }

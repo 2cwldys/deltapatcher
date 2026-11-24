@@ -35,6 +35,7 @@ nsis:
   allowToChangeInstallationDirectory: true
 linux:
   executableName: deltapatcher
+  artifactName: DeltaPatcher-${version}-linux-${arch}.${ext}
   icon: build/icon.png
   category: Utility
   target:
@@ -52,5 +53,5 @@ mac:
     - target: dmg
     - target: zip
 dmg:
-  artifactName: DeltaPatcher-${version}.dmg
+  artifactName: DeltaPatcher-${version}-${arch}.dmg
 publish: null

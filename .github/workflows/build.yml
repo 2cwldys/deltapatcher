@@ -25,6 +25,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
+      # one known Python on every system (the build tools need 3.11 or later; the engine runs on 3.8+)
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - name: the engine's tests
         shell: bash
         run: |
@@ -48,6 +52,9 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           lfs: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
@@ -69,15 +76,15 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run typecheck
+          # Linux: the .tar.gz at gzip level 6 (electron-builder's own level takes minutes); see build.sh
+          if [ "$RUNNER_OS" = "Linux" ]; then export ELECTRON_BUILDER_COMPRESSION_LEVEL=6; fi
           npm run dist
+      # dist/release/: this system's files named for a GitHub release
+      - name: the release files
+        shell: bash
+        run: python tools/release_files.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: deltapatcher-${{ runner.os }}
           if-no-files-found: error
-          path: |
-            dist/deltapatcher-cli*
-            dist/app/*.exe
-            dist/app/*.AppImage
-            dist/app/*.tar.gz
-            dist/app/*.dmg
-            dist/app/*.zip
+          path: dist/release/*

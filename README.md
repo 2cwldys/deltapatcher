@@ -29,7 +29,7 @@ identical files are stored once.
   </tr>
   <tr>
     <td valign="top"><b>Deploy over SSH</b><br>Send a release to your VPS with SFTP, uploading only missing blobs and switching the manifest in last. Host keys are confirmed once and checked strictly after.</td>
-    <td valign="top"><b>Host it anywhere</b><br>The release is plain static files: Caddy, nginx, Apache (an <code>.htaccess</code> is written for you), any static host, a share, or the built-in server.</td>
+    <td valign="top"><b>Host it anywhere</b><br>The release is plain static files: Caddy, nginx, Apache or XAMPP (an <code>.htaccess</code> is written for you), any static host, a share, or the built-in server.</td>
     <td valign="top"><b>App and command line</b><br>A clean window for people and a command line for scripts and launchers. Self-contained: no Python or Node needed to run either.</td>
   </tr>
 </table>
@@ -66,11 +66,13 @@ artifacts) or **Releases**:
 
 | System | App | Command line |
 | --- | --- | --- |
-| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli.exe` |
-| Linux | `DeltaPatcher-<version>.AppImage` or `.tar.gz` | `deltapatcher-cli` |
-| macOS | `DeltaPatcher-<version>.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli` |
+| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli-windows-x64.exe` |
+| Linux | `DeltaPatcher-<version>.AppImage` or `.tar.gz` | `deltapatcher-cli-linux-x64` |
+| macOS (Apple silicon) | `DeltaPatcher-<version>-arm64.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli-macos-arm64` |
 
-Everything is self-contained: the app carries its own engine, and the command line is one file.
+Everything is self-contained: the app carries its own engine, and the command line is one file (rename it
+to `deltapatcher-cli` if you like). On Linux and macOS, make a downloaded program runnable first:
+`chmod +x <file>`.
 
 ## Quick start
 
@@ -120,12 +122,12 @@ app/              the app (Electron, React, Tailwind): the window, which runs th
 cli/              deltapatcher.bat / deltapatcher.sh: the command line straight from the repository
 packaging/        the PyInstaller spec: the engine as one self-contained file, and as a folder for the app
 tests/            the engine's tests
-tools/            the icon, the README screenshots, the social preview, the secret scan
+tools/            the icon, the README screenshots, the social preview, the secret scan, the release files
 docs/             the guides
 ```
 
 **What you need**:
-- [Python](https://www.python.org) 3.8 or later
+- [Python](https://www.python.org) 3.11 or later to build (the engine itself runs on Python 3.8 or later)
 - [Node.js](https://nodejs.org) 20 or later, with npm
 - [Git LFS](https://git-lfs.com): the images and icons are stored with it
 
@@ -134,7 +136,7 @@ The build installs nothing system-wide. Python packages go into `.venv`, pinned 
 
 ```
 # Windows
-powershell -ExecutionPolicy Bypass -File build.ps1          # the engine and the app (-Test: run the tests first)
+powershell -ExecutionPolicy Bypass -File build.ps1          # the engine, the app, the release files (-Test: run the tests first)
 
 # Linux, macOS
 ./build.sh                                                  # (--test, --engine-only)
@@ -144,6 +146,11 @@ The results are in `dist/`: `deltapatcher-cli[.exe]` (the command line, one file
 same engine as a folder, which starts faster; the app carries this one) and `dist/app/` with the app for
 your system. Each system's build has to run on that system; the *Build* workflow does all three.
 
+Last, the build gathers this system's release files into `dist/release/` (`tools/release_files.py`), named
+for a GitHub release and ready to upload to one.
+`dist/` is not tracked by git. Each *Build* workflow artifact is that folder for one system; macOS files
+come only from there (or from a Mac).
+
 **Working on the app**: build the engine once (`build.ps1 -EngineOnly`), then `cd app`, `npm ci`,
 `npm run dev`. Without a built engine the app runs the engine from source (`python -m deltapatcher`).
 
@@ -151,7 +158,7 @@ your system. Each system's build has to run on that system; the *Build* workflow
 
 | Part | At run time | To build |
 | --- | --- | --- |
-| Engine | Python's standard library; `cryptography` only to make keys and sign (checking signatures needs nothing) | PyInstaller, Pillow (the icon) |
+| Engine | Python's standard library; `cryptography` and `bcrypt` only to make keys and sign (checking signatures needs nothing) | PyInstaller, Pillow (the icon) |
 | App | Electron | electron-vite, React, Tailwind CSS, lucide-react, zustand, TypeScript, electron-builder |
 | Deploys | the system's OpenSSH client (`ssh`, `sftp`, `ssh-keygen`, `ssh-add`), built into Windows 10+, Linux and macOS | |
 

@@ -69,7 +69,8 @@ export default function App(): JSX.Element {
           <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
           <p className="mt-1 text-sm text-ink-300">{subtitle}</p>
         </header>
-        <div className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
+        {/* keyed by page: each page opens at its top, not where the last one was scrolled to */}
+        <div key={page} className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
           {!loaded ? (
             <div className="text-sm text-ink-400">Starting the engine...</div>
           ) : page === 'update' ? (

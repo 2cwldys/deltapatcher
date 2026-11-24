@@ -66,12 +66,12 @@ export default function UpdatePage(): JSX.Element {
       <Card title="Release" icon={FolderSync}>
         <div className="grid gap-5">
           <Field label="Source" setting="source_url" mono
-            hint="Where the release is: an http(s) address or a folder. The game's maker gives you this." />
+            hint={"Where the release is: an http(s) address or a folder.\nThe game's maker gives you this."} />
           {insecure(source) && <Banner kind="warn">This address is plain <b>http</b> to another machine. Use https, or a signed release with the publisher key below.</Banner>}
           <Field label="Folder" setting="install_dir" browse="folder" placeholder="The game folder" mono
-            hint="The folder to bring up to date. Files you added yourself are never removed." />
+            hint={'The folder to bring up to date.\nFiles you added yourself are never removed.'} />
           <Field label="Publisher key (optional)" setting="trust_key" placeholder="ed25519:..." mono
-            hint="Paste the key the publisher gave you: only releases they signed are installed. Empty: the first signed release's key is trusted, and only that key after it." />
+            hint={"Paste the key the publisher gave you: only releases they signed are installed.\nEmpty: the first signed release's key is trusted, and only that key after it."} />
         </div>
         <div className="mt-6 flex flex-wrap gap-2">
           <Button variant="primary" icon={Download} disabled={Boolean(busy)} onClick={() => runUpdate(false)}>Update</Button>

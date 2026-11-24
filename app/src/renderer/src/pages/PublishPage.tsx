@@ -54,6 +54,7 @@ export default function PublishPage(): JSX.Element {
   const serving = useApp((s) => s.serving)
   const startServe = useApp((s) => s.startServe)
   const stopServe = useApp((s) => s.stopServe)
+  const port = useApp((s) => String(s.effective('serve_port') || 8000))
   const result = useApp((s) => s.results.publish as Record<string, number | boolean | string> | undefined)
   const keyPath = useApp((s) => String(s.effective('signing_key')))
   const [publicKey, setPublicKey] = useState('')
@@ -106,13 +107,13 @@ export default function PublishPage(): JSX.Element {
       <Card title="Release" icon={Package}>
         <div className="grid gap-5 md:grid-cols-2">
           <Field className="md:col-span-2" label="Folder to release" setting="publish_src" browse="folder" mono
-            hint="The files exactly as players should have them. Any type: zip, pk3, textures, programs." />
+            hint={'The files exactly as players should have them.\nAny type: zip, pk3, textures, programs.'} />
           <Field className="md:col-span-2" label="Store" setting="store_dir" browse="folder" mono
-            hint="Where manifest.json, blobs/ and sigs/ are written: what gets served and deployed." />
+            hint={'Where manifest.json, blobs/ and sigs/ are written.\nThis is what gets served and deployed.'} />
           <Field label="Name" setting="name" placeholder="My Game" />
           <Field label="Version" setting="version" placeholder="1.0" />
           <Field className="md:col-span-2" label="Protect" setting="protect" placeholder="config/*.cfg, settings.ini" mono
-            hint="Files players keep once they have them (their settings). Comma-separated globs." />
+            hint={'Files players keep once they have them (their settings).\nComma-separated patterns, like config/*.cfg.'} />
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <SettingToggle setting="htaccess" label=".htaccess for Apache" hint="Serve only the release: no listings, the right cache headers." />
@@ -142,9 +143,17 @@ export default function PublishPage(): JSX.Element {
             {serving ? 'Stop serving' : 'Serve locally'}
           </Button>
         </div>
-        {serving?.url && (
+        {serving?.url ? (
           <p className="hint">
-            The store is at <span className="selectable font-mono text-violet-300">{serving.url}</span> on this computer, until you stop it or close DeltaPatcher: use it as the Source on the Update page.
+            The store is at <span className="selectable font-mono text-violet-300">{serving.url}</span> on this computer, until you stop it or close DeltaPatcher.
+            <br />
+            Use it as the Source on the Update page.
+          </p>
+        ) : (
+          <p className="hint">
+            Shares the Store folder above at <span className="font-mono">http://localhost:{port}/</span>, for this computer only.
+            <br />
+            Publish first, then use that address as the Source on the Update page to try the release before you deploy it.
           </p>
         )}
       </Card>

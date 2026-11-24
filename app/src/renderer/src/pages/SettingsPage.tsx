@@ -23,7 +23,9 @@ export default function SettingsPage(): JSX.Element {
     <div className="space-y-5">
       <Card title="Files" icon={FileText}>
         <p className="text-sm text-ink-300">
-          Every setting lives in <span className="font-mono text-violet-300">deltapatcher.ini</span>, a text file with a line explaining each one. Edits here are saved there as you type; edits there show here next time.
+          Every setting lives in <span className="font-mono text-violet-300">deltapatcher.ini</span>, a text file with a line explaining each one.
+          <br />
+          Edits here are saved there as you type; edits there show here next time.
         </p>
         <div className="mt-4 space-y-2 font-mono text-xs">
           <div className="selectable break-all text-ink-300"><span className="text-ink-400">settings </span>{settingsPath}</div>

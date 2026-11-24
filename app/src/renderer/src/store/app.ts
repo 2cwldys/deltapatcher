@@ -1,6 +1,7 @@
 // The window's state: settings (deltapatcher.ini, through the engine), the activity log, the running job.
 import { create } from 'zustand'
 import type { EngineEvent, EngineOutcome, Style } from '@shared/types'
+import { ask } from './modal'
 
 export type Value = string | number | boolean
 export interface SchemaItem {
@@ -117,17 +118,30 @@ export const useApp = create<State>((set, get) => ({
   startServe: async () => {
     if (get().serving) return
     const store = String(get().effective('store_dir') || '')
-    if (!store) return
-    const jobId = `serve-${++jobSeq}`
     const port = String(get().effective('serve_port') || 8000)
+    if (!store) {
+      await ask.info(
+        'Nothing to serve yet',
+        `Serve locally shares the Store folder (where Publish writes a release) at http://localhost:${port}/, ` +
+          'for this computer only, so you can try the release on the Update page before you deploy it.\n\n' +
+          'Choose a folder to release and a Store folder, click Publish, then Serve locally.'
+      )
+      return
+    }
+    const jobId = `serve-${++jobSeq}`
     handlers.set(jobId, (e) => {
       if (e.event === 'serving') set({ serving: { jobId, url: e.url } })
     })
     set({ serving: { jobId, url: '' } })
     const r = await window.api.run({ jobId, args: ['serve', store, `--port=${port}`] })
+    const started = Boolean(get().serving?.url)
     handlers.delete(jobId)
     set({ serving: null })
-    if (!r.ok && r.code !== 'engine-stopped') get().log(`Serving stopped: ${r.message}`, 'err')
+    if (!r.ok && r.code !== 'engine-stopped') {
+      get().log(`Serving stopped: ${r.message}`, 'err')
+      // it never started (nothing published there yet, the port is taken): say why, not only in the console
+      if (!started) await ask.info('The store could not be served', r.message ?? 'The engine gave no reason.')
+    }
   },
 
   stopServe: () => {

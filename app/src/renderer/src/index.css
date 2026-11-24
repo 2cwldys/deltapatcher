@@ -13,6 +13,12 @@ body {
   user-select: none;
 }
 
+/* text wraps without leaving a word alone on its last line */
+p,
+.hint {
+  text-wrap: pretty;
+}
+
 input,
 textarea,
 .selectable {
@@ -41,6 +47,6 @@ textarea,
     @apply block text-xs font-semibold uppercase tracking-wider text-ink-300 mb-1.5;
   }
   .hint {
-    @apply mt-1.5 text-xs text-ink-400 leading-relaxed;
+    @apply mt-1.5 whitespace-pre-line text-xs text-ink-400 leading-relaxed; /* a newline starts a new line */
   }
 }

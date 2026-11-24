@@ -126,7 +126,7 @@ export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void
       </button>
       <span>
         <span className="block text-sm text-slate-100">{props.label}</span>
-        {props.hint && <span className="block text-xs text-ink-400">{props.hint}</span>}
+        {props.hint && <span className="block whitespace-pre-line text-pretty text-xs text-ink-400">{props.hint}</span>}
       </span>
     </label>
   )

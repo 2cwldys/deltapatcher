@@ -206,13 +206,15 @@ export default function ServerPage(): JSX.Element {
       ) : (
         <Card title="Folder" icon={HardDrive}>
           <Field label="Deploy to" setting="deploy_folder" browse="folder" mono
-            hint="A web root on this computer or a network share: the release is copied here, and a web server serves it." />
+            hint={'A web root on this computer or a network share.\nThe release is copied here, and a web server serves it.'} />
         </Card>
       )}
 
       <Card title="Deploy" icon={Rocket}>
         <p className="text-sm text-ink-300">
-          Sends the store on the Publish page. Only blobs the target lacks travel; the signature and the manifest go last, so players never see half a release.
+          Sends the store from the Publish page: only the blobs the target lacks.
+          <br />
+          The signature and the manifest go last, so players never see half a release.
         </p>
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <Button variant="primary" icon={Rocket} disabled={Boolean(busy)} onClick={deploy}>Deploy</Button>

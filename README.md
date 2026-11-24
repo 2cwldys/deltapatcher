@@ -62,21 +62,15 @@ identical files are stored once.
 
 ## The app
 
-Click a picture to see it full size.
-
 **Update**: the picked project's folder, its source and publisher key; **Check**, **Update** and **Roll back**.
-
-[![The Update page](docs/images/app-update.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png)
 
 **Release**: what to release (with what to leave out and what players keep), where players download it
 from (your server over SSH, a folder, or this computer to test), and one button that sends only what
 changed.
 
-[![The Release page](docs/images/app-release.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-release.png)
-
 **Settings**: every setting of the project and of DeltaPatcher, explained, with the log one click away.
 
-[![The Settings page](docs/images/app-settings.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-settings.png)
+A picture of every page is in [the window guide](docs/README.md#the-window).
 
 ## How it works
 

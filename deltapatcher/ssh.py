@@ -234,9 +234,11 @@ def _owner_only(path):
     if not who:
         raise SshError("cannot tell who the current Windows user is to lock %s down" % path)
     icacls = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe")
+    # Everyone, Authenticated Users, Users, and OWNER RIGHTS (some systems put that one on every new file,
+    # and the check below would then never pass)
     steps = [[icacls, path, "/inheritance:r"],
              [icacls, path, "/grant:r", "%s:F" % who],
-             [icacls, path, "/remove:g", "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545"]]
+             [icacls, path, "/remove:g", "*S-1-1-0", "*S-1-5-11", "*S-1-5-32-545", "*S-1-3-4"]]
     for s in steps:
         r = run(s, timeout=30)
         if r.returncode != 0:

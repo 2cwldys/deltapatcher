@@ -41,6 +41,17 @@ class Keys(TempCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.split()[1], blob)
 
+    @unittest.skipUnless(os.name == "nt", "Windows file permissions")
+    def test_fix_permissions_removes_owner_rights(self):
+        # some Windows systems (GitHub's runners among them) give every new file an OWNER RIGHTS entry
+        path = self.p("keys", "k_ed25519")
+        ssh.generate_key(path, "")
+        icacls = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "icacls.exe")
+        subprocess.run([icacls, path, "/grant", "*S-1-3-4:R"], check=True, stdout=subprocess.DEVNULL)
+        self.assertNotEqual(ssh.permission_problems(path), [])
+        ssh.fix_permissions(path)
+        self.assertEqual(ssh.permission_problems(path), [])
+
     def test_no_passphrase_key(self):
         path = self.p("keys", "plain_ed25519")
         ssh.generate_key(path, "")

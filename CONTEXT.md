@@ -73,6 +73,10 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
   an interface: app files carry the version, command-line files do not.
 - **Releasing the same version again** with new files (a shadow patch) is an ordinary update: only the
   changed files travel.
+- **An upgrade never breaks what people have.** Settings and project files, releases and updated folders
+  written by an earlier version keep working: settings live outside the program's folder, new settings
+  come with defaults, and `tests/test_compat.py` proves it against a frozen copy of what each released
+  version wrote.
 - **AI assistants get tools, never secrets.** The MCP server runs the engine the way the app does, and no
   tool takes a passphrase or a password: signing, unlocking a key and putting a key on a server stay with a
   person. Tools that change files or servers are marked so a client asks first.

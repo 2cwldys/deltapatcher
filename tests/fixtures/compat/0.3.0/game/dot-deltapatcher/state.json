@@ -1,0 +1,24 @@
+{
+"files": {
+"config/user.cfg": [
+9,
+"63b106cd1326c6d4874a3f51d4472ef8ca9d23bd5b7e1297a5bd7f006a03b92f"
+],
+"data/pack.bin": [
+2048,
+"09937d67845e9ea16eade263f7673cf8eba4a90f4a9be3fbab78c44f1ee70c99"
+],
+"extra/new.txt": [
+24,
+"45807bafe5e30f2d61fb8788b3a4542019bf3ae1d2cdaa01b5b05955afbdf741"
+],
+"readme.txt": [
+35,
+"164a777ec5870445fc15f64133297f82d7170ff158490b114863e0f359562fdc"
+]
+},
+"manifest_sha": "abcd18fb3db1fd7c6591a818de91d6c31ea702990929ae81389758ddf8d8c149",
+"publisher_key": "",
+"source": "@FIXTURE@/release",
+"version": "2"
+}

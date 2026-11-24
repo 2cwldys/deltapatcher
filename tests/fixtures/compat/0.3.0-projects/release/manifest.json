@@ -1,0 +1,33 @@
+{
+ "format": 1,
+ "name": "Compat",
+ "version": "2",
+ "published": "2026-11-24T07:59:11Z",
+ "count": 4,
+ "bytes": 2116,
+ "protect": [
+  "/config/user.cfg"
+ ],
+ "files": [
+  {
+   "path": "config/user.cfg",
+   "sha256": "63b106cd1326c6d4874a3f51d4472ef8ca9d23bd5b7e1297a5bd7f006a03b92f",
+   "size": 9
+  },
+  {
+   "path": "data/pack.bin",
+   "sha256": "09937d67845e9ea16eade263f7673cf8eba4a90f4a9be3fbab78c44f1ee70c99",
+   "size": 2048
+  },
+  {
+   "path": "extra/new.txt",
+   "sha256": "45807bafe5e30f2d61fb8788b3a4542019bf3ae1d2cdaa01b5b05955afbdf741",
+   "size": 24
+  },
+  {
+   "path": "readme.txt",
+   "sha256": "164a777ec5870445fc15f64133297f82d7170ff158490b114863e0f359562fdc",
+   "size": 35
+  }
+ ]
+}

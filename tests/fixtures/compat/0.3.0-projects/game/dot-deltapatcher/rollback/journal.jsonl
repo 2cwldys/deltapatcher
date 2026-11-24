@@ -1,0 +1,5 @@
+{"started": 1795507151.6747239, "had_state": true, "source": "@FIXTURE@/release", "version": "2"}
+{"op": "add", "path": "extra/new.txt"}
+{"op": "replace", "path": "data/pack.bin"}
+{"op": "remove", "path": "maps/one.map"}
+{"done": true}

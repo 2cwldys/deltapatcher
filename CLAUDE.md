@@ -61,6 +61,10 @@ Releasing a new version of DeltaPatcher is in the README, under For developers.
   files do not (`deltapatcher-cli-windows-x64.exe`).
 - **A settings file belongs to its user.** New settings come with defaults; never rewrite or migrate an
   existing file beyond what `config.save()` does.
+- **What an earlier version wrote keeps working.** `tests/test_compat.py` loads the settings, projects,
+  releases and game folders each released version wrote (`tests/fixtures/compat/`, kept byte for byte by
+  `.gitattributes`). Never edit a fixture to make it pass: read the old form instead. Each release adds its
+  own fixture (README, For developers, Release a new version of DeltaPatcher).
 - **Pictures in the guides** open full size when clicked (the image links to its raw address) and stand one
   under another, never squeezed into table cells.
 - **Text in the window**: a hint or a page's subtitle puts each sentence on its own line (`\n` between

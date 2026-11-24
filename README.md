@@ -175,6 +175,9 @@ not tracked by git.
    The app's files carry the version in their names; the command line's do not.
 6. **Everyone on an older version is offered it**: the app shows **Update DeltaPatcher**, and the command
    line says `deltapatcher self-update`. They find the files by these names, so keep them as they are.
+7. **Add its compatibility fixture**, so every later version is tested against what this one writes:
+   `git archive v0.3.0 deltapatcher | tar -x -C ../dp-0.3.0`, then
+   `python tests/fixtures/compat/make_fixture.py ../dp-0.3.0 0.3.0`, and commit the new folder.
 
 </details>
 

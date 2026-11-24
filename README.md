@@ -76,7 +76,7 @@ From the [latest release](https://github.com/2cwldys/deltapatcher/releases/lates
 
 | | The app | The command line |
 | --- | --- | --- |
-| **Windows** | Installer: `DeltaPatcher-<version>-setup.exe`<br>No install: `...-windows-x64.zip` | [`deltapatcher-cli-windows-x64.exe`](https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-windows-x64.exe) |
+| **Windows** | Installer: `DeltaPatcher-<version>-setup.exe`<br>No install: `...-windows-x64.zip`<br>One file: `...-portable.exe` | [`deltapatcher-cli-windows-x64.exe`](https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-windows-x64.exe) |
 | **Linux**<br><sub>Ubuntu 22.04+, Debian 12+</sub> | `DeltaPatcher-<version>.AppImage`<br>or `...-linux-x64.tar.gz` | [`deltapatcher-cli-linux-x64.tar.gz`](https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-linux-x64.tar.gz) |
 | **macOS**<br><sub>Apple silicon</sub> | `DeltaPatcher-<version>-arm64.dmg`<br><sub>The first time: right-click it, then Open.</sub> | [`deltapatcher-cli-macos-arm64.tar.gz`](https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-macos-arm64.tar.gz) |
 
@@ -115,9 +115,6 @@ Step by step, on the [wiki](https://github.com/2cwldys/deltapatcher/wiki):
 - **[Security](SECURITY.md)**: what DeltaPatcher protects, what it leaves to you, how to report a problem.
 
 ## For developers
-
-New to the code? [CONTEXT.md](CONTEXT.md) explains how it fits together and why, and [CLAUDE.md](CLAUDE.md)
-is the checklist for changing it, for people and for Claude Code alike.
 
 <details>
 <summary><b>Use it from an AI assistant (MCP)</b></summary>
@@ -173,7 +170,7 @@ not tracked by git.
 
    | System | Files |
    | --- | --- |
-   | Windows | `DeltaPatcher-0.3.0-setup.exe`, `DeltaPatcher-0.3.0-windows-x64.zip`, `deltapatcher-cli-windows-x64.exe` |
+   | Windows | `DeltaPatcher-0.3.0-setup.exe`, `DeltaPatcher-0.3.0-windows-x64.zip`, `DeltaPatcher-0.3.0-portable.exe`, `deltapatcher-cli-windows-x64.exe` |
    | macOS | `DeltaPatcher-0.3.0-arm64.dmg`, `DeltaPatcher-0.3.0-arm64-mac.zip`, `deltapatcher-cli-macos-arm64.tar.gz` |
    | Linux | `DeltaPatcher-0.3.0.AppImage`, `DeltaPatcher-0.3.0-linux-x64.tar.gz`, `deltapatcher-cli-linux-x64.tar.gz` |
 

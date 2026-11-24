@@ -70,7 +70,7 @@ export interface RunRequest {
 }
 
 // how this copy was installed, which decides how it updates itself (none: from source, or no way to)
-export type InstallKind = 'setup' | 'zip' | 'appimage' | 'dmg' | 'none'
+export type InstallKind = 'setup' | 'zip' | 'portable' | 'appimage' | 'dmg' | 'none'
 
 export interface AppInfo {
   version: string

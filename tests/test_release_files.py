@@ -19,7 +19,8 @@ import release_files  # noqa: E402  (tools/release_files.py)
 
 
 EVERY_SYSTEM = {
-    "windows": ["DeltaPatcher-9.9.9-setup.exe", "DeltaPatcher-9.9.9-windows-x64.zip", "deltapatcher-cli-windows-x64.exe"],
+    "windows": ["DeltaPatcher-9.9.9-setup.exe", "DeltaPatcher-9.9.9-windows-x64.zip", "DeltaPatcher-9.9.9-portable.exe",
+                "deltapatcher-cli-windows-x64.exe"],
     "linux": ["DeltaPatcher-9.9.9.AppImage", "DeltaPatcher-9.9.9-linux-x64.tar.gz", "deltapatcher-cli-linux-x64.tar.gz"],
     "macos": ["DeltaPatcher-9.9.9-arm64.dmg", "DeltaPatcher-9.9.9-arm64-mac.zip", "deltapatcher-cli-macos-arm64.tar.gz"],
 }

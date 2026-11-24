@@ -31,14 +31,19 @@ extraResources:
 win:
   executableName: DeltaPatcher
   icon: build/icon.ico
-  # the zip is the no-install copy: unzipped once, it starts as fast as the installed app (a portable
-  # .exe unpacks the whole app into a temp folder on every start: about ten seconds, longer with a virus scanner)
+  # three ways to have it: the setup installs it; the zip runs without installing and, unzipped once, starts
+  # as fast as the installed app; the portable .exe is one file to carry, which unpacks the whole app into a
+  # temp folder on every start (about ten seconds, longer with a virus scanner)
   artifactName: DeltaPatcher-${version}-windows-${arch}.${ext}
   target:
     - target: nsis
       arch: [x64]
     - target: zip
       arch: [x64]
+    - target: portable
+      arch: [x64]
+portable:
+  artifactName: DeltaPatcher-${version}-portable.exe
 nsis:
   artifactName: DeltaPatcher-${version}-setup.exe
   oneClick: false

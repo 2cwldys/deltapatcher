@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpCircle, BookOpen, Boxes, Bug, CircleHelp, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
+import { ArrowUpCircle, BookOpen, Boxes, Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
 import { Page, useApp, waitingCount } from '../store/app'
 import { REPO_URL } from '@shared/project'
 import ProjectPicker from './ProjectPicker'
@@ -11,43 +11,6 @@ const LINKS: { page: Page; label: string; hint: string; Icon: LucideIcon }[] = [
   { page: 'settings', label: 'Settings', hint: 'deltapatcher.ini', Icon: SlidersHorizontal }
 ]
 
-// Help, at the bottom: the wiki, reporting an issue, and the version, folded into one menu
-function HelpMenu(): JSX.Element {
-  const [open, setOpen] = useState(false)
-  const [version, setVersion] = useState('')
-  useEffect(() => {
-    window.api.info().then((i) => setVersion(i.version))
-  }, [])
-  const item = 'flex items-center gap-2 px-3 py-2 text-xs text-ink-300 transition-colors hover:bg-ink-700/60 hover:text-slate-100'
-  return (
-    <div className="relative mt-3">
-      {open && (
-        <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-          <div className="absolute bottom-full left-0 right-0 z-40 mb-1 overflow-hidden rounded-lg border border-ink-600 bg-ink-850 py-1 shadow-xl shadow-black/50">
-            <a href={`${REPO_URL}/wiki`} target="_blank" rel="noreferrer" className={item} onClick={() => setOpen(false)}>
-              <BookOpen size={14} className="text-delta-light" />
-              Read the wiki
-            </a>
-            <a href={`${REPO_URL}/issues/new`} target="_blank" rel="noreferrer" className={item} onClick={() => setOpen(false)}>
-              <Bug size={14} className="text-blob-light" />
-              Report an issue
-            </a>
-            <div className="mt-1 border-t border-ink-700 px-3 pb-1 pt-2 font-mono text-[11px] tracking-wider text-ink-400">
-              DeltaPatcher {version ? `v${version}` : ''}
-            </div>
-          </div>
-        </>
-      )}
-      <button type="button" onClick={() => setOpen(!open)}
-        className="flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100">
-        <CircleHelp size={14} className="text-delta-light" />
-        Help
-      </button>
-    </div>
-  )
-}
-
 export default function Sidebar(): JSX.Element {
   const page = useApp((s) => s.page)
   const setPage = useApp((s) => s.setPage)
@@ -56,6 +19,10 @@ export default function Sidebar(): JSX.Element {
   const busy = useApp((s) => s.busy)
   // the projects the last check found an update for
   const waiting = useApp(waitingCount)
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    window.api.info().then((i) => setVersion(i.version))
+  }, [])
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900/95">
@@ -115,7 +82,25 @@ export default function Sidebar(): JSX.Element {
         <div className="rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 text-[11px] leading-relaxed text-ink-400">
           Every file is checked against its <span className="text-blob">SHA-256</span> before it is used.
         </div>
-        <HelpMenu />
+        <a
+          href={`${REPO_URL}/wiki`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100"
+        >
+          <BookOpen size={14} className="text-delta-light" />
+          Read the wiki
+        </a>
+        <a
+          href={`${REPO_URL}/issues/new`}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100"
+        >
+          <Bug size={14} className="text-blob-light" />
+          Report an issue
+        </a>
+        <div className="mt-1 px-1 font-mono text-[11px] tracking-wider text-ink-400">{version ? `v${version}` : ''}</div>
       </div>
     </aside>
   )

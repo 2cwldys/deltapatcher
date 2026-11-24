@@ -334,10 +334,11 @@ export const useApp = create<State>((set, get) => {
       const u = get().appUpdate
       if (!u) return
       const info = await window.api.info()
-      if (info.install === 'zip' || info.install === 'none') {
+      if (info.install === 'zip' || info.install === 'portable' || info.install === 'none') {
+        const how = info.install === 'zip' ? 'it runs from the zip' : info.install === 'portable' ? 'it is the portable program' : 'it runs from source'
         const go = await ask.confirm(
           `DeltaPatcher ${u.latest} is out`,
-          `You have ${u.current}. This copy cannot replace itself (${info.install === 'zip' ? 'it runs from the zip' : 'it runs from source'}): ` +
+          `You have ${u.current}. This copy cannot replace itself (${how}): ` +
             'download the new one from the release page.',
           'Open the release page'
         )

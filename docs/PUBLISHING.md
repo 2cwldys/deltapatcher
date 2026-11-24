@@ -130,7 +130,8 @@ Players need DeltaPatcher and your source address. Common ways:
   file is signed: a copy changed after you signed it is refused, and players trust your key from their very
   first download. Command line:
   `deltapatcher project export "My Game" --out MyGame.deltapatch --sign`.
-- **Ship the DeltaPatcher app** (the unzipped Windows `.zip`, the AppImage on Linux) next to the game, with a `deltapatcher.ini` beside it that already holds
+- **Ship the DeltaPatcher app** (the unzipped Windows `.zip` or the one-file `-portable.exe`, the AppImage on
+  Linux) next to the game, with a `deltapatcher.ini` beside it that already holds
   `source_url` (and `trust_key` if you sign). Players just click **Update**. Without the file, tell them
   the address once; the window remembers it.
 - **A one-click updater** for your launcher or a `.bat` file, using the command-line program:

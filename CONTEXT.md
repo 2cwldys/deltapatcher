@@ -113,8 +113,8 @@ as possible without becoming hard to use.
    default, updates them unattended.
 4. **The tray** (built): `minimize_to_tray` and `start_with_system`, both off by default.
 5. **No sidebar bloat** (built). Projects live in the picker, which scrolls and searches when the list is
-   long; Help gathers the wiki and issue links; the command line's menu keeps its project choices under one
-   Projects entry.
+   long; Read the wiki and Report an issue stay as links at the bottom of the sidebar; the command line's
+   menu keeps its project choices under one Projects entry.
 6. **Starting over** (built): Reset and Remove all never touch a project's folders, and Reset keeps a copy
    of the settings.
 7. **The wiki from the command line** (built): `deltapatcher wiki [guide]`.

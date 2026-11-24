@@ -23,10 +23,12 @@ import { cancelJob, engineCommand, runEngine, stopAll, stopJob } from './engine'
 import { apply as applyStartWithSystem, HIDDEN_ARG, LOGIN_ITEM_NAME, startedHidden, System, unavailable } from './startWithSystem'
 
 // How this copy of DeltaPatcher was installed, which decides how it updates itself: the Windows setup
-// (its uninstaller sits beside the program), the Windows zip, an AppImage, macOS, or from source.
+// (its uninstaller sits beside the program), the Windows portable .exe (it says so in
+// PORTABLE_EXECUTABLE_FILE), the Windows zip, an AppImage, macOS, or from source.
 function installKind(): InstallKind {
   if (!app.isPackaged) return 'none'
   if (process.platform === 'win32') {
+    if (process.env.PORTABLE_EXECUTABLE_FILE) return 'portable'
     return existsSync(join(dirname(process.execPath), 'Uninstall DeltaPatcher.exe')) ? 'setup' : 'zip'
   }
   if (process.platform === 'linux') return process.env.APPIMAGE ? 'appimage' : 'none'

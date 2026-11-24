@@ -25,12 +25,14 @@ classifiers = [
 sign = ["cryptography>=41", "bcrypt>=4"]
 # putting your key on a server with its password, once (ssh install-key)
 server = ["paramiko>=3.4"]
+# projects shared by torrent: downloading from other players, and seeding
+torrent = ["libtorrent==2.0.15"]
 
 [project.scripts]
 deltapatcher = "deltapatcher.__main__:main"
 
 [tool.setuptools]
-packages = ["deltapatcher"]
+packages = ["deltapatcher", "deltapatcher.torrent"]
 
 [tool.setuptools.dynamic]
 version = { attr = "deltapatcher.__version__" }

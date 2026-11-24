@@ -6,3 +6,9 @@ paramiko==5.1.0
 pyinstaller==6.22.3
 pyinstaller-hooks-contrib==2026.10
 pillow==13.0.0      # tools/make_icon.py
+# BitTorrent, frozen into the engine. On a Mac with Apple silicon and Python 3.12 (the build workflow's): the macOS 14
+# wheel by its address, checked against its SHA-256 (pip checks the #sha256 of an address), so the engine runs on
+# macOS 14 and later; pip on macOS 15 would otherwise take the macOS 15 wheel.
+libtorrent==2.0.15; sys_platform != "darwin"
+libtorrent @ https://files.pythonhosted.org/packages/41/b5/a1558bcdf1f763eefbcb953ea5e11bc3f2e2af2965a970f9932f3d499e7d/libtorrent-2.0.15-cp312-cp312-macosx_14_0_arm64.whl#sha256=d98fa6330da43744efcca589185540fe0f6099ef1043fc26dff48cc8df3f1a50 ; sys_platform == "darwin" and platform_machine == "arm64" and python_version == "3.12"
+libtorrent==2.0.15; sys_platform == "darwin" and (platform_machine != "arm64" or python_version != "3.12")

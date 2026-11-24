@@ -10,8 +10,9 @@
     powershell -ExecutionPolicy Bypass -File build.ps1 -Test      run the tests first
     powershell -ExecutionPolicy Bypass -File build.ps1 -EngineOnly
 
-  Needs Python 3.11+ (the py launcher) and Node.js 20+ with npm: the build tools need 3.11, the engine
-  itself runs on Python 3.8 or later. Python packages go into .venv,
+  Needs Python 3.11 to 3.13 (the py launcher) and Node.js 20+ with npm: the build tools need 3.11, the BitTorrent
+  library built into the engine (libtorrent 2.0.15) has no wheel after 3.13, and the engine itself runs on
+  Python 3.8 or later. Python packages go into .venv,
   Node packages into app\node_modules (from app\package-lock.json): nothing is installed system-wide.
 #>
 param([switch]$Test, [switch]$EngineOnly)
@@ -27,11 +28,16 @@ $py = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 if ($LASTEXITCODE) {
     throw 'The build needs Python 3.11 or later (its tools do; the engine itself runs on 3.8+). Install a newer Python, delete .venv and run build.ps1 again.'
 }
+& $py -c "import sys; sys.exit(sys.version_info >= (3, 14))"
+if ($LASTEXITCODE) {
+    throw 'The build needs Python 3.11 to 3.13: the BitTorrent library built into the engine (libtorrent 2.0.15) has no wheel for a newer Python. Install Python 3.12, delete .venv and run build.ps1 again.'
+}
 & $py -m pip install --disable-pip-version-check -q -r requirements-build.txt
 if ($LASTEXITCODE) { throw 'pip install failed' }
 
 if ($Test) {
     Write-Host '== tests'
+    $env:DP_REQUIRE_TORRENT = '1'          # libtorrent is in .venv: a torrent test that cannot run fails
     & $py -m unittest discover -s tests
     if ($LASTEXITCODE) { throw 'tests failed' }
 }
@@ -48,6 +54,11 @@ if (-not $v.ok) { throw 'the built engine does not answer' }
 Write-Host ("   engine {0} answers" -f $v.data.version)
 $v = & dist\engine\deltapatcher-engine.exe --json --no-log version | ConvertFrom-Json
 if (-not $v.ok) { throw 'the built engine folder does not answer' }
+Write-Host '== BitTorrent in the built engine (a session on 127.0.0.1, a small torrent made and checked)'
+foreach ($exe in 'dist\deltapatcher-cli.exe', 'dist\engine\deltapatcher-engine.exe') {
+    & $exe --no-log version --torrent
+    if ($LASTEXITCODE) { throw "the BitTorrent self-test of $exe failed" }
+}
 if ($EngineOnly) { return }
 
 Write-Host '== app (Electron)'

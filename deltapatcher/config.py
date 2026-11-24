@@ -110,6 +110,26 @@ SCHEMA = [
                                          "have one."),
     ("backup", "backup_max_size", "", "The most the project's backup folder may hold, for example 10 GB: the oldest "
                                       "backups go first; the one just made always stays. Empty: no limit."),
+    ("torrent", "torrent", False, "Share this project's releases by BitTorrent too, beside the address players update "
+                                  "from (yes/no). A release then also makes release.torrent and release.item, and "
+                                  "players' DeltaPatchers download from each other as well as from the address; a "
+                                  "project with no address (source_url empty or the default, and no public_url) "
+                                  "updates by torrent only. Needs signed releases (sign = yes). A player's project "
+                                  "gets it from the project file its publisher gives."),
+    ("torrent", "torrent_id", "", "Kept by DeltaPatcher: this project's torrent id, made at random when torrents are "
+                                  "first turned on. It never changes: players find the project's newest release by it "
+                                  "and the publisher key."),
+    ("torrent", "torrent_name", "", "The torrent's name: letters, digits and . _ - only. Empty: the last part of the "
+                                    "address players update from, else release. When that address ends in this name, "
+                                    "its web server serves the torrent's files too (a web seed)."),
+    ("torrent", "seeds", "", "The computers that keep this project's newest release shared, which players connect to "
+                             "first: host:port, separated by commas (game.example.com:6881, 203.0.113.10:6881). Your own "
+                             "computer with its torrent port forwarded, or deltapatcher seed on a server. A new player "
+                             "who reaches none of them, no peer met before and nobody on their own network cannot "
+                             "start."),
+    ("torrent", "seed", False, "Share this project's files with other players while DeltaPatcher runs (yes/no): "
+                               "deltapatcher seed --all, or the app, seeds every project set to yes. Only files "
+                               "DeltaPatcher has checked are offered, never your own changes. Off unless you say yes."),
     ("window", "close_to_tray", False, "Closing the window keeps DeltaPatcher in the tray (yes/no)."),
     ("window", "minimize_to_tray", False, "Minimizing the window hides it in the tray, off the taskbar; a click on the "
                                           "tray icon brings it back (yes/no)."),
@@ -128,6 +148,17 @@ SCHEMA = [
                                      "file is always listed."),
     ("general", "current_project", "", "The project the app shows: its file's name in the projects folder, or its full "
                                        "path. Empty: Default."),
+    ("general", "torrents", "allow", "allow: a project its publisher shares by torrent may also download from other "
+                                     "players, and seeds only where you say yes; refuse: DeltaPatcher never uses "
+                                     "BitTorrent, whatever a project, its publisher or auto_update says (a project "
+                                     "with an address then updates from it only)."),
+    ("general", "torrent_port", 6881, "The port seeding listens on: the one to forward on your router so others can "
+                                      "reach you (0: any free port)."),
+    ("general", "seed_upload_kbps", 0, "The most seeding and torrent downloads send to others, in KB per second (0: no "
+                                       "limit)."),
+    ("general", "torrent_port_mapping", False, "Ask the router to forward the torrent port to this computer (UPnP and "
+                                               "NAT-PMP) while seeding (yes/no). Off: nothing asks the router; you can "
+                                               "still download from and send to every peer you reach."),
 ]
 DEFAULTS = {key: default for _s, key, default, _w in SCHEMA}
 SECTION = {key: section for section, key, _d, _w in SCHEMA}
@@ -208,12 +239,15 @@ def ensure():
     return p
 
 
-CHOICES = {"deploy_mode": ("sftp", "folder", "local")}
+CHOICES = {"deploy_mode": ("sftp", "folder", "local"), "torrents": ("allow", "refuse")}
 
 
 def _convert(key, raw):
     default = DEFAULTS[key]
     raw = raw.strip()
+    if key == "torrents":
+        # only "allow" lets BitTorrent in: refuse, or anything else written there (empty, a typo), refuses it
+        return "allow" if raw.lower() == "allow" else "refuse"
     if raw == "":
         return default
     if key in CHOICES:
@@ -233,14 +267,17 @@ def _convert(key, raw):
     return raw
 
 
-def file_values(path, keys=None):
+def file_values(path, keys=None, problems=None):
     """{key: value} of the settings the file has, of `keys` (default: all), each read like load() reads it;
-    {} when the file cannot be read."""
+    {} when the file cannot be read, and why is added to the list `problems` when one is given. A UTF-8 byte order
+    mark at its start is fine (Windows PowerShell writes one)."""
     parser = configparser.ConfigParser(interpolation=None, strict=False)
     try:
-        with open(path, "r", encoding="utf-8") as f:
+        with open(path, "r", encoding="utf-8-sig") as f:
             parser.read_file(f)
-    except (OSError, configparser.Error, UnicodeDecodeError):
+    except (OSError, configparser.Error, UnicodeDecodeError) as e:
+        if problems is not None:
+            problems.append((str(e).splitlines() or [type(e).__name__])[0])
         return {}
     out = {}
     for key in (DEFAULTS if keys is None else keys):
@@ -249,17 +286,29 @@ def file_values(path, keys=None):
     return out
 
 
+# The main settings file when the last load() could not read it: {"path", "why"}; {} when it could. Torrents are
+# then refused (the person's choice about them cannot be known), and the command line says so.
+UNREADABLE = {}
+
+
 def load(project=None):
     """Every setting, its default where the file has none. project (a projects.Project; None: Default): its
-    own settings from its file, DeltaPatcher's own from the main file."""
+    own settings from its file, DeltaPatcher's own from the main file. When the main file is there but cannot be
+    read or understood, torrents are refused until it is fixed (UNREADABLE says why); everything else is as
+    before: the defaults."""
     cfg = dict(DEFAULTS)
     main = ensure()
     own = own_file(project)
+    problems = []
     if own is None:
-        cfg.update(file_values(main))
+        cfg.update(file_values(main, problems=problems))
     else:
-        cfg.update(file_values(main, APP_KEYS))
+        cfg.update(file_values(main, APP_KEYS, problems=problems))
         cfg.update(file_values(own, PROJECT_KEYS))
+    UNREADABLE.clear()
+    if problems and os.path.exists(main):
+        cfg["torrents"] = "refuse"
+        UNREADABLE.update(path=main, why=problems[0])
     return cfg
 
 
@@ -297,6 +346,9 @@ def _write(p, values, template):
             lines = f.read().splitlines()
     except OSError:
         lines = template.splitlines()
+    bom = bool(lines) and lines[0].startswith("\ufeff")     # kept as the file had it, out of the way of the matching
+    if bom:
+        lines[0] = lines[0][1:]
     done, section = set(), None
     for i, line in enumerate(lines):
         m = _SECT.match(line)
@@ -321,7 +373,7 @@ def _write(p, values, template):
             lines += ["", "[%s]" % sect]
             at = len(lines)
         lines.insert(at, "%s = %s" % (key, values[key]))
-    _replace(p, "\n".join(lines) + "\n")
+    _replace(p, ("\ufeff" if bom else "") + "\n".join(lines) + "\n")
 
 
 def write_defaults():

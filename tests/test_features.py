@@ -165,7 +165,8 @@ class Settings(TempCase):
             self.assertIn("; " + what, text)
         parser = configparser.ConfigParser(interpolation=None)
         parser.read_string(text)
-        self.assertEqual(sorted(parser.sections()), ["backup", "general", "project", "publish", "server", "update", "window"])
+        self.assertEqual(sorted(parser.sections()), ["backup", "general", "project", "publish", "server", "torrent", "update",
+                                                     "window"])
 
     def test_save_keeps_comments_and_hand_edits(self):
         config.load()

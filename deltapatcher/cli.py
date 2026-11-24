@@ -16,10 +16,15 @@ these follow each one:
     {"event": "project-end", "project": ..., "file": ..., "ok": true, "data": {...}}
     {"event": "project-end", "project": ..., "file": ..., "ok": false, "message": "...", "code": "..."}
 
+seed runs until it is stopped; every 5 seconds, for each project it seeds:
+    {"event": "seeding", "project": ..., "file": ..., "state": "seeding|paused|waiting|stopped", "why": "...",
+     "release": "...", "peers": 3, "upload_rate": 12345, "sent": 678901}      (bytes per second; bytes this run)
+
 In --json mode standard input carries what a person would type: with --passphrase-stdin the first
 line is the passphrase (never put on a command line or in the environment), and a later line
 "cancel" stops the run at its next safe point: an update before it changes the folder, a publish,
-deploy or restore before its new manifest goes up.
+deploy or restore before its new manifest goes up; a seed run within two seconds ("cancel", or the end of
+standard input).
 """
 
 import argparse
@@ -36,11 +41,12 @@ import time
 import traceback
 
 from . import (APP_NAME, __version__, backup, client, config, deploy, logs, presets, projects, publish, publisher,
-               selfupdate, serve, signing, ssh, stats)
+               selfupdate, serve, signing, ssh, stats, torrent)
 from .color import enable as color_enable
 from .color import paint, plain
 from .manifest import MANIFEST_NAME, Manifest, ManifestError
 from .source import DEFAULT_URL, SourceError, insecure_remote
+from .torrent import make as torrent_make
 
 # %(prog)s is the name to type (see prog_name); argparse fills it in
 EPILOG = """examples:
@@ -79,6 +85,10 @@ several games or mods: a project each, with settings of its own (commands use De
   %%(prog)s project import MyMod.deltapatch                    (the projects of a project file, added here)
   %%(prog)s project accept "My Mod"                            (its publisher changed it: apply that, after one question)
 
+share by torrent too (a project's choice, set by its publisher; players seed only when they say yes):
+  %%(prog)s config set torrent=yes seeds=game.example.com:6881   (then release with --sign as before)
+  %%(prog)s seed --all                  (share every project set to seed, until Ctrl+C)
+
 the guides, on the wiki in your browser:
   %%(prog)s wiki                        (where to start)
   %%(prog)s wiki cli                    (every command; also quickstart, players, publishing, vps, troubleshooting)
@@ -93,6 +103,7 @@ STYLE_BY_START = (
     ("the release is not signed", "warn"), ("trusting this publisher key", "warn"), ("skipped", "warn"),
     ("  kept", "warn"), ("the last update stopped", "warn"), ("an update stopped", "warn"), ("dry run", "warn"),
     ("the target", "warn"), ("Warning", "warn"), ("Not trusted", "warn"), ("signature checks are off", "warn"),
+    ("seeding ", "ok"), ("by torrent", "ok"),
 )
 
 
@@ -265,6 +276,7 @@ UNATTENDED = False                   # --unattended: nobody is there to answer (
 CANCEL = threading.Event()           # stops a download: set by the person (USER_CANCEL) or by a failed download
 USER_CANCEL = threading.Event()      # the person asked to stop ("cancel" on standard input)
 STDIN_CLOSED = threading.Event()     # --json: the app closed our standard input (asked us to stop, or went away)
+STOP_READ = []                       # --json: when "cancel", or the end of standard input, was read (time.time())
 
 
 class ProjectCancel(object):
@@ -283,7 +295,7 @@ class ProjectCancel(object):
 
 # what a command can fail with, short of a bug: said in a line, no traceback
 FAILURES = (client.UpdateError, deploy.DeployError, publish.PublishError, ssh.SshError, signing.SignError,
-            SourceError, ManifestError, OSError)
+            SourceError, ManifestError, OSError, torrent.TorrentError, torrent_make.MakeError)
 
 
 def say(text, style=None):
@@ -318,10 +330,12 @@ def start_control_reader():
         try:
             for line in sys.stdin:
                 if line.strip().lower() == "cancel":
+                    STOP_READ.append(time.time())
                     USER_CANCEL.set()
                     CANCEL.set()
         except (OSError, ValueError):
             pass
+        STOP_READ.append(time.time())
         STDIN_CLOSED.set()
     threading.Thread(target=read, name="deltapatcher-stdin", daemon=True).start()
 
@@ -434,17 +448,64 @@ def cmd_publish(a, cfg):
         signer = load_signer(a, a.sign or cfg["signing_key"] or signing.default_key_path())
     name = a.name if a.name is not None else cfg["name"]
     version = a.version if a.version is not None else cfg["version"]
+    shared, made = torrent_release(a, cfg, signer)
     details = publisher.release_object(project_of(a), cfg, signing.public_key_text(signer) if signer else "", notes, say)
     res = publish.publish(src, store, name, version, rules["protect"], prune=not a.no_prune,
                           progress=OUT.progress, log=say, signer=signer, htaccess=not a.no_htaccess,
-                          leave_out=rules["leave out"], cancel=USER_CANCEL, project=details)
+                          leave_out=rules["leave out"], cancel=USER_CANCEL, project=details, extra=shared)
     OUT.end()
     if signer is None:
         say("Not signed. Players can check who made a release when you publish with --sign.", "warn")
-    return {"files": res.files, "bytes": res.bytes, "blobs": res.blobs, "new_blobs": res.new_blobs,
+    data = {"files": res.files, "bytes": res.bytes, "blobs": res.blobs, "new_blobs": res.new_blobs,
             "new_bytes": res.new_bytes, "pruned": res.pruned, "signed": signer is not None,
             "left_out": res.left_out, "store": os.path.abspath(store), "summary": res.summary(),
             "details": publisher.has_details(details), "show_files": details["show_files"], "notes": notes}
+    if made:
+        data["torrent"] = made[-1]
+    return data
+
+
+def torrent_release(a, cfg, signer):
+    """For a project shared by torrent: (the publish step that writes release.torrent and release.item before the
+    manifest goes in place, [what it made]). Its releases must be signed; its torrent id is made now if it has none
+    yet. For a project that is not: (the step that takes a release.torrent and release.item an earlier publish left
+    in the store out of it, []); it does nothing where there are none."""
+    project = project_of(a)
+    if not cfg.get("torrent"):
+        def out(store, raw, sig):
+            gone = []
+            for name in (torrent.TORRENT_FILE, torrent.ITEM_FILE):
+                path = os.path.join(store, name)
+                if os.path.isfile(path):
+                    try:
+                        os.remove(path)
+                        gone.append(name)
+                    except OSError as e:
+                        say("Warning: %s could not be taken out of the store: %s" % (name, e), "warn")
+            if gone:
+                say("took %s out of the store: %s is not shared by torrent (torrent = no)"
+                    % (" and ".join(gone), project.title))
+        return out, []
+    if signer is None:
+        raise CliError("%s is shared by torrent (torrent = yes): its releases must be signed. Publish with --sign"
+                       % project.title, "sign-needed")
+    if not torrent.ID_RE.match(str(cfg.get("torrent_id") or "")):
+        cfg["torrent_id"] = torrent.new_id()
+        config.save({"torrent_id": cfg["torrent_id"]}, project)
+        say("Made the torrent id of %s: %s (it never changes)" % (project.title, cfg["torrent_id"]))
+    tinfo = torrent.info(cfg)
+    address = presets.address(cfg)
+    web = torrent.web_seed(address, tinfo["name"])
+    made = []
+
+    def write(store, raw, sig):
+        from .torrent import release
+        made.append(release.write(store, raw, sig, tinfo, web, signer, log=say, cancel=USER_CANCEL))
+        if not address:
+            say("%s has no address: players find this release through the DHT, once a seed run of this store puts "
+                "its release item there:  %s" % (project.title, paint('%s --project "%s" seed' % (prog_name(), project.title),
+                                                                       "code")), "warn")
+    return write, made
 
 
 def release_notes(a):
@@ -605,22 +666,33 @@ def update_one(a, cfg, out, cancel):
             raise CliError("--project-file gives the address and the publisher key: leave out --source and "
                            "--trust-key", "bad-arguments")
         entry = project_file_entry(a, out)
-        url, trust = entry["source_url"], entry.get("trust_key") or None
+        url, trust = entry.get("source_url") or DEFAULT_URL, entry.get("trust_key") or None
+        shared = entry.get("torrent")
+        # the one rule for every project: no address (none, or the default every settings file starts with)
+        only = shared is not None and not torrent.address_of({"source_url": entry.get("source_url", "")})
     else:
         if getattr(a, "only", None):
             raise CliError("--only picks one project of the file --project-file names", "bad-arguments")
         url = a.source or cfg["source_url"] or DEFAULT_URL
         trust = a.trust_key or cfg.get("trust_key") or None
-    if insecure_remote(url):
+        shared = torrent.info(cfg) if not a.source or publisher.same_address(a.source, cfg["source_url"]) else None
+        only = shared is not None and not a.source and not torrent.address_of(cfg)
+    workers = a.workers or int(cfg.get("workers") or 4)
+    source, side = torrent_side(cfg, out, install, trust, shared, only, cancel, workers)
+    if not only and insecure_remote(url):
         out.say("Warning: %s is plain http to another machine. Every file is checked against the manifest's SHA-256, "
                 "but the manifest itself could be changed on the way. Use https, or a signed release, for anything but "
                 "a trusted network." % url)
     headers = dict(h.split(":", 1) for h in (a.header or []) if ":" in h)
     headers = {k.strip(): v.strip() for k, v in headers.items()}
-    workers = a.workers or int(cfg.get("workers") or 4)
     trusted = publisher.trusted_key(trust, install)          # before the update: a first signed release is pinned by it
-    plan = client.update(url, install, check_only=a.check, workers=max(1, workers), headers=headers,
-                         progress=out.progress, log=out.say, cancel=cancel, trust_key=trust)
+    try:
+        plan = client.update(url, install, check_only=a.check, workers=max(1, workers), headers=headers,
+                             progress=out.progress, log=out.say, cancel=cancel, trust_key=trust, source=source,
+                             torrent=side)
+    finally:
+        if source is not None:
+            source.close()
     out.end()
     need = plan.download()
     data = {"empty": plan.empty(), "summary": plan.summary(), "add": len(plan.add), "replace": len(plan.replace),
@@ -629,8 +701,37 @@ def update_one(a, cfg, out, cancel):
             "publisher_key": client.State(os.path.abspath(install)).publisher_key}
     if a.check and not plan.empty():
         data["exit"] = 2
+    if shared is not None:
+        data["torrent"] = {"used": side is not None, "only": only, "refused": torrent.refused(cfg)}
     data.update(release_report(a, cfg, plan, out, entry, trusted, url))
     return data
+
+
+def torrent_side(cfg, out, install, trust, shared, only, cancel, workers=4):
+    """An update's BitTorrent side for a project shared by torrent: (the source to read the release from, or None
+    for its address; what fetches from the swarm and keeps the release for seeding, or None). Torrents refused or
+    no libtorrent: a project with an address updates from it alone; one with no address cannot update."""
+    if shared is None:
+        return None, None
+    if torrent.refused(cfg):
+        if only:
+            raise CliError(torrent.REFUSED_ONLY, "torrents-refused")
+        return None, None
+    if not torrent.available():
+        if only:
+            raise CliError(torrent.NO_SUPPORT, "no-torrent-support")
+        out.say("%s: this project updates from its address only." % torrent.NO_SUPPORT)
+        return None, None
+    from .torrent import session
+    key = publisher.trusted_key(trust, install)
+    if only:
+        if not key:
+            raise CliError("this project updates only by torrent, and finds its release by its publisher key: it has "
+                           "none (set trust_key)", "no-key")
+        src = session.TorrentSource(shared, key, install, cfg, log=out.say, cancel=cancel)
+        return src, src
+    return None, session.AddressTorrent(shared, key, os.path.join(os.path.abspath(install), client.STATE_DIR), cfg,
+                                        log=out.say, workers=workers)
 
 
 def project_file_entry(a, out):
@@ -743,7 +844,7 @@ def moved_since(entry, obj, trusted, signer):
     if not publisher.has_details(obj):
         return []
     lines = []
-    if obj.get("source_url") and not publisher.same_address(obj["source_url"], entry["source_url"]):
+    if obj.get("source_url") and not publisher.same_address(obj["source_url"], entry.get("source_url", "")):
         lines.append("the publisher moved this project to %s" % obj["source_url"])
     known = set(k for k in (entry.get("trust_key"), trusted, signer) if k)
     if obj.get("trust_key") and obj["trust_key"] not in known:
@@ -1017,6 +1118,9 @@ def cmd_backup(a, cfg):
             say("Nothing there is removed, except a file of the same name and the wrong size, which is replaced.")
             if not ask_sure("Restore it"):
                 raise CliError("nothing was restored", "cancelled")
+        if torrent.torrent_only(cfg):
+            say("Warning: %s updates by torrent only, and players there are not moved to the backup by this: publish "
+                "its release again to share it by torrent." % proj.title, "warn")
         res = backup.restore(proj, cfg, a.name, target, dry_run=a.dry_run, log=say, progress=OUT.progress,
                              cancel=USER_CANCEL)
         OUT.end()
@@ -1244,6 +1348,47 @@ def project_of(a):
 
 # the settings that place a project's folders: a change to one is checked against where its backups go
 FOLDER_SETTINGS = ("backup_dir", "store_dir", "publish_src", "deploy_folder", "deploy_mode", "install_dir")
+# the settings of torrents, checked together (torrent_settings)
+TORRENT_SETTINGS = ("torrent", "torrent_id", "torrent_name", "seeds", "seed", "torrent_port", "seed_upload_kbps")
+
+
+def torrent_settings(project, changes):
+    """config set of torrent settings, checked: turning torrents on needs signed releases (sign = yes), unless the
+    project has its torrent id already (a player's, from its project file), and makes the id; an id never changes
+    once made; a name and seeds by their rules; seed = yes only for a project shared by torrent; a port and a limit
+    that can be. Returns the changes as they are saved."""
+    before = config.load(project)
+    after = dict(before, **changes)
+    changes = dict(changes)
+    old_id = str(before.get("torrent_id") or "")
+    if "torrent_id" in changes:
+        new = str(changes["torrent_id"] or "").strip().lower()
+        if torrent.ID_RE.match(old_id) and new != old_id:
+            raise CliError("torrent_id never changes once it is made: players find the project by it", "bad-setting")
+        if new and not torrent.ID_RE.match(new):
+            raise CliError("torrent_id: %s" % torrent.id_problem(new), "bad-setting")
+    if changes.get("torrent") and not torrent.ID_RE.match(str(after.get("torrent_id") or "")):
+        if not after.get("sign"):
+            raise CliError("torrents need signed releases: turn signing on first (sign = yes), with a signing key "
+                           "(deltapatcher sign keygen)", "sign-needed")
+        changes["torrent_id"] = torrent.new_id()
+    if changes.get("torrent_name"):
+        problem = torrent.name_problem(str(changes["torrent_name"]).strip())
+        if problem:
+            raise CliError("torrent_name: %s" % problem, "bad-setting")
+    if "seeds" in changes:
+        try:
+            changes["seeds"] = ", ".join(torrent.seeds_of(changes["seeds"], strict=True))
+        except ValueError as e:
+            raise CliError("seeds: %s" % e, "bad-setting")
+    if changes.get("seed") and torrent.info(dict(after, **changes)) is None:
+        raise CliError("seed: %s is not shared by torrent (torrent = no): there is nothing to seed" % project.title,
+                       "not-shared")
+    if "torrent_port" in changes and not 0 <= int(changes["torrent_port"]) <= 65535:
+        raise CliError("torrent_port: a port from 1 to 65535, or 0 for any free port", "bad-setting")
+    if "seed_upload_kbps" in changes and int(changes["seed_upload_kbps"]) < 0:
+        raise CliError("seed_upload_kbps: 0 or more (0: no limit)", "bad-setting")
+    return changes
 
 
 def cmd_config(a, cfg):
@@ -1259,6 +1404,8 @@ def cmd_config(a, cfg):
             k = k.strip()
             if k not in config.DEFAULTS:
                 raise CliError("there is no setting %r" % k, "no-such-setting")
+            if k == "torrents" and v.strip().lower() not in config.CHOICES["torrents"]:
+                raise CliError("torrents: allow or refuse", "bad-setting")
             changes[k] = config._convert(k, v)
         if changes.get("title"):
             changes["title"] = projects.check_name(changes["title"], project)
@@ -1274,6 +1421,8 @@ def cmd_config(a, cfg):
             problem = backup.folder_problem(after)
             if problem:
                 raise CliError(problem, "bad-setting")
+        if set(changes) & set(TORRENT_SETTINGS):
+            changes = torrent_settings(project, changes)
         config.save(changes, project)     # only these keys change, each in its own file; everything else stays
         return {"path": own, "settings": config.load(project)}
     data = {"path": own, "main_path": p, "project": dict(project.tag(), kind=project.kind),
@@ -1294,10 +1443,12 @@ def cmd_config(a, cfg):
 def cmd_projects(a, cfg):
     every = projects.all_projects()
     chosen = projects.current()
+    seeding = torrent.seeding_now()
     rows = []
     for p in every:
         row = projects.describe(p)
         row["current"] = projects.same(p, chosen)
+        row["seeding"] = seeding.get(os.path.normcase(os.path.abspath(p.path)))
         rows.append(row)
     data = {"projects": rows, "main": every[0].path, "folder": projects.folder(), "current": chosen.path,
             "parallel_updates": max(1, int(cfg["parallel_updates"] or 1))}
@@ -1312,6 +1463,8 @@ def cmd_projects(a, cfg):
                                    else "not set up"))
             say("  release  %s" % (("%s  to  %s" % (row["publish_src"], row["where"] or "nowhere yet"))
                                    if row["publish_src"] else "not set up"))
+            if row["seeding"]:
+                say("  seeding  %s" % seeding_words(row["seeding"]), "ok")
         print()
         if len(rows) > 1:
             say("Commands work on Default unless --project names another:  %s"
@@ -1470,7 +1623,7 @@ def project_export(a):
     else:
         say("A new project for every file: players are not asked about later changes.")
     for e in entries:
-        if loopback(e["source_url"]):
+        if e.get("source_url") and loopback(e["source_url"]):
             say("%s updates from this computer (%s): the file works on this computer only." % (e["title"], e["source_url"]),
                 "warn")
     return {"file": out, "projects": [e["title"] for e in entries], "signed": signer is not None, "signer": signer_text,
@@ -1537,6 +1690,9 @@ def project_import(a):
                        "named %s" % (rows[0]["title"], rows[0]["updates"]["project"], a.name), "bad-arguments")
     info = {"file": path, "signed": bool(signer), "signer": signer, "made": found["made"], "updates": found["updates"],
             "fingerprint": signing.fingerprint(signing.parse_key(signer)) if signer else "", "projects": rows}
+    by_torrent = [e for e in entries if e.get("torrent")]
+    refused_now = bool(by_torrent) and torrent.refused(config.load())
+    info["torrents_refused"] = refused_now
     if not OUT.json:
         if signer:
             say("%s holds %d project%s, signed by %s." % (os.path.basename(path), len(entries),
@@ -1553,13 +1709,20 @@ def project_import(a):
                     "it has details newer than this file, nothing changes" if e["older"] else "nothing changes")
             else:
                 note = "  (a project has this name already)" if e["taken"] else ""
-            say("  %s  %s  %s%s" % (e["title"], paint(e["source_url"], "code"),
+            say("  %s  %s  %s%s" % (e["title"], paint(e["source_url"], "code") if e.get("source_url") else "by torrent only",
                                    ("publisher key " + signing.fingerprint(signing.parse_key(e["trust_key"])))
                                    if e.get("trust_key") else "no publisher key", note))
+            if e.get("torrent"):
+                say("    shared by torrent too: players download from each other; seeds %s"
+                    % (", ".join(e["torrent"]["seeds"]) or "none listed"))
             if e.get("change"):
                 say_change(e["change"], say, e["updates"]["project"])
     elif not signer:
         say("The project file is not signed: anyone could have made or changed it.", "warn")
+    for e in by_torrent if refused_now else []:
+        say("Warning: %s is shared by torrent, and torrents are refused in your settings (Settings, Torrents): %s"
+            % (e["title"], "it updates from its address only" if e.get("source_url") else
+               "it updates only by torrent, so it cannot update here"), "warn")
     if a.dry_run:
         return info
     if not a.yes:
@@ -1600,14 +1763,22 @@ def project_import(a):
             folder = presets.folder_for(e, folder, name, False) if folder else ""
         else:
             folder = ""
+        seed = False
+        if e.get("torrent") and not refused_now:
+            if a.seed:
+                seed = True
+            elif not a.yes and interactive():
+                say("%s is shared by torrent: you can seed it, sharing its files with other players while DeltaPatcher "
+                    "runs. Only files DeltaPatcher has checked are offered; others see your IP address." % name)
+                seed = ask_sure("Seed %s" % name)
         try:
-            p = presets.add(e, name, folder, updates=found["updates"], made=found["made"])
+            p = presets.add(e, name, folder, updates=found["updates"], made=found["made"], seed=seed)
         except projects.ProjectError as x:
             skipped.append({"title": e["title"], "reason": str(x), "code": x.code})
             say("Not added: %s: %s" % (e["title"], x), "warn")
             continue
         own = config.load(p)["install_dir"]
-        added.append(dict(p.tag(), install_dir=own))
+        added.append(dict(p.tag(), install_dir=own, torrent=bool(e.get("torrent")), seed=seed))
         say("Added the project %s%s" % (name, (": it keeps %s up to date" % own) if own else "; choose its folder later"),
             "ok")
     result = dict(info, added=added, skipped=skipped, updated=updated)
@@ -1751,7 +1922,99 @@ def cmd_wiki(a, cfg):
 def cmd_version(a, cfg):
     if not OUT.json:
         print("%s %s" % (APP_NAME, __version__))
-    return {"name": APP_NAME, "version": __version__, "can_sign": signing.can_sign()}
+    data = {"name": APP_NAME, "version": __version__, "can_sign": signing.can_sign()}
+    if getattr(a, "torrent", False):
+        # only here is libtorrent loaded: a plain version, and every project not shared by torrent, never loads it
+        if torrent.refused(cfg):
+            raise CliError("Torrents are refused in your settings (Settings, Torrents): no BitTorrent session is made, "
+                           "not even to test.", "torrents-refused", data)
+        data["torrent"] = torrent.available()
+        import tempfile
+        from .torrent import session
+        work = tempfile.mkdtemp(prefix="deltapatcher-torrent-test-")
+        try:
+            say("BitTorrent support:" if torrent.available() else torrent.NO_SUPPORT, "head" if torrent.available() else "err")
+            data["torrent_test"] = session.self_test(work, log=say) if torrent.available() else \
+                {"passed": False, "steps": [{"step": "libtorrent loads", "ok": False, "detail": torrent.NO_SUPPORT}]}
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
+        if not data["torrent_test"]["passed"]:
+            raise CliError("the BitTorrent self-test failed", "torrent-test-failed", data)
+        say("BitTorrent works here.", "ok")
+    return data
+
+
+def seeding_words(row):
+    """A seeded project's state in words: 3 peers, 12.0 KB/s up, 4.5 MB sent this run."""
+    if row.get("state") not in (None, "seeding"):
+        return "%s%s" % (row["state"], (": " + row["why"]) if row.get("why") else "")
+    return "%d peer%s, %s/s up, %s sent this run" % (row.get("peers", 0), "" if row.get("peers") == 1 else "s",
+                                                     publish.human(row.get("upload_rate", 0)),
+                                                     publish.human(row.get("sent", 0)))
+
+
+def cmd_seed(a, cfg):
+    """seed [--project NAME | --all]: share projects' releases with other players until stopped (Ctrl+C; with
+    --json, "cancel" on standard input or its end). Refused torrents, or no BitTorrent here: it ends at once."""
+    from .torrent import seed as seeding
+    if torrent.refused(cfg):
+        raise CliError(torrent.REFUSED, "torrents-refused")
+    if not torrent.available():
+        raise CliError(torrent.NO_SUPPORT, "no-torrent-support")
+    if a.all and getattr(a, "project", None):
+        raise CliError("give one project with --project, or --all for every project set to seed: not both",
+                       "bad-arguments")
+    chosen = []
+    if a.all:
+        for p in projects.all_projects():
+            if p.missing:
+                continue
+            pcfg = config.load(p)
+            if pcfg.get("seed") and torrent.info(pcfg) is not None:
+                chosen.append((p, pcfg))
+        if not chosen:
+            raise CliError("no project is set to seed (seed = yes):  %s --project NAME config set seed=yes"
+                           % prog_name(), "nothing-to-seed")
+    else:
+        p = project_of(a)
+        if torrent.info(cfg) is None:
+            raise CliError("%s is not shared by torrent (torrent = no): there is nothing to seed" % p.title, "not-shared")
+        chosen = [(p, cfg)]
+    stop = threading.Event()
+
+    def watch():
+        while not stop.is_set():
+            if USER_CANCEL.is_set() or STDIN_CLOSED.is_set():
+                stop.set()
+                return
+            time.sleep(0.1)
+    if OUT.json:
+        threading.Thread(target=watch, name="deltapatcher-seed-stop", daemon=True).start()
+
+    def log(text, s=None):
+        (ProjectOutput(OUT, s.project) if s is not None and OUT.json else OUT).say(text)
+
+    def status(rows):
+        for row in rows:
+            if OUT.json:
+                OUT._emit(dict({"event": "seeding"}, **row))
+            else:
+                say("%s: %s" % (row["project"], seeding_words(row)))
+    say("Seeding %s; %s stops it." % (", ".join(p.title for p, _c in chosen),
+                                      "\"cancel\" or the end of standard input" if OUT.json else "Ctrl+C"), "head")
+    run = seeding.Run(chosen, cfg, log, status, stop, every_project=bool(a.all))
+    try:
+        rows = run.run()
+    except KeyboardInterrupt:
+        stop.set()
+        rows = [s.status() for s in run.seeded]
+    data = {"projects": rows}
+    if STOP_READ:
+        # --json: from the "cancel" (or the end of standard input) read to the session closed, which the run
+        # promises within two seconds
+        data["stopped_in"] = round(time.time() - STOP_READ[0], 3)
+    say("stopped seeding", "ok")
+    return data
 
 
 # ---- arguments ----------------------------------------------------------------------------------
@@ -2068,6 +2331,9 @@ def build_parser():
                                                          "(an update capable file otherwise updates that one)")
     k.add_argument("--dry-run", action="store_true", help="read the file and say what it holds; add nothing")
     k.add_argument("--yes", action="store_true", help="do not ask first")
+    k.add_argument("--seed", action="store_true", help="seed the projects of the file shared by torrent: share their "
+                                                       "files with other players while DeltaPatcher runs (default: no; "
+                                                       "asked in a terminal)")
     k = ss.add_parser("export", help="write a project file with these projects, to give to players: NAME.deltapatch "
                                      "opens DeltaPatcher with a double-click, NAME.html is a page anyone can read")
     k.add_argument("names", nargs="+", metavar="NAME", help="a project: its name or its settings file")
@@ -2110,7 +2376,14 @@ def build_parser():
                                                             "mcp, format, troubleshooting or security")
     sub.add_parser("mcp", help="DeltaPatcher for AI assistants (Claude Code, Claude Desktop, VS Code): an MCP server "
                                "on standard input and output; see mcp/README.md")
-    sub.add_parser("version", help="the version")
+    s = sub.add_parser("version", help="the version")
+    s.add_argument("--torrent", action="store_true", help="test this DeltaPatcher's BitTorrent support: a session on "
+                                                          "127.0.0.1 and a small torrent made and checked (exit 1 when "
+                                                          "it fails)")
+    s = sub.add_parser("seed", help="share projects' releases with other players by BitTorrent until stopped: only files "
+                                    "DeltaPatcher has checked are offered (Ctrl+C stops it)")
+    s.add_argument("--all", action="store_true", help="every project set to seed (seed = yes); without it, the project "
+                                                      "--project names (the command is the yes), else Default")
     _project_everywhere(p)
     return p
 
@@ -2135,7 +2408,7 @@ HANDLERS = {"publish": cmd_publish, "release": cmd_release, "serve": cmd_serve, 
             "check": cmd_check, "rollback": cmd_rollback, "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign,
             "config": cmd_config, "projects": cmd_projects, "project": cmd_project, "version": cmd_version,
             "self-update": cmd_self_update, "reset": cmd_reset, "wiki": cmd_wiki, "stats": cmd_stats,
-            "backup": cmd_backup}
+            "backup": cmd_backup, "seed": cmd_seed}
 # commands that work on no single project
 WITHOUT_PROJECT = ("version", "self-update", "projects", "project", "reset", "wiki")
 
@@ -2265,6 +2538,7 @@ def main(argv=None, prompt=True, project=None):
     CANCEL.clear()
     USER_CANCEL.clear()
     STDIN_CLOSED.clear()
+    del STOP_READ[:]
     color_enable(not a.no_color and not a.json)
     if not a.no_log:
         logs.setup(a.log)
@@ -2280,6 +2554,9 @@ def main(argv=None, prompt=True, project=None):
     if a.json and not getattr(a, "passphrase_stdin", False):
         start_control_reader()
     cfg = config.load(a.proj)
+    if config.UNREADABLE:
+        say("Warning: the settings file %s cannot be read (%s): torrents are refused until it is fixed."
+            % (config.UNREADABLE["path"], config.UNREADABLE["why"]), "warn")
     rc = 0
     try:
         if unknown is not None:
@@ -2287,7 +2564,7 @@ def main(argv=None, prompt=True, project=None):
         data = HANDLERS[a.cmd](a, cfg) or {}
         rc = data.pop("exit", 0) if isinstance(data, dict) else 0
         OUT.result(data)
-    except (CliError, projects.ProjectError, presets.PresetError, backup.BackupError) as e:
+    except (CliError, projects.ProjectError, presets.PresetError, backup.BackupError, torrent.TorrentError) as e:
         OUT.error(str(e), e.code, e.data)
         rc = 1
     except FAILURES as e:

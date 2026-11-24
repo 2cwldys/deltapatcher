@@ -1,0 +1,7 @@
+# Optional, only for projects shared by torrent (downloading from other players, and seeding):
+#   pip install -r requirements-torrent.txt
+# libtorrent 2.0.15 has wheels for Python 3.9 to 3.13 on Windows, Linux (x86_64, aarch64) and macOS 14 or later
+# (Apple silicon) or 15 or later (Intel). Not 2.0.16 (no Windows or macOS wheels), not 2.1 (its Python API still
+# changes). Without it, everything else works, and anything torrent says that this DeltaPatcher has no BitTorrent
+# support.
+libtorrent==2.0.15

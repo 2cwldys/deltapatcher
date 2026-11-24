@@ -3,9 +3,10 @@
 What a release says about its project. With share_updates on, publish puts the project's details into the
 manifest's "project" object, as a project file gives them: its name (title), description, website, where it
 goes (install_hint, install_folder), the address players update from (source_url) and its publisher key
-(trust_key). The manifest is signed, so they are too. Beside them, always: show_files (whether DeltaPatcher
-shows players the names of the files a release adds, changes and removes) and the release notes (notes, plain
-text). With share_updates off, or no address players update from, the object holds only those two.
+(trust_key), and for a project shared by torrent how it is shared (torrent: its id, name and seeds). The manifest
+is signed, so they are too. Beside them, always: show_files (whether DeltaPatcher shows players the names of the
+files a release adds, changes and removes) and the release notes (notes, plain text). With share_updates off, or
+neither an address players update from nor torrents, the object holds only those two.
 DeltaPatchers before this one never read it, and this one passes over fields it does not know, so a later one
 can add to it.
 
@@ -14,9 +15,10 @@ settings file, with when the publisher made them: a release's published time, a 
 none accepted yet, its own). Details made before the ones accepted are never offered, so a project file newer
 than the last release is not undone by it. What the publisher changed waits for the person: Apply takes it,
 Not now holds it (publisher_not_now, its hash) until the publisher changes the project again. Apply never
-changes the folder, the project's name here or any other setting of the player's own. A new address or a new
-publisher key is taken only from something signed with the key the project trusts now; a project that trusts
-none is asked with a stronger warning. Nothing here asks: the command line and the app do.
+changes the folder, the project's name here or any other setting of the player's own (whether it seeds stays
+theirs). A new address, a new publisher key or a new torrent (its seeds) is taken only from something signed
+with the key the project trusts now; a project that trusts none is asked with a stronger warning. Nothing here
+asks: the command line and the app do.
 """
 
 import hashlib
@@ -26,17 +28,19 @@ import re
 import unicodedata
 import urllib.parse
 
-from . import client, config, presets, projects, signing
+from . import client, config, presets, projects, signing, torrent
 
 NOTES_MAX = 4000
 DETAILS = ("description", "website", "install_hint", "install_folder")
-MOVES = ("source_url", "trust_key")                 # the ones only something signed with the trusted key may change
+MOVES = ("source_url", "trust_key", "torrent")      # the ones only something signed with the trusted key may change
 FIELDS = DETAILS + MOVES
 # each field as a line of a change names it, and as the short list of what changed says it
 LABELS = {"description": "description", "website": "website", "install_hint": "where it goes",
-          "install_folder": "its folder name", "source_url": "the address", "trust_key": "the publisher key"}
+          "install_folder": "its folder name", "source_url": "the address", "trust_key": "the publisher key",
+          "torrent": "the torrent"}
 WORDS = {"description": "description", "website": "website", "install_hint": "where it goes",
-         "install_folder": "where it goes", "source_url": "the address", "trust_key": "the publisher key"}
+         "install_folder": "where it goes", "source_url": "the address", "trust_key": "the publisher key",
+         "torrent": "the torrent"}
 _TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
 
 
@@ -82,8 +86,9 @@ def release_object(project, cfg, signer_text="", notes="", log=None):
     signing this release. A detail a project file could not hold is left out, with a warning."""
     log = log or (lambda s: None)
     obj = {}
+    shared = torrent.info(cfg)
     address = presets.address(cfg) if cfg.get("share_updates", True) else ""
-    if address:
+    if address or (shared is not None and cfg.get("share_updates", True)):
         if not projects.name_problem(project.title) and project.title == project.title.strip():
             obj["title"] = project.title
         for k in DETAILS:
@@ -94,7 +99,8 @@ def release_object(project, cfg, signer_text="", notes="", log=None):
                     log("Warning: %s is left out of the release's details: %s" % (LABELS[k], problem))
                 else:
                     obj[k] = value
-        obj["source_url"] = address
+        if address:
+            obj["source_url"] = address
         key = str(cfg.get("trust_key") or "").strip()
         if key and key.lower() != "off":
             try:
@@ -104,9 +110,11 @@ def release_object(project, cfg, signer_text="", notes="", log=None):
                     % ("the key signing it" if signer_text else "no publisher key"))
         if "trust_key" not in obj and signer_text:
             obj["trust_key"] = signer_text
-        if (urllib.parse.urlsplit(address).hostname or "").lower() in presets.LOOPBACK:
+        if address and (urllib.parse.urlsplit(address).hostname or "").lower() in presets.LOOPBACK:
             log("Warning: the release gives players %s, an address on this computer: set public_url to the address "
                 "players update from" % address)
+        if shared is not None:
+            obj["torrent"] = {"id": shared["id"], "name": shared["name"], "seeds": list(shared["seeds"])}
     obj["show_files"] = bool(cfg.get("show_files", True))
     if notes:
         obj["notes"] = notes
@@ -115,7 +123,8 @@ def release_object(project, cfg, signer_text="", notes="", log=None):
 
 def read_object(raw):
     """A manifest's "project" object, checked as the untrusted input it is: {} when there is none; ValueError
-    when a field this DeltaPatcher knows is not right. Fields it does not know are passed over."""
+    when a field this DeltaPatcher knows is not right. Fields it does not know are passed over, and so is a
+    torrent that is not one (torrent.object_problem()): it only adds to a project, and nothing of it is taken."""
     if raw is None:
         return {}
     if not isinstance(raw, dict):
@@ -138,6 +147,10 @@ def read_object(raw):
             problem = "" if isinstance(v, bool) else "not yes or no"
         elif k == "notes":
             problem = notes_problem(v)
+        elif k == "torrent":
+            if torrent.object_problem(v):
+                continue
+            problem = ""
         else:
             continue
         if problem:
@@ -155,13 +168,23 @@ def has_details(obj):
 
 def offered(obj):
     """The details a project object or a project file's project gives, as they are compared: each field,
-    '' when it gives none."""
-    return {k: str(obj.get(k) or "") for k in FIELDS}
+    '' when it gives none (the torrent in one line: torrent.text_of())."""
+    out = {k: str(obj.get(k) or "") for k in FIELDS if k != "torrent"}
+    shared = obj.get("torrent")
+    out["torrent"] = torrent.text_of(shared) if isinstance(shared, dict) else (shared if isinstance(shared, str) else "")
+    return out
+
+
+def _without_empty_torrent(doc):
+    """Details with no torrent are kept and named as they were before torrents existed."""
+    if not doc.get("torrent"):
+        doc.pop("torrent", None)
+    return doc
 
 
 def accepted_text(obj, at=""):
     """The details as publisher_accepted keeps them, one line of JSON, with when the publisher made them (at)."""
-    doc = offered(obj)
+    doc = _without_empty_torrent(offered(obj))
     if _TIME.match(at or ""):
         doc["at"] = at
     return json.dumps(doc, sort_keys=True, ensure_ascii=True)
@@ -197,7 +220,7 @@ def older(when, since):
 
 def offer_hash(offer):
     """A short, stable name of a set of details: what Not now remembers, and what a person confirmed."""
-    return hashlib.sha256(json.dumps(offered(offer), sort_keys=True).encode("utf-8")).hexdigest()
+    return hashlib.sha256(json.dumps(_without_empty_torrent(offered(offer)), sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def _address_key(url):
@@ -236,6 +259,7 @@ def current_of(cfg, trusted):
     now = {k: str(cfg.get(k) or "").strip() for k in DETAILS}
     now["source_url"] = str(cfg.get("source_url") or "").strip()
     now["trust_key"] = trusted
+    now["torrent"] = torrent.text_of(torrent.info(cfg))
     return now
 
 
@@ -249,6 +273,9 @@ def _warning(trust, moves, via):
         lines.append("It moves the project to another address: it updates from there from now on.")
     if "trust_key" in moves:
         lines.append("It names another publisher key: only releases signed with it are installed from now on.")
+    if "torrent" in moves:
+        lines.append("It shares the project by torrent, or changes its seeds: DeltaPatcher downloads from other "
+                     "players too. It seeds only if you say yes.")
     if trust == "signed":
         lines.append("It is signed with the publisher key this project trusts.")
     elif trust == "refused":
@@ -318,8 +345,13 @@ def apply(project, cfg, obj, change, trusted="", at=""):
         base = accepted_of(cfg) or current_of(cfg, trusted)
         for i in change["changes"]:
             if i["field"] not in change["applicable"]:
-                offer[i["field"]] = base[i["field"]]          # refused: asked again once it comes signed
-    config.save(dict(values, publisher_accepted=accepted_text(offer, at), publisher_not_now=""), project)
+                offer[i["field"]] = base.get(i["field"], "")   # refused: asked again once it comes signed
+    saved = dict(values)
+    if "torrent" in saved:
+        del saved["torrent"]
+        if isinstance(obj.get("torrent"), dict) and not torrent.object_problem(obj["torrent"]):
+            saved.update(torrent.settings_of(obj["torrent"]))
+    config.save(dict(saved, publisher_accepted=accepted_text(offer, at), publisher_not_now=""), project)
     return values
 
 
@@ -336,7 +368,11 @@ def match(entry, candidates):
         key = trusted_key(cfg.get("trust_key"))
         same_key = bool(key) and key == entry.get("trust_key", "")
         same_name = p.title.lower() == entry["title"].lower()
-        if (same_address(cfg.get("source_url"), entry["source_url"]) and (same_key or same_name)) or (same_key and same_name):
+        mine = torrent.info(cfg)
+        same_torrent = mine is not None and isinstance(entry.get("torrent"), dict) and \
+            mine["id"] == entry["torrent"].get("id") and same_key
+        same_place = bool(entry.get("source_url")) and same_address(cfg.get("source_url"), entry["source_url"])
+        if (same_place and (same_key or same_name)) or (same_key and same_name) or same_torrent:
             if same_name:
                 return p, cfg
             found = found or (p, cfg)

@@ -10,8 +10,9 @@
 #   ./build.sh --test          run the tests first
 #   ./build.sh --engine-only
 #
-# Needs Python 3.11+ (python3, with venv; PYTHON=python3.12 ./build.sh picks another) and Node.js 20+
-# with npm: the build tools need 3.11, the engine itself runs on Python 3.8 or later. Python packages go into .venv,
+# Needs Python 3.11 to 3.13 (python3, with venv; PYTHON=python3.12 ./build.sh picks another) and Node.js 20+
+# with npm: the build tools need 3.11, the BitTorrent library built into the engine (libtorrent 2.0.15) has no
+# wheel after 3.13, and the engine itself runs on Python 3.8 or later. Python packages go into .venv,
 # Node packages into app/node_modules (from app/package-lock.json): nothing is installed system-wide.
 set -e
 cd "$(dirname "$0")"
@@ -22,14 +23,23 @@ $PY -c "import sys; sys.exit(sys.version_info < (3, 11))" || {
     echo "Install a newer Python, delete .venv and run again, e.g.  PYTHON=python3.12 ./build.sh" >&2
     exit 1
 }
+$PY -c "import sys; sys.exit(sys.version_info >= (3, 14))" || {
+    echo "The build needs Python 3.11 to 3.13: the BitTorrent library built into the engine (libtorrent 2.0.15) has no wheel for a newer Python." >&2
+    echo "Install Python 3.12, delete .venv and run again, e.g.  PYTHON=python3.12 ./build.sh" >&2
+    exit 1
+}
 $PY -m pip install --disable-pip-version-check -q -r requirements-build.txt
 for arg in "$@"; do
-    [ "$arg" = "--test" ] && $PY -m unittest discover -s tests
+    # libtorrent is in .venv: a torrent test that cannot run fails
+    [ "$arg" = "--test" ] && DP_REQUIRE_TORRENT=1 $PY -m unittest discover -s tests
 done
 $PY tools/make_icon.py
 $PY -m PyInstaller packaging/deltapatcher.spec --noconfirm --distpath dist --workpath build/pyinstaller
 dist/deltapatcher-cli --json --no-log version | grep -q '"ok": true' || { echo "the built engine does not answer" >&2; exit 1; }
 dist/engine/deltapatcher-engine --json --no-log version | grep -q '"ok": true' || { echo "the built engine folder does not answer" >&2; exit 1; }
+# BitTorrent in the built engine: a session on 127.0.0.1, a small torrent made and checked
+dist/deltapatcher-cli --no-log version --torrent || { echo "the BitTorrent self-test of the engine failed" >&2; exit 1; }
+dist/engine/deltapatcher-engine --no-log version --torrent || { echo "the BitTorrent self-test of the engine folder failed" >&2; exit 1; }
 for arg in "$@"; do
     [ "$arg" = "--engine-only" ] && exit 0
 done

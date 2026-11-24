@@ -193,6 +193,36 @@ class Source(object):
             time.sleep(min(8, 1 << attempt))
         raise SourceError("cannot read the release's signature from %s: %s" % (self.base, getattr(last, "reason", last)))
 
+    def get_file(self, name, limit=1 << 20):
+        """The bytes of a small file beside the manifest (release.torrent, release.item), or None when the release
+        has none."""
+        if name not in ("release.torrent", "release.item"):
+            raise SourceError("not a file of a release: %s" % name)
+        if not self.http:
+            path = os.path.join(self.base, name)
+            if not os.path.isfile(path):
+                return None
+            try:
+                with open(path, "rb") as f:
+                    return f.read(limit)
+            except OSError as e:
+                raise SourceError("cannot read %s: %s" % (path, e))
+        last = None
+        for attempt in range(self.tries):
+            try:
+                with self._open(name) as r:
+                    return r.read(limit)
+            except urllib.error.HTTPError as e:
+                if e.code in (404, 410):
+                    return None
+                if e.code in (401, 403):
+                    raise SourceError("%s%s answered %d %s" % (self.base, name, e.code, e.reason))
+                last = e
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+                last = e
+            time.sleep(min(8, 1 << attempt))
+        raise SourceError("cannot read %s from %s: %s" % (name, self.base, getattr(last, "reason", last)))
+
     def fetch_blob(self, sha, dest, size, progress=None, cancel=None):
         """Put blob `sha` at `dest`, resuming from dest + '.part'. The caller checks the hash."""
         check_sha(sha)

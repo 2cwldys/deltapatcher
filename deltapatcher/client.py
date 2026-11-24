@@ -34,6 +34,7 @@ from . import hashing, logs, signing
 from .manifest import Manifest, ManifestError
 from .publish import human
 from .source import Source, SourceError
+from .torrent import pause
 
 STATE_DIR = ".deltapatcher"
 ROLLBACK = "rollback"
@@ -337,12 +338,13 @@ def _recover(install, state_dir, log):
 
 
 def rollback(install, log=None):
-    """Undo the last completed update."""
+    """Undo the last completed update. A seed run seeding the folder pauses while it runs (torrent/pause.py)."""
     log = log or (lambda s: None)
     state_dir = os.path.join(install, STATE_DIR)
     with Lock(state_dir):
-        _recover(install, state_dir, log)
-        n = _undo(install, state_dir, ROLLBACK, log)
+        with pause.paused(install, log):
+            _recover(install, state_dir, log)
+            n = _undo(install, state_dir, ROLLBACK, log)
         logs.folder_record(state_dir, ["rolled back the last update (%d changes)" % n])
         return n
 
@@ -364,11 +366,12 @@ def _prune_empty_dirs(install, paths):
             p = os.path.dirname(p)
 
 
-def check_signature(src, raw, state, trust_key, check_only, log):
+def check_signature(src, raw, state, trust_key, check_only, log, keep=None):
     """Who signed this manifest, and is that the publisher this folder trusts? Returns the key text
     or None (unsigned). The trusted key is `trust_key` when given, else the one pinned in state.json
     by the first signed release; with neither, the first signed release's key is pinned now.
-    trust_key "off" skips the check (signing is the publisher's choice; checking is the player's)."""
+    trust_key "off" skips the check (signing is the publisher's choice; checking is the player's).
+    `keep`: a list that gets the signature file's bytes, when there is one."""
     if (trust_key or "").strip().lower() == "off":
         log("signature checks are off (trust_key = off)")
         return None
@@ -378,6 +381,8 @@ def check_signature(src, raw, state, trust_key, check_only, log):
     except signing.SignError as e:
         raise UpdateError(str(e))
     sig = src.get_signature(hashing.sha256_bytes(raw))
+    if sig is not None and keep is not None:
+        keep.append(sig)
     if sig is None:
         if trusted is not None:
             raise UpdateError("the release is not signed, but this folder trusts publisher key %s: refused"
@@ -403,7 +408,7 @@ def check_signature(src, raw, state, trust_key, check_only, log):
 
 
 def update(url, install, check_only=False, workers=4, headers=None, progress=None, log=None, cancel=None,
-           keep_cache=False, trust_key=None):
+           keep_cache=False, trust_key=None, source=None, torrent=None):
     """Bring `install` up to the release at `url`. Returns the Plan.
 
     With check_only, nothing in the folder changes (an interrupted update is reported, not undone).
@@ -411,6 +416,13 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
     threading.Event that stops the update before anything in the folder changes: during the download, or
     once every blob is here and before the first file is put in place. `trust_key`
     ("ed25519:...") is the publisher key the release must be signed with (see signing.py).
+    `source`: where the release is read, instead of Source(url) (a project with no address: the swarm); one with a
+    prepare() finds its release with it before the folder is locked.
+    `torrent`: the update's BitTorrent side (torrent/session.py): before the download, fetch() fills the cache
+    with what the swarm gives of the blobs the cache lacks, told the manifest and the key that signed it (each blob
+    is still checked against its SHA-256 before it is used, and what is missing comes from the source); once the
+    folder has the release, keep() keeps its manifest, signature, torrent and item in .deltapatcher/release/ for
+    seeding. A seed run of the folder pauses while it changes.
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -418,7 +430,14 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
     install = os.path.abspath(install)
     os.makedirs(install, exist_ok=True)
     state_dir = os.path.join(install, STATE_DIR)
-    src = Source(url, headers=headers)
+    src = source if source is not None else Source(url, headers=headers)
+    prepare = getattr(src, "prepare", None)
+    if prepare is not None:
+        # a source that waits on the network to find its release (the swarm of a project with no address, in a
+        # work folder of its own) finds it before the folder is locked: another update or check of the folder is
+        # not refused all that time
+        log("reading %s" % src)
+        prepare()
     with Lock(state_dir):
         rbn = _rb(state_dir, ROLLBACK_NEW)
         if check_only:
@@ -429,7 +448,12 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
 
         state = State(install)
         src.for_release(state.version)          # the User-Agent says which release this folder has
-        log("reading %s" % src)
+        if prepare is None:
+            log("reading %s" % src)
+        else:
+            confirm = getattr(src, "confirm", None)
+            if confirm is not None:
+                confirm()                       # what it found before the lock still holds now that it is held
         raw = src.get_manifest()
         try:
             man = Manifest.from_json(raw)
@@ -437,11 +461,12 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
             raise UpdateError("the source's manifest is refused: %s" % e)
         log("release: %s %s (published %s), %d files, %s" % (man.name or "(unnamed)", man.version, man.published,
                                                             len(man.files), human(man.bytes)))
-        signer = check_signature(src, raw, state, trust_key, check_only, log)
+        sig_kept = []
+        signer = check_signature(src, raw, state, trust_key, check_only, log, sig_kept)
         cache = hashing.HashCache(os.path.join(state_dir, "hashes.json"))
         plan = make_plan(man, install, state, cache)
         plan.manifest, plan.signer = man, signer or ""
-        cache.save()
+        _save_cache(cache)
         log(plan.summary())
         for p in plan.kept_changed:
             log("  kept (edited here, no longer in the release): %s" % p)
@@ -450,6 +475,9 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         if plan.empty():
             if not check_only and state.manifest_sha != hashing.sha256_bytes(raw):
                 _record(state, src, man, raw, install, cache, set())
+            if not check_only and torrent is not None and torrent.needs_keep(raw):
+                with pause.paused(install, log):
+                    _keep(torrent, src, raw, sig_kept, signer, log)
             log("up to date")
             return plan
         if check_only:
@@ -488,6 +516,25 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
                 raise UpdateError("blob %s from the source does not match its SHA-256 (got %s, %d bytes)"
                                   % (sha[:12], got[:12], size))
 
+        if torrent is not None:
+            # only what the cache lacks (a stopped update left the rest there; every blob is still checked below): a
+            # cached one of the right size that fails its SHA-256 goes, and the swarm brings it again (a project with
+            # no address has no other source)
+            missing = {}
+            for sha, size in need.items():
+                cached = os.path.join(cdir, sha)
+                if os.path.isfile(cached) and os.path.getsize(cached) == size:
+                    if hashing.sha256_file(cached)[0] == sha:
+                        continue
+                    os.remove(cached)
+                missing[sha] = size
+            try:
+                if missing:
+                    torrent.fetch(src, missing, cdir, progress, cancel, raw=raw, signer=signer)
+            except Exception as e:          # the swarm is an extra: what it did not bring comes from the source
+                if cancel.is_set():
+                    raise SourceError("stopped")
+                log("Warning: the torrent stopped (%s): the rest comes from the source" % e)
         progress(0, total, "downloading")
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
             futs = [pool.submit(fetch, sha) for sha in sorted(need)]
@@ -513,53 +560,62 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         ops = [("add", e) for e in plan.add] + [("replace", e) for e in plan.replace] + \
               [("remove", r) for r in plan.remove]
         installed = set()
-        with open(journal, "w", encoding="utf-8") as jf:
-            _journal_write(jf, {"started": time.time(), "had_state": had_state, "source": str(src), "version": man.version})
-            try:
-                for i, (kind, item) in enumerate(ops):
-                    path = item.path if kind != "remove" else item[0]
-                    x = _xp(target_path(install, path))
-                    progress(i, len(ops), "installing")
-                    # the folder may have changed while the blobs downloaded: look again
-                    if kind == "add" and os.path.lexists(x):
-                        if os.path.isdir(x) or os.path.islink(x):
-                            raise UpdateError("%s appeared here as a folder or a link during the update" % path)
-                        if man.is_protected(path) or hashing.sha256_file(x)[0] == item.sha256:
+        with pause.paused(install, log):
+            with open(journal, "w", encoding="utf-8") as jf:
+                _journal_write(jf, {"started": time.time(), "had_state": had_state, "source": str(src), "version": man.version})
+                try:
+                    for i, (kind, item) in enumerate(ops):
+                        path = item.path if kind != "remove" else item[0]
+                        x = _xp(target_path(install, path))
+                        progress(i, len(ops), "installing")
+                        # the folder may have changed while the blobs downloaded: look again
+                        if kind == "add" and os.path.lexists(x):
+                            if os.path.isdir(x) or os.path.islink(x):
+                                raise UpdateError("%s appeared here as a folder or a link during the update" % path)
+                            if man.is_protected(path) or hashing.sha256_file(x)[0] == item.sha256:
+                                continue
+                            kind = "replace"
+                        if kind == "remove" and (not os.path.isfile(x) or hashing.sha256_file(x)[0] != item[2]):
+                            log("  kept (changed here during the update): %s" % path)
                             continue
-                        kind = "replace"
-                    if kind == "remove" and (not os.path.isfile(x) or hashing.sha256_file(x)[0] != item[2]):
-                        log("  kept (changed here during the update): %s" % path)
-                        continue
-                    if kind in ("replace", "remove"):
-                        saved = _xp(os.path.join(rbfiles, *path.split("/")))
-                        os.makedirs(os.path.dirname(saved), exist_ok=True)
-                        _journal_write(jf, {"op": kind, "path": path})
-                        _writable(x)
-                        os.replace(x, saved)
-                    else:
-                        _journal_write(jf, {"op": "add", "path": path})
-                    if kind != "remove":
-                        os.makedirs(os.path.dirname(x), exist_ok=True)
-                        tmp = x + ".dp-new"
-                        if os.path.lexists(tmp):
-                            _writable(tmp)
-                            os.remove(tmp)
-                        shutil.copyfile(os.path.join(cdir, item.sha256), tmp)
-                        os.replace(tmp, x)
-                        installed.add(path)
-                _record(state, src, man, raw, install, cache, installed)
-                _journal_write(jf, {"done": True})
-            except BaseException as e:
-                jf.close()
-                log("the update failed while installing: undoing it")
-                _undo(install, state_dir, ROLLBACK_NEW, log)
-                logs.folder_record(state_dir, ["update to %s %s from %s FAILED and was undone: %s"
-                                               % (man.name, man.version, src, e)])
-                raise
-        # complete: this update's journal becomes the one `rollback` undoes
-        _rmtree(_rb(state_dir)[0])
-        os.replace(rb, _rb(state_dir)[0])
-        _prune_empty_dirs(install, [r[0] for r in plan.remove])
+                        if kind in ("replace", "remove"):
+                            saved = _xp(os.path.join(rbfiles, *path.split("/")))
+                            os.makedirs(os.path.dirname(saved), exist_ok=True)
+                            _journal_write(jf, {"op": kind, "path": path})
+                            _writable(x)
+                            os.replace(x, saved)
+                        else:
+                            _journal_write(jf, {"op": "add", "path": path})
+                        if kind != "remove":
+                            os.makedirs(os.path.dirname(x), exist_ok=True)
+                            tmp = x + ".dp-new"
+                            if os.path.lexists(tmp):
+                                _writable(tmp)
+                                os.remove(tmp)
+                            # hashed as it is copied: what goes in place is what was checked, whatever happened
+                            # to the cache since
+                            got, _size = hashing.copy_hashing(os.path.join(cdir, item.sha256), tmp)
+                            if got != item.sha256:
+                                os.remove(tmp)
+                                raise UpdateError("blob %s in the cache no longer matches its SHA-256 (got %s)"
+                                                  % (item.sha256[:12], got[:12]))
+                            os.replace(tmp, x)
+                            installed.add(path)
+                    _record(state, src, man, raw, install, cache, installed)
+                    _journal_write(jf, {"done": True})
+                except BaseException as e:
+                    jf.close()
+                    log("the update failed while installing: undoing it")
+                    _undo(install, state_dir, ROLLBACK_NEW, log)
+                    logs.folder_record(state_dir, ["update to %s %s from %s FAILED and was undone: %s"
+                                                   % (man.name, man.version, src, e)])
+                    raise
+            # complete: this update's journal becomes the one `rollback` undoes
+            _rmtree(_rb(state_dir)[0])
+            os.replace(rb, _rb(state_dir)[0])
+            _prune_empty_dirs(install, [r[0] for r in plan.remove])
+            if torrent is not None:
+                _keep(torrent, src, raw, sig_kept, signer, log)
         if not keep_cache:
             for sha in need:
                 try:
@@ -577,6 +633,14 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         logs.folder_record(state_dir, record)
         log("updated to %s" % title)
         return plan
+
+
+def _keep(torrent, src, raw, sig_kept, signer, log):
+    """The release kept for seeding; a failure here is said and never fails the update."""
+    try:
+        torrent.keep(src, raw, sig_kept[0] if sig_kept else None, signer or "")
+    except Exception as e:
+        log("Warning: the release could not be kept for seeding: %s" % e)
 
 
 def _record(state, src, man, raw, install, cache, installed):
@@ -600,7 +664,16 @@ def _record(state, src, man, raw, install, cache, installed):
     state.manifest_sha = hashing.sha256_bytes(raw)
     state.version = man.version
     state.save()
-    cache.save()
+    _save_cache(cache)
+
+
+def _save_cache(cache):
+    """The folder's hash cache written; it only saves time later, so a failure to write it never fails or undoes an
+    update."""
+    try:
+        cache.save()
+    except OSError:
+        pass
 
 
 def verify(url, install, headers=None, log=None):

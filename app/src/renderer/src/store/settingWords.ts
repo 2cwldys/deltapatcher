@@ -57,6 +57,12 @@ export const WORDS: Record<string, SettingWords> = {
   backup_keep_weekly: { label: 'Weekly backups kept', line: 'The newest of each of the last this many weeks.', more: true },
   backup_keep_monthly: { label: 'Monthly backups kept', line: 'The newest of each of the last this many months.', more: true },
   backup_max_size: { label: 'Size limit', line: 'The most the backups may hold, such as 10 GB; empty: no limit.', more: true },
+  // Torrents
+  torrent: { label: 'Share by torrent too', line: 'Players also download from each other; needs signed releases.' },
+  torrent_id: { label: 'Torrent id', line: 'Made once by DeltaPatcher; players find the release by it.', more: true },
+  torrent_name: { label: 'Torrent name', line: 'Empty: the last part of the address, else release.', more: true },
+  seeds: { label: 'Seeds', line: 'Computers players connect to first: host:port, separated by ,' },
+  seed: { label: 'Seed this project', line: 'Share its files with other players while DeltaPatcher runs.' },
   // Window
   close_to_tray: { label: 'Close to the tray', line: 'Closing the window keeps DeltaPatcher in the tray.' },
   minimize_to_tray: { label: 'Minimize to the tray', line: 'Minimizing hides the window in the tray.' },
@@ -65,7 +71,11 @@ export const WORDS: Record<string, SettingWords> = {
   // Projects
   parallel_updates: { label: 'Projects updated at once', line: 'How many projects Update all runs at the same time.', more: true },
   check_every_hours: { label: 'Hours between checks', line: 'Every project is checked at the start, then this often.' },
-  auto_update: { label: 'Update by themselves', line: 'Projects with an update are updated when they are checked.' }
+  auto_update: { label: 'Update by themselves', line: 'Projects with an update are updated when they are checked.' },
+  torrents: { label: 'Torrents', line: 'allow, or refuse: then DeltaPatcher never uses BitTorrent.' },
+  torrent_port: { label: 'Torrent port', line: 'The port seeding listens on; 0: any free port.', more: true },
+  seed_upload_kbps: { label: 'Upload limit', line: 'The most torrents send to others, in KB/s; 0: no limit.', more: true },
+  torrent_port_mapping: { label: 'Port mapping', line: 'Ask the router to forward the torrent port (UPnP, NAT-PMP).', more: true }
 }
 
 // a setting's words; one the window does not know yet keeps its own name

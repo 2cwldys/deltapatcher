@@ -3,6 +3,8 @@
 import hashlib
 import json
 import os
+import threading
+import time
 
 CHUNK = 1 << 20
 
@@ -79,11 +81,25 @@ class HashCache(object):
         return sha
 
     def save(self):
+        """Write the cache when it changed. Through a temporary file of this process and thread (an update and a
+        seed run of the folder can both write it); on Windows the replace can be refused for a moment while another
+        process reads the file, so it is tried again."""
         if not self.dirty:
             return
-        tmp = self.path + ".tmp"
+        tmp = "%s.%d.%d.tmp" % (self.path, os.getpid(), threading.get_ident())
         os.makedirs(os.path.dirname(self.path) or ".", exist_ok=True)
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(self.data, f, separators=(",", ":"))
-        os.replace(tmp, self.path)
+        for attempt in range(40):
+            try:
+                os.replace(tmp, self.path)
+                break
+            except PermissionError:
+                if attempt == 39:
+                    try:
+                        os.remove(tmp)
+                    except OSError:
+                        pass
+                    raise
+                time.sleep(0.05)
         self.dirty = False

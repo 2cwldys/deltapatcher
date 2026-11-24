@@ -3,3 +3,5 @@
 cryptography>=41    # making SSH keys and signing keys, and signing releases
 bcrypt>=4           # a passphrase on a new SSH key (OpenSSH's key format encrypts with bcrypt)
 paramiko>=3.4       # putting your key on a server with its password, once (ssh install-key)
+# BitTorrent (projects shared by torrent) is in requirements-torrent.txt: libtorrent has no wheel for some systems,
+# and one package that cannot install would stop all of these.

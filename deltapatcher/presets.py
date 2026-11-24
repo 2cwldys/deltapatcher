@@ -24,6 +24,10 @@ file: the projects it sets up follow their publisher (publisher.py), and opening
 this computer has updates that project, after asking. A file that is not update capable is written as
 version 1, so the DeltaPatchers before version 2 still read it; they say a version 2 file was made by a
 newer DeltaPatcher.
+
+Version 3 is a file with a project shared by torrent: that project's entry has "torrent": {"id", "name",
+"seeds": ["host:port", ...]} (torrent/__init__.py), it must name its publisher key, and it may have no address
+at all (it updates by torrent only). DeltaPatchers before version 3 say it was made by a newer DeltaPatcher.
 """
 
 import base64
@@ -39,7 +43,7 @@ from . import REPO, __version__, config, projects, signing
 from .source import DEFAULT_URL
 
 FORMAT = "deltapatcher-preset"
-VERSION = 2                     # the newest version read and written; a file without anything new is version 1
+VERSION = 3                     # the newest version read and written; a file without anything new is version 1
 EXTENSIONS = (".deltapatch", ".html", ".htm")
 LIMIT = 1 << 20
 MAX_PROJECTS = 100
@@ -49,6 +53,7 @@ CLOSE = "</script>"
 DOMAIN = b"DeltaPatcher project file 1\n"          # a signature over a project file is never one over a manifest
 RELEASES = "https://github.com/%s/releases" % REPO
 FIELDS = ("title", "source_url", "trust_key", "description", "website", "install_hint", "install_folder")
+TORRENT_FIELD = "torrent"           # version 3: how a project is shared by torrent
 HINT_MAX = 300
 LOOPBACK = ("localhost", "127.0.0.1", "::1")
 # bidirectional controls, which can make a text read differently from what it holds
@@ -117,17 +122,27 @@ def check_data(data):
     if not isinstance(entries, list) or not 1 <= len(entries) <= MAX_PROJECTS:
         bad("between 1 and %d projects" % MAX_PROJECTS)
     seen = set()
+    allowed = set(FIELDS) | ({TORRENT_FIELD} if version >= 3 else set())
     for e in entries:
-        if not isinstance(e, dict) or not {"title", "source_url"} <= set(e) or not set(e) <= set(FIELDS):
+        if not isinstance(e, dict) or "title" not in e or not set(e) <= allowed or \
+                ("source_url" not in e and TORRENT_FIELD not in e):
             bad("a project with unknown or missing fields")
         if not isinstance(e["title"], str) or projects.name_problem(e["title"]) or e["title"] != e["title"].strip():
             bad("a project's name: %s" % (projects.name_problem(e["title"]) or "not a name"))
         if e["title"].lower() in seen:
             bad("two projects named %s" % e["title"])
         seen.add(e["title"].lower())
-        problem = address_problem(e["source_url"])
-        if problem:
-            bad("the address of %s: %s" % (e["title"], problem))
+        if "source_url" in e:
+            problem = address_problem(e["source_url"])
+            if problem:
+                bad("the address of %s: %s" % (e["title"], problem))
+        if TORRENT_FIELD in e:
+            from . import torrent
+            problem = torrent.object_problem(e[TORRENT_FIELD])
+            if problem:
+                bad("how %s is shared by torrent: %s" % (e["title"], problem))
+            if "trust_key" not in e:
+                bad("%s is shared by torrent, and names no publisher key" % e["title"])
         if "trust_key" in e:
             try:
                 if not isinstance(e["trust_key"], str) or signing.key_text(signing.parse_key(e["trust_key"])) != e["trust_key"]:
@@ -164,12 +179,17 @@ def address(cfg):
 def entry(project, cfg, signer_text="", signer_path=""):
     """What a project file says about one project: its name, address, publisher key, description, website and
     where it goes (install_hint, install_folder). Its publisher key is the one it trusts, else the signer's
-    when its own releases are signed with that key."""
+    when its own releases are signed with that key. A project shared by torrent says so too (its torrent id, name
+    and seeds), needs a publisher key, and may have no address: it updates by torrent only."""
+    from . import torrent
     source = address(cfg)
-    if not source:
+    tinfo = torrent.info(cfg)
+    if not source and tinfo is None:
         raise PresetError("%s has no http(s) address players update from: set where players download it "
                           "(public_url) or where it updates from (source_url)" % project.title, "no-address", project.tag())
-    e = {"title": project.title, "source_url": source}
+    e = {"title": project.title}
+    if source:
+        e["source_url"] = source
     key = str(cfg.get("trust_key") or "").strip()
     if key and key.lower() != "off":
         try:
@@ -182,6 +202,11 @@ def entry(project, cfg, signer_text="", signer_path=""):
     for k in ("description", "website", "install_hint", "install_folder"):
         if str(cfg.get(k) or "").strip():
             e[k] = str(cfg[k]).strip()
+    if tinfo is not None:
+        if "trust_key" not in e:
+            raise PresetError("%s is shared by torrent, and its project file must name its publisher key: export it "
+                              "with --sign (your signing key), or set trust_key" % project.title, "no-key", project.tag())
+        e[TORRENT_FIELD] = {"id": tinfo["id"], "name": tinfo["name"], "seeds": list(tinfo["seeds"])}
     return e
 
 
@@ -209,7 +234,13 @@ def _page(data, signer_text):
         if e.get("install_folder"):
             rows.append('<p class="line"><span>Its folder</span><code>%s</code> inside the folder you pick</p>'
                         % _esc(e["install_folder"]))
-        rows.append('<p class="line"><span>Updates from</span><code>%s</code></p>' % _esc(e["source_url"]))
+        if e.get("source_url"):
+            rows.append('<p class="line"><span>Updates from</span><code>%s</code></p>' % _esc(e["source_url"]))
+        if e.get(TORRENT_FIELD):
+            t = e[TORRENT_FIELD]
+            rows.append('<p class="line"><span>By torrent</span>%s; seeds: %s</p>' % (
+                "too, beside its address" if e.get("source_url") else "only",
+                _esc(", ".join(t["seeds"])) if t["seeds"] else "none listed"))
         if e.get("trust_key"):
             rows.append('<p class="line"><span>Publisher key</span><code>%s</code></p>' % _esc(e["trust_key"]))
         else:
@@ -278,11 +309,13 @@ li{margin:6px 0}
 def build(entries, signer=None, made=None, updates=False):
     """The text of a project file holding these projects (entry() makes each), signed with `signer` (a private
     signing key) when one is given. updates=True: an update capable file (version 2); otherwise version 1, which
-    every DeltaPatcher reads."""
-    data = {"format": FORMAT, "version": 2 if updates else 1,
+    every DeltaPatcher reads. A file with a project shared by torrent is version 3."""
+    entries = list(entries)
+    shared = any(TORRENT_FIELD in e for e in entries)
+    data = {"format": FORMAT, "version": 3 if shared else (2 if updates else 1),
             "made": made or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
-    if updates:
-        data["updates"] = True
+    if updates or shared:
+        data["updates"] = bool(updates)
     data["projects"] = list(entries)
     try:
         check_data(data)
@@ -395,17 +428,22 @@ def folder_for(e, given, name, several):
     return given
 
 
-def add(e, name=None, install_dir="", updates=False, made=""):
+def add(e, name=None, install_dir="", updates=False, made="", seed=False):
     """A new project from one entry of a project file: its address and publisher key, its description, website
     and where it goes, the folder the person picked (none: it is chosen later). From an update capable file
     (updates=True) it follows its publisher; either way the details it starts with, made when the file was
-    (made), are the ones a later change is compared with. Returns the Project."""
+    (made), are the ones a later change is compared with. A project shared by torrent gets its torrent, and seeds
+    only when the person said yes (seed). Returns the Project."""
     from .publisher import accepted_text
+    from . import torrent
     p = projects.new(name or e["title"])
-    values = {"source_url": e["source_url"], "trust_key": e.get("trust_key", ""),
+    values = {"source_url": e.get("source_url", ""), "trust_key": e.get("trust_key", ""),
               "description": e.get("description", ""), "website": e.get("website", ""),
               "install_hint": e.get("install_hint", ""), "install_folder": e.get("install_folder", ""),
               "follow_publisher": bool(updates), "publisher_accepted": accepted_text(e, made)}
+    if e.get(TORRENT_FIELD):
+        values.update(torrent.settings_of(e[TORRENT_FIELD]))
+        values["seed"] = bool(seed)
     if install_dir:
         values["install_dir"] = os.path.abspath(os.path.expanduser(install_dir))
     config.save(values, p)

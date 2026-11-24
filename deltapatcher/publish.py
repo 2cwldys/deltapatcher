@@ -15,6 +15,7 @@ import shutil
 from . import hashing, signing
 from .manifest import (BLOB_DIR, MANIFEST_NAME, PREVIOUS_NAME, Entry, Manifest, ManifestError,
                        check_path, rule_matches)
+from .torrent import pause
 
 IGNORE_FILE = ".deltaignore"
 DEFAULT_IGNORE = [".git/", ".svn/", ".hg/", ".deltapatcher/", "__pycache__/", "Thumbs.db",
@@ -23,10 +24,12 @@ HASH_CACHE = ".deltapatcher-hashcache.json"
 HTACCESS = ".htaccess"
 HISTORY_NAME = "history.jsonl"
 
-# Apache (2.2 and 2.4) for a store: serve the manifests, the blobs and the signatures and nothing else,
+# Apache (2.2 and 2.4) for a store: serve the manifests, the blobs, the signatures and, for a release shared by
+# torrent, its torrent and item, and nothing else,
 # never list a folder, give blobs (which have no extension) a type, and set the cache headers.
 HTACCESS_TEXT = r"""# Written by DeltaPatcher: Apache serves this store and nothing else from it.
-# The manifests are never cached; blobs and signatures never change, so they are cached for a year.
+# The manifests (and release.torrent and release.item) are never cached; blobs and signatures never change, so
+# they are cached for a year.
 
 Options -Indexes
 
@@ -38,8 +41,15 @@ Options -Indexes
     ForceType application/json
 </FilesMatch>
 
+<FilesMatch "^release\.(torrent|item)$">
+    ForceType application/octet-stream
+</FilesMatch>
+
 <IfModule mod_headers.c>
     <FilesMatch "^manifest(\.previous)?\.json$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+    <FilesMatch "^release\.(torrent|item)$">
         Header set Cache-Control "no-cache"
     </FilesMatch>
     <FilesMatch "^[0-9a-f]{64}(\.sig)?$">
@@ -48,7 +58,7 @@ Options -Indexes
 </IfModule>
 
 # everything else is refused: this file, half-uploaded .part files, anything put here by hand
-<FilesMatch "^(?!manifest(\.previous)?\.json$|[0-9a-f]{64}(\.sig)?$)">
+<FilesMatch "^(?!manifest(\.previous)?\.json$|[0-9a-f]{64}(\.sig)?$|release\.(torrent|item)$)">
     <IfModule mod_authz_core.c>
         Require all denied
     </IfModule>
@@ -218,8 +228,16 @@ def _write_sig(store, data, signer, log):
     log("signed with publisher key %s" % signing.fingerprint(signing.parse_key(signing.public_key_text(signer))))
 
 
+def _sig_bytes(store, data):
+    try:
+        with open(os.path.join(store, signing.SIG_DIR, signing.sig_name(hashing.sha256_bytes(data))), "rb") as f:
+            return f.read()
+    except OSError:
+        return None
+
+
 def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None,
-            signer=None, htaccess=True, leave_out=None, cancel=None, project=None):
+            signer=None, htaccess=True, leave_out=None, cancel=None, project=None, extra=None):
     """Publish the folder `src` into `store`. Returns a PublishResult.
 
     progress(done, total, label) and log(text) are optional callbacks. `cancel`: an optional threading.Event;
@@ -230,6 +248,9 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     them, and files the release leaves out (with DEFAULT_IGNORE and the folder's .deltaignore).
     `project`: what the release says about its project (publisher.release_object()); a change to it alone
     makes a new manifest, as a change to a file does.
+    `extra`: called as extra(store, manifest bytes, signature bytes or None) once the release's blobs and signature
+    are in the store and before its manifest is put in place (the release's torrent and item: torrent/release.py).
+    A seed run seeding the store pauses while the manifest changes (torrent/pause.py).
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -294,20 +315,25 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
         log("nothing changed since the last publish: the manifest is kept as it was")
         if signer is not None:
             _write_sig(store, data, signer, log)
+        if extra is not None:
+            extra(store, data, _sig_bytes(store, data))
     else:
         if cancel is not None and cancel.is_set():
             raise PublishError("stopped before the new manifest was put in place: the store serves what it did before")
         data = man.to_json()
         if signer is not None:
             _write_sig(store, data, signer, log)     # the signature is there before the manifest it signs
+        if extra is not None:
+            extra(store, data, _sig_bytes(store, data))
         # new manifest written aside first, so a store being served is never without one
         with open(mpath + ".tmp", "wb") as f:
             f.write(data)
-        if os.path.isfile(mpath):
-            prev = os.path.join(store, PREVIOUS_NAME)
-            shutil.copyfile(mpath, prev + ".tmp")
-            os.replace(prev + ".tmp", prev)
-        os.replace(mpath + ".tmp", mpath)
+        with pause.paused(store, log):
+            if os.path.isfile(mpath):
+                prev = os.path.join(store, PREVIOUS_NAME)
+                shutil.copyfile(mpath, prev + ".tmp")
+                os.replace(prev + ".tmp", prev)
+            os.replace(mpath + ".tmp", mpath)
         try:
             add_history(store, man, res.new_blobs, old)
         except OSError as e:

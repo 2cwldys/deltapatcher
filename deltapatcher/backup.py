@@ -11,7 +11,8 @@ there, except a file of the same name and the wrong size, which it replaces.
         blobs/<sha256>               the pool: each blob once, however many backups name it, checked against
                                      its SHA-256 as it arrives
         <YYYY-MM-DD>/                one backup a day (UTC): manifest.json, manifest.previous.json and
-                                     .htaccess when the destination has them, sigs/<sha256>.sig, and
+                                     .htaccess when the destination has them, sigs/<sha256>.sig,
+                                     release.torrent and release.item of a release shared by torrent, and
                                      backup.json (the project, when, from where)
         scheduled.json               the system scheduler's last run: when, and what it did
 
@@ -470,15 +471,18 @@ def take(project, cfg, target, log=None, progress=None):
     with _locked(folder):
         _check_owner(folder, project)
         _mark(folder, project)
-        return _take(project, target, log, progress, lim, folder, pool)
+        return _take(project, target, log, progress, lim, folder, pool, shared_by_torrent=bool(cfg.get("torrent")))
 
 
-def _take(project, target, log, progress, lim, folder, pool):
+def _take(project, target, log, progress, lim, folder, pool, shared_by_torrent=False):
+    """shared_by_torrent: the project's releases are shared by torrent (torrent = yes), so the release's torrent and
+    item are backed up with it; for any other project they are never read."""
     _clean(folder)
     try:
         raw = target.get_file(MANIFEST_NAME)
         prev_raw = target.get_file(PREVIOUS_NAME)
         htaccess = target.get_file(HTACCESS)
+        shared = {n: target.get_file(n) for n in deploy.TORRENT_FILES} if shared_by_torrent else {}
     except deploy.DeployError as e:
         raise BackupError(str(e), "read-failed")
     if raw is None:
@@ -535,7 +539,7 @@ def _take(project, target, log, progress, lim, folder, pool):
         info = {"format": FORMAT, "version": VERSION, "project_id": project_id(project), "made": _stamp(now()),
                 "from": str(target)}
         replaced = os.path.isdir(os.path.join(folder, name))
-        _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info)
+        _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info, _torrent_files(raw, shared))
     except BaseException:
         _remove(pool, added)                # nothing half-made is kept: blobs only this backup brought go too
         raise
@@ -597,10 +601,26 @@ def _fetch(target, need, want, folder, pool, progress, unless):
     return added
 
 
-def _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info):
+def _torrent_files(raw, shared):
+    """The release's torrent and item as the destination has them, when they are the backed-up release's (its
+    item names this manifest): a release going up at that moment has newer ones, and they are left out."""
+    from .torrent import bencode
+    tor, it = shared.get("release.torrent"), shared.get("release.item")
+    if not tor or not it or len(it) > 4096:             # an item is a few hundred bytes: anything longer is none
+        return {}
+    try:
+        v = bencode.decode(it)[b"v"]
+        if v[b"m"].decode("ascii") != hashing.sha256_bytes(raw):
+            return {}
+    except (bencode.BencodeError, ValueError, KeyError, TypeError, AttributeError, UnicodeDecodeError):
+        return {}
+    return {"release.torrent": tor, "release.item": it}
+
+
+def _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info, extras=None):
     """The dated folder, written beside and then put in place. A backup the same day replaces that day's: the
     old folder steps aside, the new one takes its place, and when that fails the old one goes back (else the
-    next run puts it back)."""
+    next run puts it back). extras: {name: bytes} beside the manifest (release.torrent, release.item)."""
     tmp = os.path.join(folder, ".new-%s-%d" % (name, os.getpid()))
     os.makedirs(tmp)
     try:
@@ -612,6 +632,9 @@ def _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info):
         if htaccess is not None:
             with open(os.path.join(tmp, HTACCESS), "wb") as f:
                 f.write(htaccess)
+        for n, data in (extras or {}).items():
+            with open(os.path.join(tmp, n), "wb") as f:
+                f.write(data)
         if sigs:
             os.makedirs(os.path.join(tmp, SIG_DIR))
             for sname, data in sigs.items():

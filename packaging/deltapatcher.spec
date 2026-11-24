@@ -16,7 +16,12 @@ OPTIONS = dict(console=True, icon=ICON if os.name == "nt" else None, upx=False, 
 GUIDES = [(os.path.join(ROOT, "docs", "*.md"), "guides/docs"), (os.path.join(ROOT, "docker", "README.md"), "guides/docker"),
           (os.path.join(ROOT, "mcp", "README.md"), "guides/mcp"), (os.path.join(ROOT, "SECURITY.md"), "guides")]
 
-a = Analysis([os.path.join(SPECPATH, "entry_cli.py")], pathex=[ROOT], datas=GUIDES, excludes=EXCLUDES, noarchive=False)
+# BitTorrent (deltapatcher/torrent/): its modules are imported when first used; libtorrent comes with them when the
+# build's Python has it (requirements-build.txt), and needs no hook
+TORRENT = ["deltapatcher.torrent.session", "deltapatcher.torrent.seed", "deltapatcher.torrent.release"]
+
+a = Analysis([os.path.join(SPECPATH, "entry_cli.py")], pathex=[ROOT], datas=GUIDES, excludes=EXCLUDES, noarchive=False,
+             hiddenimports=TORRENT)
 pyz = PYZ(a.pure)
 
 EXE(pyz, a.scripts, a.binaries, a.datas, [], name="deltapatcher-cli", runtime_tmpdir=None, **OPTIONS)

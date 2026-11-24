@@ -4,7 +4,8 @@ The order keeps clients safe while a deploy runs:
   1. ask the target which blobs it has (name and size), and read its current and previous manifests
   2. upload the missing ones as <sha>.part, renamed to <sha> when complete
   3. check that every blob the new manifest names is there at its size
-  4. keep the target's current manifest as manifest.previous.json, upload the new one beside it,
+  4. the signature, the .htaccess and, for a release shared by torrent, release.torrent and release.item; then
+     keep the target's current manifest as manifest.previous.json, upload the new one beside it,
      check its size, then put it in place (an atomic rename where the server supports it)
   5. remove blobs that none of the new, current and previous manifests name, and stale .part files;
      when a manifest on the target cannot be read, nothing is removed
@@ -24,6 +25,7 @@ from .publish import HTACCESS, human
 from .signing import SIG_DIR, sig_name
 
 SIG_RE = re.compile(r"^[0-9a-f]{64}\.sig$")
+TORRENT_FILES = ("release.torrent", "release.item")      # a release shared by torrent: sent before its manifest
 
 
 def _sig_name(n):
@@ -264,9 +266,10 @@ class SftpTarget(object):
         return sorted(n for n in ssh.parse_ls(r.stdout, blobs_only=False) if _sig_name(n))
 
     def put_extra(self, rel, data):
-        """A small file beside the release (.htaccess, sigs/<sha>.sig): uploaded beside, then renamed in."""
+        """A small file beside the release (.htaccess, sigs/<sha>.sig, release.torrent, release.item): uploaded
+        beside, then renamed in."""
         name = rel.rsplit("/", 1)[-1]
-        if not (name == ".htaccess" or _sig_name(name)):
+        if not (name == ".htaccess" or _sig_name(name) or rel in TORRENT_FILES):
             raise DeployError("not a file deploy sends: %r" % rel)
         d = tempfile.mkdtemp(prefix="dp-extra-")
         try:
@@ -403,6 +406,14 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
         if target.get_file(HTACCESS) != ht:
             target.put_extra(HTACCESS, ht)
             log("%s in place" % HTACCESS)
+    for name in TORRENT_FILES:
+        local = os.path.join(store, name)
+        if os.path.isfile(local):
+            with open(local, "rb") as f:
+                data = f.read()
+            if target.get_file(name) != data:
+                target.put_extra(name, data)
+                log("%s in place" % name)
 
     if old_raw == new_raw:
         log("the target already serves this manifest")

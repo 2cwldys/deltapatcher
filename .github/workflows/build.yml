@@ -46,15 +46,20 @@ jobs:
           TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
         run: python tools/version.py --tag "$TAG"
       # the tests with only what running the engine needs (requirements.txt), so a missing package shows
-      # here; each failing test also becomes an annotation, readable without signing in to GitHub
+      # here; each failing test also becomes an annotation, readable without signing in to GitHub.
+      # libtorrent too (requirements-torrent.txt): DP_REQUIRE_TORRENT=1 makes a torrent test that cannot run fail,
+      # not skip. The torrent tests listen on 127.0.0.x only; macOS answers on 127.0.0.1 alone until the others are
+      # added.
       - name: the engine's tests
         shell: bash
         env:
           PYTHONUNBUFFERED: "1"
+          DP_REQUIRE_TORRENT: "1"
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then PY=python; VPY=.venv-test/Scripts/python; else PY=python3; VPY=.venv-test/bin/python; fi
+          if [ "$RUNNER_OS" = "macOS" ]; then for i in $(seq 2 99); do sudo ifconfig lo0 alias 127.0.0.$i up; done; fi
           $PY -m venv .venv-test
-          $VPY -m pip install --disable-pip-version-check -q -r requirements.txt
+          $VPY -m pip install --disable-pip-version-check -q -r requirements.txt -r requirements-torrent.txt
           set +e
           $VPY -m unittest discover -s tests > tests.log 2>&1
           rc=$?
@@ -71,7 +76,11 @@ jobs:
           $VPY tools/make_icon.py
           $VPY -m PyInstaller packaging/deltapatcher.spec --noconfirm --distpath dist --workpath build/pyinstaller
           $EXE --json --no-log version
-          if [ "$RUNNER_OS" = "Windows" ]; then dist/engine/deltapatcher-engine.exe --json --no-log version; else dist/engine/deltapatcher-engine --json --no-log version; fi
+          if [ "$RUNNER_OS" = "Windows" ]; then ENGINE=dist/engine/deltapatcher-engine.exe; else ENGINE=dist/engine/deltapatcher-engine; fi
+          $ENGINE --json --no-log version
+          # BitTorrent frozen in (requirements-build.txt): a session on 127.0.0.1, a small torrent made and checked
+          $EXE --no-log version --torrent
+          $ENGINE --no-log version --torrent
       - name: the app (Electron)
         working-directory: app
         shell: bash

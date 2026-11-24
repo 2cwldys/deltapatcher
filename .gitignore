@@ -31,6 +31,8 @@ askpass.sh
 # ---- releases made while testing (stores, installs, partial downloads) ----
 store/
 stores/
+# ...but not the app's own state code (src/renderer/src/store/)
+!app/src/renderer/src/store/
 .deltapatcher/
 .deltapatcher-hashcache.json
 *.part

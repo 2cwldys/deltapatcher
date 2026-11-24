@@ -1,28 +1,94 @@
 <p align="center">
-  <img src="docs/images/logo.png" alt="DeltaPatcher" width="200">
+  <img src="docs/images/logo.png" alt="DeltaPatcher" width="180">
 </p>
 <h1 align="center">Delta Patcher</h1>
-<p align="center">Delta patching with SHA-256 blobs, for any game and any file.</p>
+<p align="center"><b>Delta patching with SHA-256 blobs, for any game and any file.</b><br>
+Publish a folder, host it anywhere, and players download only what changed.</p>
 
-Delta patching with SHA-256 blobs. Publish a folder, serve it from anywhere (your own PC, a VPS, any
-static web host), and let clients download only the files that changed.
+<p align="center">
+  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml"><img alt="Build" src="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml/badge.svg"></a>
+  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml/badge.svg"></a>
+  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml"><img alt="Secret scan" src="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-19b3a0"></a>
+  <img alt="Windows, Linux, macOS" src="https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-f2a33a">
+</p>
 
-It works for any game and any kind of file: `.pk3`, `.zip`, `.bsp`, textures, executables. DeltaPatcher
-never looks inside a file. Every file is just bytes with a SHA-256 hash, so a changed file is fetched
-again and an unchanged one never is, whatever its extension.
+<p align="center">
+  <img src="docs/images/app-update.png" alt="The DeltaPatcher app: Update" width="860">
+</p>
 
-- **A window** (tkinter) with a tray icon, for people who just want it to work.
-- **A command line** for scripts, servers and people who prefer one: `cli\deltapatcher.bat` and
-  `cli/deltapatcher.sh` run it straight from the repository ([cli/README.md](cli/README.md)).
-- **Self-contained programs** (PyInstaller): `DeltaPatcher.exe` and `deltapatcher-cli.exe`.
-- **Signed releases**: players' updaters check that a release really comes from you.
-- **Deploys to a VPS over SSH**, using your keys safely, and an `.htaccess` for Apache hosts
-  (see [SECURITY.md](SECURITY.md)).
-- **A settings file** (`deltapatcher.ini`, made on first run with every setting explained) and **logs**
-  of everything it does.
-- Licensed MIT.
+DeltaPatcher never looks inside a file. A `.pk3`, a `.zip`, a map, a texture pack or an executable is
+just bytes with a SHA-256 hash: a changed file is fetched again, an unchanged one never is, and two
+identical files are stored once.
 
-![The window](docs/images/1-update.png)
+<table>
+  <tr>
+    <td width="33%" valign="top"><b>Only what changed</b><br>Each distinct file is a blob named by its SHA-256. Updates download the blobs a folder lacks, resume cut downloads, and check every byte before anything changes.</td>
+    <td width="33%" valign="top"><b>Safe updates</b><br>Every update is journalled: a failure is undone at once, a crash on the next run, and <i>Roll back</i> undoes the last one. Files players added are never touched.</td>
+    <td width="33%" valign="top"><b>Signed releases</b><br>Optional Ed25519 signatures: players' updaters refuse a release that is not signed by your key, even on a compromised server.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Deploy over SSH</b><br>Send a release to your VPS with SFTP, uploading only missing blobs and switching the manifest in last. Host keys are confirmed once and checked strictly after.</td>
+    <td valign="top"><b>Host it anywhere</b><br>The release is plain static files: Caddy, nginx, Apache (an <code>.htaccess</code> is written for you), any static host, a share, or the built-in server.</td>
+    <td valign="top"><b>App and command line</b><br>A clean window for people and a command line for scripts and launchers. Self-contained: no Python or Node needed to run either.</td>
+  </tr>
+</table>
+
+## The app
+
+| Publish | Server | Settings |
+| --- | --- | --- |
+| [![Publish](docs/images/app-publish.png)](docs/images/app-publish.png) | [![Server](docs/images/app-server.png)](docs/images/app-server.png) | [![Settings](docs/images/app-settings.png)](docs/images/app-settings.png) |
+| Make a release, sign it, and try it on this PC. The console shows every step. | Deploy over SSH (SFTP) or to a folder. Key, agent and host key status at a glance. | Every setting of `deltapatcher.ini`, explained, with the log one click away. |
+
+## How it works
+
+```mermaid
+flowchart LR
+  A["Your folder<br/>pk3, zip, maps, textures, exe"] -->|publish| B[("The store<br/>manifest.json<br/>blobs/&lt;sha256&gt;<br/>sigs/&lt;sha256&gt;.sig")]
+  B -->|deploy: SFTP,<br/>only missing blobs| C["Your VPS<br/>or any web host"]
+  B -->|serve locally| D["localhost:8000"]
+  C -->|update: compare hashes,<br/>download only what changed| E["Players' folders"]
+  D --> E
+```
+
+1. **Publish** hashes every file and writes a *store*: `manifest.json` (every path, size and SHA-256),
+   `blobs/` (each distinct content once), and `sigs/` when you sign.
+2. **Deploy** sends the store to a VPS over SFTP or to a folder. Blobs first, then the signature, then
+   the manifest, so players never see half a release.
+3. **Update** compares a player's folder with the manifest, downloads and checks the blobs it lacks,
+   and swaps them in with a journal and a rollback copy.
+
+## Get it
+
+**Download** the latest build for your system from the repository's **Actions** (the *Build* workflow's
+artifacts) or **Releases**:
+
+| System | App | Command line |
+| --- | --- | --- |
+| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli.exe` |
+| Linux | `DeltaPatcher-<version>.AppImage` or `.tar.gz` | `deltapatcher-cli` |
+| macOS | `DeltaPatcher-<version>.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli` |
+
+Everything is self-contained: the app carries its own engine, and the command line is one file.
+
+## Quick start
+
+In the app:
+1. **Publish**: choose a folder and a store folder, then click **Publish**. **Serve locally** puts the
+   release at `http://localhost:8000/`.
+2. **Update**: choose a folder to keep up to date and click **Update**. Change a file, publish again,
+   and update again: only that file travels.
+
+On the command line (`deltapatcher-cli`, or `cli\deltapatcher.bat` / `cli/deltapatcher.sh` from this repository):
+
+```
+deltapatcher publish ./game ./store --name "My Game" --version 1.0
+deltapatcher serve ./store
+deltapatcher update ./my-install --source http://localhost:8000/
+```
+
+Step by step: [Quick start](docs/QUICKSTART.md).
 
 ## Documentation
 
@@ -30,278 +96,78 @@ again and an unchanged one never is, whatever its extension.
 | --- | --- |
 | [Quick start](docs/QUICKSTART.md) | Try it on your own PC in five minutes |
 | [For players](docs/PLAYERS.md) | Keeping a game folder up to date |
-| [Publishing a release](docs/PUBLISHING.md) | Releasing a game, mod or asset pack, protecting player files, giving players the updater |
-| [Setting up a VPS](docs/VPS-SETUP.md) | Deploy user, SSH key, host key, Caddy or nginx, Windows Server |
-| [Command line reference](docs/CLI.md) | Every command and option, exit codes, launcher and build-server examples |
-| [The store and manifest format](docs/FORMAT.md) | The files, the path rules, the update algorithm (for your own client) |
+| [Publishing a release](docs/PUBLISHING.md) | Releasing, protecting player files, signing, giving players the updater |
+| [Setting up a VPS](docs/VPS-SETUP.md) | Deploy user, SSH key, host key, Caddy, nginx, Apache, Windows Server |
+| [Command line reference](docs/CLI.md) | Every command and option, exit codes, the settings file and logs |
+| [The store and manifest format](docs/FORMAT.md) | The files, the path rules, signatures, the update algorithm |
+| [Security](SECURITY.md) | What DeltaPatcher protects, what it leaves to you, how to report a problem |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Every error message and what to do |
 
-## How it works
+## Security in short
+
+Releases can be signed, and players' updaters then refuse anything not signed by your key. Every file
+is checked against its SHA-256 before it is used, and manifests are treated as untrusted input. SSH
+keys are read only by OpenSSH, and passphrases are never stored or put on a command line. Server host
+keys are confirmed once and checked strictly after. The details are in **[SECURITY.md](SECURITY.md)**.
+
+## Building from source
+
+The repository holds two parts:
 
 ```
- your files            publish               the store                 serve / deploy          clients
- ----------            ------->     manifest.json  (paths, sizes,      ------------->     update: compare,
- game/                              SHA-256 of each)                  any web server       download only the
-   data/pak0.pk3                    blobs/<sha256>  (one per distinct  or a folder         missing blobs,
-   maps/de_x.bsp                     file content)                                         check, then swap in
+deltapatcher/     the engine (Python): publish, serve, update, deploy, signing, SSH, the command line
+app/              the app (Electron, React, Tailwind): the window, which runs the engine
+cli/              deltapatcher.bat / deltapatcher.sh: the command line straight from the repository
+packaging/        the PyInstaller spec: the engine as one self-contained file, and as a folder for the app
+tests/            the engine's tests
+tools/            the icon, the README screenshots, the social preview, the secret scan
+docs/             the guides
 ```
 
-1. **Publish** hashes every file in a folder and writes a *store*: `manifest.json` plus `blobs/`, where
-   each distinct file content is stored once under its SHA-256. Two identical files are one blob.
-2. **Serve** the store: it is plain static files, so any web server can serve it. DeltaPatcher has a
-   small built-in server for testing (`http://localhost:8000/` by default).
-3. **Deploy** sends a store to a VPS (over SFTP) or a folder, uploading only the blobs the target
-   lacks. The new manifest goes in last, so clients never see a half-uploaded release.
-4. **Update** compares a client's folder with the manifest and downloads only the blobs it needs.
-   Each one is checked against its SHA-256 *before* anything in the folder changes; the update is
-   journalled and can be rolled back.
+**What you need**:
+- [Python](https://www.python.org) 3.8 or later
+- [Node.js](https://nodejs.org) 20 or later, with npm
+- [Git LFS](https://git-lfs.com): the images and icons are stored with it
 
-The *source of truth* is just an address: `http://localhost:8000/` (the default), an
-`https://` URL anywhere, or a folder path (`D:\store`, `/mnt/share/store`, `file:///...`).
-
-## Quick start
-
-### With the window
-
-Run `DeltaPatcher.exe` (or `python -m deltapatcher` from source).
-
-1. **Publish** tab: choose the folder with your files and a *store* folder, then click **Publish**.
-2. Click **Serve locally**: the store is now at `http://localhost:8000/` on this PC.
-3. **Update** tab: the source is already `http://localhost:8000/`; choose a folder to update and click
-   **Update**. Change a file in your published folder, publish again, update again: only that file
-   travels.
-
-### With the command line
+The build installs nothing system-wide. Python packages go into `.venv`, pinned in
+`requirements-build.txt`; Node packages go into `app/node_modules`, pinned in `app/package-lock.json`.
 
 ```
-deltapatcher publish ./game ./store --name "My Game" --version 1.0
-deltapatcher serve ./store
-deltapatcher update ./my-install --source http://localhost:8000/
-deltapatcher update ./my-install --check          # what would change (exit 2 when out of date)
-deltapatcher rollback ./my-install                # undo the last update
+# Windows
+powershell -ExecutionPolicy Bypass -File build.ps1          # the engine and the app (-Test: run the tests first)
+
+# Linux, macOS
+./build.sh                                                  # (--test, --engine-only)
 ```
 
-From source, `python -m deltapatcher <command>` is the same as `deltapatcher <command>`.
+The results are in `dist/`: `deltapatcher-cli[.exe]` (the command line, one file), `dist/engine/` (the
+same engine as a folder, which starts faster; the app carries this one) and `dist/app/` with the app for
+your system. Each system's build has to run on that system; the *Build* workflow does all three.
 
-## Hosting on a VPS
+**Working on the app**: build the engine once (`build.ps1 -EngineOnly`), then `cd app`, `npm ci`,
+`npm run dev`. Without a built engine the app runs the engine from source (`python -m deltapatcher`).
 
-You need: a VPS with SSH (OpenSSH), a web server on it that serves one folder (examples below),
-and the OpenSSH client on your PC (built into Windows 10 and later, and into Linux and macOS).
+**Dependencies**:
 
-### 1. A key for deploys
+| Part | At run time | To build |
+| --- | --- | --- |
+| Engine | Python's standard library; `cryptography` only to make keys and sign (checking signatures needs nothing) | PyInstaller, Pillow (the icon) |
+| App | Electron | electron-vite, React, Tailwind CSS, lucide-react, zustand, TypeScript, electron-builder |
+| Deploys | the system's OpenSSH client (`ssh`, `sftp`, `ssh-keygen`, `ssh-add`), built into Windows 10+, Linux and macOS | |
 
-In the window: **Server** tab > **New key...**. In a terminal: `deltapatcher ssh keygen`.
+**Tests**: `python -m unittest discover -s tests`. They publish, serve, update and roll back real
+folders over HTTP, and refuse damaged blobs, missing blobs and malicious manifests. They sign and check
+releases, deploy through a stand-in SFTP server, and drive the engine's JSON mode the way the app does.
 
-This makes an ed25519 key at `~/.ssh/deltapatcher_ed25519` with a passphrase. The private key is
-written once, readable by your account only, and an existing key is never overwritten. The
-passphrase is not stored anywhere.
+## Contributing
 
-### 2. Let the key in on the server
+Pull requests are welcome. On every push and pull request, GitHub runs:
+- **Build**: the tests on Windows, Linux and macOS, then the engine and the app
+- **CodeQL**: Python and TypeScript
+- **Secret scan**: [`tools/secret_scan.py`](tools/secret_scan.py) and gitleaks
 
-**Copy server line** (window) or `deltapatcher ssh pubkey` (terminal) gives one line like:
+Run `python tools/secret_scan.py` before you commit: it refuses keys, settings files and anything like them.
 
-```
-restrict,command="internal-sftp" ssh-ed25519 AAAA... deltapatcher@my-pc
-```
-
-Add it to `~/.ssh/authorized_keys` of the user that deploys, on the server. `restrict,command="internal-sftp"`
-limits the key to SFTP: it can upload files, but it cannot open a shell or forward ports. That is
-all DeltaPatcher needs. Use a separate user that owns only the web folder, for example:
-
-```
-sudo adduser --disabled-password deploy
-sudo mkdir -p /var/www/game && sudo chown deploy:deploy /var/www/game
-sudo -u deploy mkdir -p ~deploy/.ssh && sudo -u deploy nano ~deploy/.ssh/authorized_keys
-```
-
-### 3. Unlock the key
-
-**Unlock key** (window) or `deltapatcher ssh unlock` adds the key to `ssh-agent`, which asks for the
-passphrase once and keeps the key unlocked until you log out. Deploys run without asking again.
-
-On Windows the agent service is off by default. Turn it on once, in an administrator PowerShell:
-
-```
-Get-Service ssh-agent | Set-Service -StartupType Automatic
-Start-Service ssh-agent
-```
-
-### 4. Confirm the server's host key
-
-The first time, DeltaPatcher shows the server's host key fingerprints and asks you to confirm them.
-Compare with what your hosting provider shows, or run this on the server:
-
-```
-ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub
-```
-
-Confirmed keys are kept in DeltaPatcher's own `known_hosts` (in your user config folder). Every later
-connection refuses a server whose key changed.
-
-### 5. Deploy
-
-Window: **Server** tab, fill in host, user, the remote folder (`/var/www/game`), then **Test
-connection** and **Deploy**. Terminal:
-
-```
-deltapatcher deploy ./store --host example.com --user deploy --remote-root /var/www/game
-deltapatcher deploy ./store --to-folder D:/www/game        # or a folder (local web root, share)
-```
-
-Add `--dry-run` to see what would be sent. Blobs that none of the new manifest, the one the server
-serves now and the one before it name are removed (`--no-prune` keeps them). If a manifest on the
-server cannot be read, nothing is removed. If the upload fails at any point before the new manifest
-is complete on the server, the server keeps serving the release it served before.
-
-### 6. Serve the folder
-
-The folder holds `manifest.json`, `manifest.previous.json` and `blobs/`. Serve it over HTTPS.
-
-Caddy:
-
-```
-game.example.com {
-    root * /var/www/game
-    file_server
-    @manifest path /manifest.json /manifest.previous.json
-    header @manifest Cache-Control "no-cache"
-    header /blobs/* Cache-Control "public, max-age=31536000, immutable"
-}
-```
-
-nginx:
-
-```
-server {
-    server_name game.example.com;
-    root /var/www/game;
-    autoindex off;
-    location = /manifest.json { add_header Cache-Control "no-cache"; }
-    location /blobs/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
-}
-```
-
-Clients then use `https://game.example.com/` as their source. Blobs never change once written (their
-name is their hash), so they can be cached forever; only the manifest must not be cached.
-
-**A Windows server** works too (OpenSSH Server for Windows plus IIS or Caddy). Give the remote folder
-with forward slashes, for example `C:/www/game`. The `command="internal-sftp"` restriction needs
-OpenSSH's own sshd; if your server does not accept it, use `deltapatcher ssh pubkey --full` (a key
-with `restrict` only).
-
-## What a client update does
-
-- Downloads only blobs whose content it does not have. The same content under two names is fetched once.
-- Checks every blob against its SHA-256 before the folder changes. A damaged or missing blob on the
-  server stops the update with the folder untouched.
-- Removes a file the new release no longer lists only if DeltaPatcher installed it and it is
-  unchanged since. Files you added yourself, and files that were already in the folder before
-  DeltaPatcher first installed them, are never removed. A release that only changes the letter case
-  of a path (`Maps/` to `maps/`) keeps the file.
-- Leaves *protected* files alone once they exist (`--protect "config/*.cfg"` when publishing), so a
-  player's settings survive updates.
-- Journals the update: if it fails, it is undone at once; if the program is killed or the PC loses
-  power, the next run undoes it first. `rollback` undoes the last completed update, also after a
-  later update failed.
-- Resumes interrupted downloads (HTTP Range), including a connection that simply closes early.
-- Refuses a manifest with any path that could leave the folder (`..`, absolute paths, drive letters,
-  links or junctions on the way, Windows device names such as `CON` or `con .txt`) or reach its own
-  `.deltapatcher` folder.
-- Locks the folder with an operating-system lock while it works, so two updates never run at once,
-  and a crash never leaves the folder locked.
-
-Everything it keeps is in `<folder>/.deltapatcher/` (state, hash cache, download cache, rollback).
-
-## Security
-
-Releases can be signed, and players' updaters then refuse anything not signed by your key. Every
-file is checked against its SHA-256 before it is used, and manifests are treated as untrusted input.
-SSH keys are read only by OpenSSH, and passphrases are never stored. Server host keys are confirmed
-once and checked strictly after. The full list, what is left to you, and how to report a problem
-privately: **[SECURITY.md](SECURITY.md)**.
-
-## The store's files
-
-`manifest.json`:
-
-```json
-{
- "format": 1,
- "name": "My Game",
- "version": "1.0",
- "published": "2026-11-23T20:00:00Z",
- "count": 2,
- "bytes": 1234,
- "protect": ["config/*.cfg"],
- "files": [
-  {"path": "data/pak0.pk3", "sha256": "<64 hex characters>", "size": 1000},
-  {"path": "readme.txt", "sha256": "<64 hex characters>", "size": 234}
- ]
-}
-```
-
-`blobs/<sha256>`: the file's bytes. `manifest.previous.json`: the release before, kept so clients that
-started from it can finish.
-
-A `.deltaignore` file in the published folder lists globs to leave out (one per line, `#` comments, a
-trailing `/` for folders). `.git/`, `.svn/`, `Thumbs.db`, `desktop.ini` and `*.tmp` are always left out,
-and links and junctions are never followed.
-
-## Building the programs
-
-Windows (makes `.venv`, installs what the build needs, builds, then runs the built window's self-test):
-
-```
-powershell -ExecutionPolicy Bypass -File build.ps1          # or: build.ps1 -Test to run the tests first
-```
-
-Linux or macOS: `./build.sh`. The results are in `dist/`:
-
-- `DeltaPatcher.exe`: the window. Its icon is on the file, the window and the tray.
-- `deltapatcher-cli.exe`: the command line (`deltapatcher-cli.exe --help`).
-
-The icon is drawn by `tools/make_icon.py` (Pillow) into `deltapatcher/assets/`.
-
-New, unsigned executables are sometimes flagged by antivirus reputation checks. If that happens,
-sign the programs, or run from source.
-
-## Running from source
-
-Clone with [Git LFS](https://git-lfs.com) installed: images, archives and programs (`*.png`, `*.ico`,
-`*.zip`, `*.exe`, `*.dll`, `*.so` and the like, see `.gitattributes`) are stored with LFS. Without it
-the icon files are small text pointers and the window starts without its icon.
-
-Python 3.8 or later. The core (publish, serve, update, deploy) uses only the standard library.
-Optional packages: `pystray` and `Pillow` for the tray icon, `cryptography` to make keys inside the
-window (`pip install -r requirements.txt`). Without `cryptography`, `deltapatcher ssh keygen` uses
-`ssh-keygen` in the terminal instead.
-
-```
-python -m deltapatcher               # the window
-python -m deltapatcher --help        # the command line
-pip install .[all]                   # installs the deltapatcher and deltapatcher-gui commands
-```
-
-## Tests
-
-```
-python -m unittest discover -s tests -v
-```
-
-They publish, serve, update and roll back real folders over HTTP, and check that damaged blobs,
-missing blobs and malicious manifests are refused without changing anything. They also run deploys
-to a folder and through a stand-in sftp server, and make real keys checked against `ssh-keygen`.
-`DP_SKIP_GUI_TEST=1` skips the window test on a machine without a display.
-
-## Limitations
-
-- SFTP uploads report progress per batch of files, not per byte, and a blob whose upload was cut
-  is sent again whole (downloads resume; uploads do not).
-- Publishing the same files again keeps the manifest as it was; publish only when something changed
-  to make a new "previous release".
-- The built-in server is for testing and LANs; use a real web server with HTTPS on the internet.
-- On Linux the tray icon needs a desktop with a tray (AppIndicator or an X tray).
-
-## License
+## Licence
 
 MIT. See [LICENSE](LICENSE).

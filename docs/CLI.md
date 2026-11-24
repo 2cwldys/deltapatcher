@@ -10,8 +10,8 @@ deltapatcher <command> [options]
 - `deltapatcher-cli.exe` from a release
 - `python -m deltapatcher` from source, or the `deltapatcher` command after `pip install .`
 
-With no command, `python -m deltapatcher` opens the window and the others print the help.
-`deltapatcher gui` always opens the window.
+With no command it prints the help. The window is the DeltaPatcher app (`app/`): it runs this same
+command line in its machine mode (`--json`, below).
 
 The settings file (`deltapatcher.ini`, see [Settings and logs](#settings-and-logs)) fills in `--source`,
 `--trust-key`, the signing key and the SSH options when you leave them out.
@@ -133,13 +133,41 @@ deltapatcher config [--show]
 Print where the settings file and the log are (the settings file is made, with every setting
 explained, if it is missing). `--show` prints the file too.
 
+## Machine mode (--json)
+
+With `--json` every command writes one JSON object a line, which is how the app drives the engine:
+
+```
+{"event": "log", "text": "...", "style": "ok"}
+{"event": "progress", "done": 123, "total": 456, "label": "downloading"}
+{"event": "result", "ok": true, "data": {...}}
+{"event": "error", "message": "...", "code": "host-unknown", "data": {...}}
+```
+
+The last line is `result` or `error`. Standard input carries what a person would type: with
+`--passphrase-stdin` the first line is the passphrase; a later line `cancel` stops a download (the
+folder stays as it was); closing standard input stops `serve`. Commands made for programs:
+
+| Command | |
+| --- | --- |
+| `config get` / `config set key=value ...` | Read every setting (with its explanation) / change settings |
+| `ssh status` | The key (passphrase, permissions, ssh-agent) and whether the host is trusted |
+| `ssh scan` | The host keys a server offers |
+| `ssh trust --accept FP,FP` | Trust a server only if it still offers exactly these fingerprints |
+| `ssh fix-permissions` | Make the private key readable by this account only |
+| `sign status` | Is there a signing key, and does it have a passphrase |
+| `version` | The version |
+
+Error codes the app acts on: `host-unknown` (with the host's keys), `host-changed`, `key-permissions`,
+`passphrase-needed`, `passphrase-short`, `no-signing-key`, `exists`, `stopped`.
+
 ## Settings and logs
 
 **Settings**: `deltapatcher.ini`, made the first time DeltaPatcher runs, every setting with its default
 and a line saying what it does. Edit it with any text editor; the window saves into it too, keeping
 your comments. Which file is used:
 1. the file named by the environment variable `DELTAPATCHER_CONFIG`
-2. `deltapatcher.ini` beside `DeltaPatcher.exe` / `deltapatcher-cli.exe` (a portable copy: ship it with
+2. `deltapatcher.ini` beside the DeltaPatcher app or `deltapatcher-cli` (a portable copy: ship it with
    your game with `source_url` and `trust_key` filled in)
 3. otherwise `%APPDATA%\DeltaPatcher\deltapatcher.ini` (Windows) or `~/.config/deltapatcher/deltapatcher.ini`
 

@@ -1,11 +1,11 @@
 # For players: keeping a game folder up to date
 
-The game's maker gives you two things: **DeltaPatcher** (`DeltaPatcher.exe`) and a **source
+The game's maker gives you two things: **the DeltaPatcher app** and a **source
 address**, for example `https://game.example.com/`.
 
 ## First time
 
-1. Start `DeltaPatcher.exe`. It opens on the **Update** tab.
+1. Start DeltaPatcher. It opens on the **Update** page.
 2. *Source*: paste the address the game's maker gave you.
 3. *Folder*: the game folder, or an empty folder for a fresh install. Use **Browse** to pick it.
 4. *Publisher key*: if the game's maker gave you one (it starts with `ed25519:`), paste it. Then only
@@ -13,7 +13,7 @@ address**, for example `https://game.example.com/`.
 5. Click **Update**. The bar shows the download; the log says what was installed.
 
 DeltaPatcher remembers these fields, so next time you only click **Update**. If the game came with a
-`deltapatcher.ini` beside `DeltaPatcher.exe`, they are already filled in.
+`deltapatcher.ini` beside the DeltaPatcher program, they are already filled in.
 
 ## Every time after
 
@@ -43,8 +43,8 @@ so a small patch is a small download even when the game is large.
   how DeltaPatcher knows which files it installed, and it holds the copies **Roll back** uses. Its
   `update.log` lists every file each update added, replaced or removed.
 
-**Log folder** (bottom of the window) opens DeltaPatcher's own log, everything it showed with the time:
-useful when asking the game's maker for help. **Settings file** opens `deltapatcher.ini`, every
+**Logs** (bottom right of the window) opens DeltaPatcher's own log, everything it showed with the time:
+useful when asking the game's maker for help. The **Settings** page shows `deltapatcher.ini`, every
 setting with a line explaining it.
 
 ## The tray icon

@@ -20,14 +20,14 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `the release is not signed, but this folder trusts publisher key ...` | This folder installed a signed release before, so it now refuses unsigned ones. Ask the publisher. If you know the release is genuine: `--trust-key off` (or `trust_key = off` in the settings file) skips the check. |
 | `the release is signed by ..., but this folder trusts ...` | Someone other than the publisher you trust signed it, or the publisher changed keys. Get the new key from the publisher directly, then update once with `--trust-key ed25519:...` (or paste it into *Publisher key*). |
 | `the release's signature is refused: ...` | The signature does not match the manifest: the release was changed after it was signed. Do not install it; tell the publisher. |
-| Where is the log? | **Log folder** in the window, or `deltapatcher config`. Each game folder also has `.deltapatcher/update.log`. |
+| Where is the log? | **Logs** at the bottom right of the app, or `deltapatcher config`. Each game folder also has `.deltapatcher/update.log`. |
 
 ## Publishing
 
 | Message | What to do |
 | --- | --- |
 | `the signing key could not be opened (wrong passphrase?)` | Type the signing key's passphrase again. If it is lost, make a new key and give players the new public key. |
-| `no signing key at ...` | Make one: **New signing key...** or `deltapatcher sign keygen`. Or untick **Sign the release**. |
+| `no signing key at ...` | Make one: **New signing key** (Publish page) or `deltapatcher sign keygen`. Or turn off **Sign each release**. |
 | `signing needs the 'cryptography' package` | From source: `pip install cryptography`. The built programs include it. |
 | `the store must not be inside the folder it publishes` | Choose a store folder outside the release folder. |
 | `X cannot be published: ...` | A file name that cannot be used on every system (a device name like `CON`, a name ending in a dot or space, a `:`). Rename it. |
@@ -43,7 +43,7 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `the server refused the key` | The key's server line is not in `~/.ssh/authorized_keys` of that user on the server, or the key is not unlocked. Copy the server line again (**Copy server line**) and click **Unlock key**. On the server, `.ssh` must be mode 700 and `authorized_keys` 600, owned by the user. |
 | `the server's host key is not the one you confirmed` | Either the server was reinstalled (check its new fingerprint, then `deltapatcher ssh trust --host HOST --forget` and confirm again), or something is intercepting the connection. In that case, do not deploy. |
 | `the private key can be read by other users` | Click **Fix permissions** (or answer yes on the command line). OpenSSH refuses keys that others can read. |
-| `ssh-keygen cannot read ...` | The key file is damaged or not an SSH key. Make a new one with **New key...**. |
+| `ssh-keygen cannot read ...` | The key file is damaged or not an SSH key. Make a new one with **New key** (Server page). |
 | `the remote folder must not contain ...` | Use forward slashes and no quotes or wildcards: `/var/www/game`, `C:/www/game`. |
 | `logged in; the remote folder ... does not exist yet` | Fine: the first deploy creates it (its parent folder must exist). |
 | `... blobs are still missing or the wrong size on the target after the upload` | The upload did not complete (disk full, quota, connection). The server still serves the old release. Fix the cause and deploy again. |
@@ -54,7 +54,6 @@ Messages are shown in the window's log and, from the command line, on the screen
 
 | Problem | What to do |
 | --- | --- |
-| The antivirus quarantines `DeltaPatcher.exe` | New, unsigned programs are flagged by reputation checks. Restore it and add an exception, run from source, or (for publishers) sign the programs. |
+| The antivirus quarantines the DeltaPatcher app or `deltapatcher-cli` | New, unsigned programs are flagged by reputation checks. Restore it and add an exception, run from source, or (for publishers) sign the programs. |
 | No tray icon on Linux | The desktop needs a tray (AppIndicator or an X tray). Everything else works without one. |
 | `Cannot serve: ... address already in use` | Another program uses the port. Pick another port next to **Serve locally**, or `--port`. |
-| The window looks blurry on a high-DPI screen | Windows scales older programs. Right-click the exe > Properties > Compatibility > Change high DPI settings > Override, set to Application. |

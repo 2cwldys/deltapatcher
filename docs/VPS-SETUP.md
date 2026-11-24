@@ -89,7 +89,7 @@ the usual default on shared hosting). A virtual host, for your own Apache:
 
 ## Part 2: a key on your PC
 
-In DeltaPatcher, open the **Server** tab and click **New key...**:
+In DeltaPatcher, open the **Server** page and click **New key**:
 
 - Keep the suggested file (`deltapatcher_ed25519` in your `.ssh` folder).
 - Type a passphrase twice: at least 10 characters (a few words work well). It is not saved anywhere.
@@ -114,7 +114,7 @@ port forwarding. That is all DeltaPatcher needs.
 
 ## Part 3: connect and deploy
 
-On the **Server** tab:
+On the **Server** page:
 
 1. *Host* `game.example.com`, *User* `deploy`, *Port* `22`, *Remote folder* `/var/www/game`.
 2. **Unlock key**: type the passphrase once. `ssh-agent` keeps the key unlocked until you log out.
@@ -123,11 +123,10 @@ On the **Server** tab:
      Get-Service ssh-agent | Set-Service -StartupType Automatic
      Start-Service ssh-agent
      ```
-3. **Check host key**: compare the fingerprints shown with the ones you wrote down in Part 1. Click
-   **Yes** only if they match. DeltaPatcher remembers the server, and refuses it later if its key
+3. **Check host key**: compare the fingerprints shown with the ones you wrote down in Part 1. Click **They match: trust this server** only if they do. DeltaPatcher remembers the server, and refuses it later if its key
    ever changes.
 4. **Test connection**: the log says `logged in`.
-5. Publish your release on the **Publish** tab, then click **Deploy**. Tick **Dry run** first to see
+5. Publish your release on the **Publish** page, then click **Deploy**. Turn on **Dry run** first to see
    what would be sent.
 
 Command line, the same steps:

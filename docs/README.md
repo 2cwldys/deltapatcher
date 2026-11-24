@@ -26,7 +26,7 @@ is just bytes with a hash.
 
 | Update | Publish | Server |
 | --- | --- | --- |
-| ![Update tab](images/1-update.png) | ![Publish tab](images/2-publish.png) | ![Server tab](images/3-server.png) |
+| ![Update](images/app-update.png) | ![Publish](images/app-publish.png) | ![Server](images/app-server.png) |
 
 - **Update**: bring a folder up to date from a source address.
 - **Publish**: turn a folder into a store, and serve it from this PC to test.

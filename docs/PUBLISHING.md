@@ -25,7 +25,7 @@ folder.
 
 ## 2. Publish
 
-Window: **Publish** tab, choose *Folder* and *Store*, fill in *Name* and *Version*, click **Publish**.
+App: the **Publish** page: choose *Folder to release* and *Store*, fill in *Name* and *Version*, click **Publish**.
 
 Command line:
 
@@ -62,17 +62,17 @@ http. Signing is your choice, and so is checking for players: an unsigned releas
 anyone who has not been told to expect a signature.
 
 1. Make a signing key once:
-   - Window: **Publish** tab > **New signing key...** (asks a passphrase twice; the public key goes to the clipboard)
+   - App: **Publish** page > **New signing key** (asks a passphrase twice; the public key goes to the clipboard)
    - Command line: `deltapatcher sign keygen`
 
    The key is `%APPDATA%\DeltaPatcher\signing-key.pem` (Windows) or `~/.config/deltapatcher/signing-key.pem`,
    readable by your account only. Back it up somewhere safe: it cannot be made again.
-2. Sign each release: tick **Sign the release**, or add `--sign` on the command line. The passphrase is
+2. Sign each release: turn on **Sign each release**, or add `--sign` on the command line. The passphrase is
    asked each time and not kept. The signature is written to `store/sigs/<hash of manifest.json>.sig`
    and deployed with the release.
 3. Give players your **public key**, the `ed25519:...` text from step 1 (**Copy public key**, or
    `deltapatcher sign pubkey`). It is not secret. Put it where players get DeltaPatcher:
-   - in a `deltapatcher.ini` beside `DeltaPatcher.exe`: `trust_key = ed25519:...` (with `source_url`)
+   - in a `deltapatcher.ini` beside the DeltaPatcher app: `trust_key = ed25519:...` (with `source_url`)
    - in a launcher: `deltapatcher-cli.exe update ... --trust-key ed25519:...`
    - or on your website, for players to paste into **Publisher key**.
 
@@ -85,19 +85,19 @@ public key; they accept it once with `--trust-key`.
 Every publish writes `store/.htaccess`, and deploys send it along. On an Apache server it makes the
 folder serve only the release: no directory listings, a type for blobs (they have no extension), the
 right cache headers, and everything else refused. Other web servers ignore it, and DeltaPatcher's own
-server never serves it. Untick **.htaccess for Apache**, or use `--no-htaccess`, to leave it out.
+server never serves it. Turn off **.htaccess for Apache**, or use `--no-htaccess`, to leave it out.
 
 ## 4. Test it on your PC
 
-Window: **Serve locally**, then **Update** a test folder from `http://localhost:8000/`.
+App: **Serve locally** (Publish page), then **Update** a test folder from `http://localhost:8000/`.
 Command line: `deltapatcher serve ./store`, then `deltapatcher update ./test --source http://localhost:8000/`.
 
 ## 5. Put the store where players can read it
 
 The store is plain static files: any web server can serve it. Choose one:
 
-- **A VPS**: deploy over SSH from the **Server** tab. See [Setting up a VPS](VPS-SETUP.md).
-- **A folder**: Server tab, *A folder*, for a web root on this machine or a network share. Command
+- **A VPS**: deploy over SSH from the **Server** page. See [Setting up a VPS](VPS-SETUP.md).
+- **A folder**: the **Server** page, *A folder*, for a web root on this machine or a network share. Command
   line: `deltapatcher deploy ./store --to-folder D:/www/game`.
 - **Any static host** (object storage, a CDN): upload `manifest.json`, `manifest.previous.json`,
   `blobs/` and `sigs/` (and `.htaccess` for Apache). Upload the blobs and signatures first and
@@ -109,7 +109,7 @@ Deploying sends only the blobs the target does not have yet.
 
 Players need DeltaPatcher and your source address. Common ways:
 
-- **Ship `DeltaPatcher.exe`** next to the game, with a `deltapatcher.ini` beside it that already holds
+- **Ship the DeltaPatcher app** (the portable `.exe` on Windows, the AppImage on Linux) next to the game, with a `deltapatcher.ini` beside it that already holds
   `source_url` (and `trust_key` if you sign). Players just click **Update**. Without the file, tell them
   the address once; the window remembers it.
 - **A one-click updater** for your launcher or a `.bat` file, using the command-line program:

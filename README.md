@@ -265,6 +265,10 @@ sign the programs, or run from source.
 
 ## Running from source
 
+Clone with [Git LFS](https://git-lfs.com) installed: images, archives and programs (`*.png`, `*.ico`,
+`*.zip`, `*.exe`, `*.dll`, `*.so` and the like, see `.gitattributes`) are stored with LFS. Without it
+the icon files are small text pointers and the window starts without its icon.
+
 Python 3.8 or later. The core (publish, serve, update, deploy) uses only the standard library.
 Optional packages: `pystray` and `Pillow` for the tray icon, `cryptography` to make keys inside the
 window (`pip install -r requirements.txt`). Without `cryptography`, `deltapatcher ssh keygen` uses

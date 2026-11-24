@@ -190,7 +190,8 @@ Players' DeltaPatchers can download a release from each other as well as from yo
 for your server, or no server at all. It is off by default, set per project, and needs signed releases
 ([3b](#3b-sign-your-releases-optional)).
 
-1. Turn it on: *Share by torrent too* (Settings), and *Seeds*, the computers players connect to first
+1. Turn it on: *Share by torrent too* on the Release page (or Settings), and *Seeds*, the computers players
+   connect to first
    (`deltapatcher config set torrent=yes seeds=game.example.com:6881`). DeltaPatcher makes the project's
    torrent id once; it never changes.
 2. Release as before. The store also gets `release.torrent` (the release as a BitTorrent v2 torrent: the
@@ -198,8 +199,9 @@ for your server, or no server at all. It is off by default, set per project, and
    manifest.
 3. Export the project file again: it now carries the torrent's id, name and seeds, and must name your
    publisher key. Players who follow you are asked about a changed list of seeds, as about a new address.
-4. Keep a seed running where players can reach it: `deltapatcher seed --all` with *Seed this project* on, on
-   your computer or on a server or in a container ([docker/README.md](../docker/README.md#seeding-from-a-container)).
+4. Keep a seed running where players can reach it: *Seed it from this computer* on the Release page
+   (DeltaPatcher seeds while it runs, in the tray too), or `deltapatcher seed --all` on a server or in a
+   container ([docker/README.md](../docker/README.md#seeding-from-a-container)).
    At home, forward the *Torrent port* (6881, TCP and UDP) on your router to that computer, or turn on *Port
    mapping*, and let it through that computer's firewall.
 

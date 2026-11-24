@@ -80,12 +80,13 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
   tool takes a passphrase or a password: signing, unlocking a key and putting a key on a server stay with a
   person. Tools that change files or servers are marked so a client asks first.
 - **Force stop holds until it is lifted.** One click ends every engine run the app started ("cancel" on its
-  input, then its process tree two seconds later), and the main process refuses every run but the version,
-  the project list, the backup list and settings until the stop is lifted, also after a restart
+  input, then its process tree two seconds later), and the main process refuses every run but the version
+  (not its BitTorrent test), the project list, the backup list and settings until the stop is lifted, also after a restart
   (`force-stop.json` in the app's data folder). Within those two seconds the engine stops at its next safe
   point: an update before it moves its first file, a publish, deploy or restore before its new manifest
   goes up. Lifting it starts nothing that was stopped; the automatic schedules count from then. It covers
-  what the app runs, not the command line or the MCP server.
+  what the app runs, not the command line or the MCP server. It also turns seeding off for every project
+  that had it, until the person turns it on again.
 - **Torrents need nothing outside DeltaPatcher.** Peers come from the project file's seeds, peers met
   before, peer exchange and the local network, and a project with no address finds its release in a DHT
   started only from those: no tracker, no public DHT router. The DHT protocol cannot be closed to an
@@ -146,10 +147,12 @@ as possible without becoming hard to use.
     must be signed with the key trusted now; a project file can be update capable (version 2) or one-off;
     players see what changed (file names, release notes) when the publisher allows it; containers take a
     project file (`update --project-file`).
-12. **Torrents beside HTTP** (the engine is built). Set by the publisher per project, off by default,
+12. **Torrents beside HTTP** (built). Set by the publisher per project, off by default,
     signed releases only (`deltapatcher/torrent/`): the store as a BitTorrent v2 torrent
     (`release.torrent`), and for a project with no address its newest release found in a DHT by the
     publisher key (`release.item`, numbered so a player never goes back). libtorrent 2.0.15 is frozen into
     the engine; no tracker, no public DHT router, no port mapping unless asked. Players can refuse torrents
     completely; seeding is their yes per project, from their own folder, offering only files the engine
-    checked, paused while an update changes them.
+    checked, paused while an update changes them. In the window: *Share by torrent too* on the Release
+    page, the seed choice when a project file is added, a seeding line and Seed or Stop seeding on each
+    row, the tray's count, and Force stop turning seeding off; assistants get a read-only `seed_status`.

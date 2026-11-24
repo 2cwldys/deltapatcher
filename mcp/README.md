@@ -59,6 +59,8 @@ On Linux and macOS the command is the unpacked `deltapatcher-cli`. From a clone 
 - `guide`, `log`: these guides, and the last lines of DeltaPatcher's log.
 - `stats`: a project's statistics, its releases and its downloads (counts only).
 - `backup_list`: the backups of a project's live release kept on this computer.
+- `seed_status`: which projects are shared by torrent and seeded now, with their peers and upload speed.
+  Seeding starts and stops only with a person: in the app, or with `deltapatcher seed`.
 - `version`, `check_for_new_version`.
 
 **Change files or servers** (marked as such, so your assistant asks you first)

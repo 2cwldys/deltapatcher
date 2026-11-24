@@ -35,7 +35,8 @@ right of its header (up: folded, down: open), and DeltaPatcher remembers which. 
 
 **Projects**: every game, mod or server DeltaPatcher keeps up to date or releases, with its state. Check
 all, Update all, and add, share or remove projects. The picker at the top left chooses the project the
-other pages show.
+other pages show. A project shared by torrent has a **By torrent** mark and, while DeltaPatcher seeds it,
+a line with its peers and upload speed; its **...** menu has **Seed this project** or **Stop seeding**.
 
 [![The Projects page](images/app-projects.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-projects.png)
 
@@ -43,18 +44,21 @@ other pages show.
 
 [![The Update page](images/app-update.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png)
 
-**Release**: what to release, where players download it from (your server over SSH, a folder, or this
-computer to test), one button that sends only what changed, and the project's statistics under it.
+**Release**: what to release (and **Share by torrent too**, so players also download from each other),
+where players download it from (your server over SSH, a folder, or this computer to test), one button
+that sends only what changed, and the project's statistics under it.
 
 [![The Release page](images/app-release.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-release.png)
 
-**Settings**: every setting of `deltapatcher.ini`, the project's backups, and the log.
+**Settings**: every setting of `deltapatcher.ini` (among them **Torrents**: allow, or refuse BitTorrent for
+every project), the project's backups, the log, and a test of BitTorrent under About.
 
 [![The Settings page](images/app-settings.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-settings.png)
 
 The log at the bottom shows exactly what each step did. **Stop** cancels a running download.
 
 **Force stop**, the red box at the bottom left, ends everything at once: updates, checks, releases,
-downloads and the local server. The pages stay greyed out, and nothing starts (no automatic check, no
+downloads, seeding and the local server, and it turns seeding off for every project until you turn it on
+again. The pages stay greyed out, and nothing starts (no automatic check, no
 update by itself) until you click **Lift the stop**, even after DeltaPatcher restarts. Lifting it starts
 nothing that was stopped.

@@ -86,8 +86,9 @@ what differs.
 ## When the publisher changes a project
 
 A project added from an **update capable** project file (the mark in the import dialog) follows its
-publisher. When they change its description, website, where it goes, its address or its publisher key, a
-check shows **The publisher changed this project** on its row and on the Update page:
+publisher. When they change its description, website, where it goes, its address, its publisher key or the
+seeds it is shared from by torrent, a check shows **The publisher changed this project** on its row and on
+the Update page:
 
 - **Apply** takes what they changed. Your folder, the name you gave the project and your own settings never
   change.
@@ -107,9 +108,14 @@ A publisher can share a project by torrent. DeltaPatcher then downloads from oth
 the publisher's address, or only from players for a project with no address. Everything from a player is
 checked as a download from a server is: the publisher's signature, then every file's SHA-256.
 
-- **Seeding** shares the project's files with other players while DeltaPatcher seeds. It is off unless you
-  say yes (*Seed this project*, Settings). Only files DeltaPatcher has checked are offered: never a file you
-  changed, never your own files the release keeps for you. Seeding pauses while an update changes the folder.
+- **Seeding** shares the project's files with other players while DeltaPatcher runs (in the tray too). It is
+  off unless you say yes: the *Seed this project* switch when you add the project file, **Seed this
+  project** in its **...** menu on the Projects page (**Stop seeding** turns it off), or Settings. Its row
+  then shows its peers and upload speed, and the tray icon says how many projects are seeded. Only files
+  DeltaPatcher has checked are offered: never a file you changed, never your own files the release keeps for
+  you. Seeding pauses while an update changes the folder.
+- **Force stop** ends seeding at once and turns it off for every project; it stays off until you turn it on
+  again.
 - **Refusing torrents completely**: set *Torrents* to *refuse* (Settings). DeltaPatcher then never uses
   BitTorrent, whatever a project file or its publisher says: a project with an address updates from it
   only, and a project shared by torrent only cannot update.
@@ -151,6 +157,7 @@ setting with a line explaining it.
 - A download stops and the folder stays as it was. An update that was already putting files in place is
   undone the next time that folder is updated.
 - The automatic checks, and updates by themselves, wait.
+- Seeding ends, and it is turned off for every project that had it, until you turn it on again.
 - The pages are greyed out until you click **Lift the stop**, and DeltaPatcher stays stopped after a
   restart too.
 

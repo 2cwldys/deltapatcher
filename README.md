@@ -56,11 +56,12 @@ identical files are stored once.
   <tr>
     <td valign="top"><b>Statistics for publishers</b><br>How many players check and download, and which release they are on, counted from your own web server's log.</td>
     <td valign="top"><b>Backups</b><br>Dated copies of the live release on your computer, by hand or on a schedule, and one step to put one back.</td>
-    <td valign="top"><b>Force stop</b><br>One red button ends every update, check, release and download at once, and nothing starts until you lift it.</td>
+    <td valign="top"><b>Force stop</b><br>One red button ends every update, check, release, download and seed at once, and nothing starts until you lift it.</td>
   </tr>
   <tr>
     <td valign="top"><b>Patch notes</b><br>Players see what a release changed, file by file, with your notes; file names only if you allow it.</td>
     <td valign="top"><b>Presets that follow you</b><br>Change a project later and players are asked before anything changes; one-off files stay possible.</td>
+    <td valign="top"><b>Torrents, if you want them</b><br>Players can download from each other and seed, no server needed; off unless you turn it on, and anyone can refuse it.</td>
   </tr>
 </table>
 

@@ -69,6 +69,30 @@ A publisher key is written `ed25519:` followed by the base64 of its 32 bytes.
 | `count`, `bytes` | Number of files and their total size |
 | `protect` | Rules for files a client creates once and never overwrites. `/config/user.cfg` is that file and `/saves/` that folder and everything in it (a leading `/`: an exact path from the top). Anything else is a pattern: without a `/` it matches a name in any folder (`*.ini`), with one the whole path (`config/*.cfg`); a trailing `/` means folders. Case is ignored. |
 | `files` | Every file: `path` (relative, `/` separators), `sha256`, `size` in bytes |
+| `project` | Optional: what the release says about its project (below). Older clients do not read it. |
+
+### The project object
+
+```json
+"project": {
+ "title": "My Game", "description": "...", "website": "https://game.example.com/",
+ "install_hint": "Pick the game's folder", "install_folder": "Mods",
+ "source_url": "https://game.example.com/", "trust_key": "ed25519:...",
+ "show_files": true, "notes": "Map b replaces map a."
+}
+```
+
+With the publisher's *share_updates* on, it holds the project's details as a project file gives them;
+with it off (or no address players update from) only `show_files` and `notes`. It is part of the manifest,
+so it is signed with it. `show_files` says whether DeltaPatcher shows players the names of the files a
+release adds, changes and removes; `notes` are the release notes (plain text, at most 4000 characters).
+Readers pass over fields they do not know.
+
+### Project files
+
+A project file (`.deltapatch`, or the `.html` page that carries the same JSON) is version 1, or version 2
+when it is update capable (`"updates": true`: players are asked when the publisher changes the project
+later). DeltaPatcher 0.3.0 reads version 1 and asks to be updated for version 2.
 
 ### Path rules
 

@@ -171,6 +171,19 @@ The signing key and the SSH key are DeltaPatcher's, shared by every project unle
 name others. Players can keep several of your projects up to date at once: see
 [For players](PLAYERS.md#several-games).
 
+## Changing a project later, and patch notes
+
+Each release carries the project's details (description, website, where it goes, the address players
+update from, the publisher key), signed with it, when *share_updates* is on (Settings, *Publish*; on by
+default). Players whose project follows you are asked before a change is applied; a new address or key
+reaches them only signed with the key they trust now. Change the details on the Settings page, then
+release: a release with only new details is a new release too.
+
+- **Export...** offers **update capable** (players are asked about your later changes) or a one-off file.
+- **Patch notes**: *show_files* (on by default) lets DeltaPatcher show players the names of the files a
+  release adds, changes and removes (the manifest is public either way). **What is new, for players** on the
+  Release page, or `--notes`, adds your own notes to the release.
+
 ## Statistics
 
 The **Statistics** card on the **Release** page, or on the command line:

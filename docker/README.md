@@ -51,6 +51,8 @@ folder and then starts your program, [`Dockerfile`](example/Dockerfile) installs
 | `DP_SOURCE` | Where the release is: `https://game.example.com/`. Empty: start without updating. |
 | `DP_FOLDER` | The folder kept up to date (`/data`). Put it on a volume, so the next start downloads only what changed since. |
 | `DP_TRUST_KEY` | Your publisher key (`ed25519:...`) when you sign releases: anything not signed with it is refused. |
+| `DP_PROJECT_FILE` | Instead of the two above: a project file you exported (`.deltapatch` or `.html`), put in the container (a volume or the image). Its address and publisher key are used, its signature checked; hand the container a newer file when you move. |
+| `DP_PROJECT_NAME` | With a project file that holds several projects: the one this container keeps. |
 | `DP_REQUIRED` | `1`: do not start when the update fails. Otherwise the program starts with the files it already has. |
 
 The update itself is one line, for your own entrypoint:
@@ -89,12 +91,11 @@ to adapt (admin panel, **Nests**, **Import Egg**):
 
 - **The installation script** fetches `deltapatcher-cli` into the server folder and installs the release's
   files once.
-- **The startup command** updates the folder on every start, then starts the server:
-  ```
-  ./deltapatcher-cli --no-log --close update /home/container --source "${DP_SOURCE}" ${DP_TRUST_KEY:+--trust-key ${DP_TRUST_KEY}}; ./${SERVER_START}
-  ```
-- **Variables**: *Release address* (`DP_SOURCE`), *Publisher key* (`DP_TRUST_KEY`, optional) and *Start
-  command* (`SERVER_START`).
+- **The startup command** updates the folder on every start, then starts the server: from the project
+  file when *Project file* is set, else from the address.
+- **Variables**: *Release address* (`DP_SOURCE`), *Publisher key* (`DP_TRUST_KEY`, optional), *Project file*
+  (`DP_PROJECT_FILE`: a project file you uploaded to the server folder with the panel's file manager),
+  *Project in the file* (`DP_PROJECT_NAME`, optional) and *Start command* (`SERVER_START`).
 
 Change the docker image (it needs glibc 2.35 or later, as above), the start command and the *done* text to
 fit your game. `--close` makes sure nothing waits for a key press.

@@ -46,7 +46,7 @@ identical files are stored once.
   <tr>
     <td valign="top"><b>Pick, do not type</b><br>Leave folders out, or let players keep their own settings and saves, by picking them.</td>
     <td valign="top"><b>Shadow patches</b><br>Release the same version again with fixes: only the changed files travel.</td>
-    <td valign="top"><b>In your containers</b><br>Docker images and Pterodactyl eggs can be brought up to date at every start.</td>
+    <td valign="top"><b>In your containers</b><br>Docker images and Pterodactyl eggs can be brought up to date at every start, from an address or a project file.</td>
   </tr>
   <tr>
     <td valign="top"><b>Several projects</b><br>Every game, mod or server you keep up to date or release, each with its own settings. <i>Update all</i> runs three at once.</td>
@@ -57,6 +57,10 @@ identical files are stored once.
     <td valign="top"><b>Statistics for publishers</b><br>How many players check and download, and which release they are on, counted from your own web server's log.</td>
     <td valign="top"><b>Backups</b><br>Dated copies of the live release on your computer, by hand or on a schedule, and one step to put one back.</td>
     <td valign="top"><b>Force stop</b><br>One red button ends every update, check, release and download at once, and nothing starts until you lift it.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Patch notes</b><br>Players see what a release changed, file by file, with your notes; file names only if you allow it.</td>
+    <td valign="top"><b>Presets that follow you</b><br>Change a project later and players are asked before anything changes; one-off files stay possible.</td>
   </tr>
 </table>
 
@@ -134,8 +138,8 @@ Step by step, on the [wiki](https://github.com/2cwldys/deltapatcher/wiki):
 
 - SFTP uploads report progress per batch of files, not per byte, and a blob whose upload was cut is sent
   again whole (downloads resume; uploads do not).
-- Publishing the same files again keeps the manifest as it was; publish when something changed to make a
-  new "previous release".
+- Publishing the same files with the same project details keeps the manifest as it was; publish when
+  something changed (files, or the project's details) to make a new "previous release".
 - The built-in server is for testing and LANs; on the internet, use a real web server
   ([Setting up a VPS](https://github.com/2cwldys/deltapatcher/wiki/Setting-up-a-VPS)).
 - On Linux the tray icon needs a desktop with a tray (AppIndicator or an X tray).

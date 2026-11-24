@@ -134,10 +134,11 @@ as possible without becoming hard to use.
    of the backup that removes nothing (`deltapatcher/backup.py`). By hand, by the app every
    `backup_every_hours`, or by the system (`backup schedule`).
 10. **Force stop** (built). The panic button: see the decision above.
-11. **Next: projects that follow their publisher.** A release carries its project's details, signed; a
-    player is asked before a change is applied; a project file can be update capable or one-off; players can
-    see what changed (file names, release notes) when the publisher allows it; containers take a project
-    file (`update --project-file`).
+11. **Projects that follow their publisher** (built). A release carries its project's details, signed
+    (`deltapatcher/publisher.py`); a player is asked before a change is applied, and a new address or key
+    must be signed with the key trusted now; a project file can be update capable (version 2) or one-off;
+    players see what changed (file names, release notes) when the publisher allows it; containers take a
+    project file (`update --project-file`).
 12. **Being looked into: torrents beside HTTP**, set by the publisher per project, off by default: the store
     as a BitTorrent v2 torrent, the newest release found through the DHT under the publisher key, players
     seeding by choice. A research spike comes before any of it is built.

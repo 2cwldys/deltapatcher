@@ -186,6 +186,20 @@ last. The first time a server is used, its host key is shown for you to confirm.
 | `--dry-run` | Say what would be sent and removed, change nothing |
 | `--no-prune` | Keep blobs no manifest on the target names any more |
 
+## Projects that follow their publisher
+
+| Command or option | |
+| --- | --- |
+| `publish` / `release --notes TEXT` or `--notes-file FILE` | Release notes, shown to players with what changed (at most 4000 characters) |
+| `update --check --files` | Also the release's whole file list, when the publisher shows file names |
+| `update FOLDER --project-file FILE [--only NAME]` | The address and publisher key from a project file (its signature checked); no project is added, nothing is saved. For containers. |
+| `project export ... --updates` / `--no-updates` | An update capable file (players are asked when you change the project later) or a one-off one. The default: the project's *share_updates*. |
+| `project import FILE --as-new` | Add it as a new project even when it updates one you have |
+| `project changes NAME` | What the publisher changed about the project, waiting for you |
+| `project accept NAME` | Apply it (asks first; `--yes` does not). `--not-now` puts it off until the publisher changes the project again; `--expect HASH` applies only the change you saw. A new address or publisher key is taken only when it is signed with the key you trust now. |
+
+With `--json`, a check carries `data.publisher_change` and, when file names are shown, `data.changes`.
+
 ## stats
 
 ```
@@ -251,7 +265,9 @@ it releases and where that goes.
 ```
 deltapatcher project new NAME
 deltapatcher project import FILE [--folder DIR [--as-is]] [--only NAME]... [--name NEW] [--dry-run] [--yes]
-deltapatcher project export NAME... --out FILE [--sign [KEYFILE]]
+deltapatcher project export NAME... --out FILE [--sign [KEYFILE]] [--updates | --no-updates]
+deltapatcher project changes NAME
+deltapatcher project accept NAME [--yes] [--not-now] [--expect HASH]
 deltapatcher project add FILE [--name NAME]
 deltapatcher project rename NAME NEW
 deltapatcher project remove NAME [--yes]

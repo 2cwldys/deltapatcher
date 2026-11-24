@@ -83,6 +83,24 @@ stay exactly as they are, and a copy of the old settings is kept beside them
 (`settings-before-reset-...`). Adding a project back later finds its files, checks them, and downloads only
 what differs.
 
+## When the publisher changes a project
+
+A project added from an **update capable** project file (the mark in the import dialog) follows its
+publisher. When they change its description, website, where it goes, its address or its publisher key, a
+check shows **The publisher changed this project** on its row and on the Update page:
+
+- **Apply** takes what they changed. Your folder, the name you gave the project and your own settings never
+  change.
+- **Not now** puts it off until the publisher changes the project again.
+- A new address or publisher key is taken only when it is signed with the key you trust now; without a key,
+  you are warned more strongly.
+- Opening a newer project file for a project you have updates it, instead of adding a second one
+  (**Add it as a new project instead** is there too).
+
+**What changed**, beside a check's result, lists the files a release adds, changes and removes, and the
+publisher's notes, when the publisher shows file names. The setting *Ask me when the publisher changes this
+project* (Settings) turns the questions off for that project.
+
 ## What it will and will not touch
 
 - It never deletes files you added yourself, or files that were in the folder before DeltaPatcher

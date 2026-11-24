@@ -109,7 +109,7 @@ and give players your public key (see [Sign your releases](PUBLISHING.md#3b-sign
 
 ## Part 2: a key on your PC
 
-In DeltaPatcher, open the **Release** page, pick **Your server (SSH)** under **Where players get it**, and click **New key**:
+In DeltaPatcher, open the **Release** page, pick **Your server (SSH)** under **Where players get it**, and click **New key** in **Set up your server**:
 
 - Keep the suggested file (`deltapatcher_ed25519` in your `.ssh` folder).
 - Type a passphrase twice: at least 10 characters (a few words work well). It is not saved anywhere.
@@ -146,7 +146,7 @@ On the **Release** page, under **Where players get it**, **Your server (SSH)**:
 1. *Host* `game.example.com` (or the IP address), *User* `deploy`, *Port* `22`, *Remote folder*
    `/var/www/game`, and *Players download from* `https://game.example.com/` (without a domain name:
    `http://203.0.113.10/`).
-2. **Unlock key**: type the passphrase once. `ssh-agent` keeps the key unlocked until you log out.
+2. **Unlock key** (in **Set up your server**): type the passphrase once. `ssh-agent` keeps the key unlocked until you log out.
    - On Windows the agent service is off by default. In an administrator PowerShell, once:
      ```
      Get-Service ssh-agent | Set-Service -StartupType Automatic

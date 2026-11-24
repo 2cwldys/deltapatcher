@@ -70,7 +70,8 @@ http. Signing is your choice, and so is checking for players: an unsigned releas
 anyone who has not been told to expect a signature.
 
 1. Make a signing key once:
-   - App: **Release** page > **Sign releases** > **New signing key** (asks a passphrase twice; the public key goes to the clipboard)
+   - App: **Release** page > **Set up your server** (or **Sign releases**, when releases go to a folder or this
+     computer) > **New signing key** (asks a passphrase twice; the public key goes to the clipboard)
    - Command line: `deltapatcher sign keygen`
 
    The key is `%APPDATA%\DeltaPatcher\signing-key.pem` (Windows) or `~/.config/deltapatcher/signing-key.pem`,
@@ -122,7 +123,7 @@ them: the one before it stays live.
 
 Players need DeltaPatcher and your source address. Common ways:
 
-- **A project file**, the easiest for players: on the **Projects** page, **Export...**, tick the projects
+- **A project file**, the easiest for players: on the **Projects** page, **Export...** (in the **...** menu at the top), tick the projects
   to put in it, and pick its type: `.deltapatch` opens DeltaPatcher with a double-click, and `.html` is a
   page anyone can read in a browser (players drag it onto DeltaPatcher). Players then tick the projects and
   pick their folders; nothing to type. For each project the file holds its name, the address players update

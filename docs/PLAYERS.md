@@ -60,8 +60,8 @@ The first one is called Default.
   setting *parallel_updates*). One project failing never stops the others, and **Stop** stops them all,
   each folder as it was.
 - **Remove one**: in the project picker (point at it), on the **Settings** page (**Remove this
-  project...**), or on its row on the Projects page. **Remove all** on the Projects page removes every
-  project but Default. Their settings go; their folders and files always stay.
+  project...**), or in the **...** menu of its row on the Projects page. **Remove all**, in the **...** menu
+  at the top of the Projects page, removes every project but Default. Their settings go; their folders and files always stay.
 
 ## Updates while you play
 

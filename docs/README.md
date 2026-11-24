@@ -28,6 +28,11 @@ is just bytes with a hash.
 
 Click a picture to see it full size.
 
+The first time, a welcome screen offers the two ways in: keeping a game up to date, or publishing your own
+releases (**Getting started** on the Projects page opens it again). Every box folds with the arrow at the
+right of its header (up: folded, down: open), and DeltaPatcher remembers which. Less used actions are in
+**...** menus, and the (i) beside a label holds its whole explanation.
+
 **Projects**: every game, mod or server DeltaPatcher keeps up to date or releases, with its state. Check
 all, Update all, and add, share or remove projects. The picker at the top left chooses the project the
 other pages show.

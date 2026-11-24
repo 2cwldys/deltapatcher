@@ -175,7 +175,7 @@ The results are in `dist/`: `deltapatcher-cli[.exe]` (the command line, one file
 same engine as a folder, which starts faster; the app carries this one) and `dist/app/` with the app for
 your system. Last, the build gathers this system's release files into `dist/release/`
 (`tools/release_files.py`), named for a GitHub release. Each system's build runs on that system; the
-*Build* workflow does all three, and each of its artifacts is one system's `dist/release/`. `dist/` is
+*Builds* workflow does all three, and each of its artifacts is one system's `dist/release/`. `dist/` is
 not tracked by git.
 
 **Working on the app**: build the engine once (`build.ps1 -EngineOnly`), then `cd app`, `npm ci`,
@@ -186,29 +186,29 @@ not tracked by git.
 <details>
 <summary><b>Release a new version of DeltaPatcher</b></summary>
 
-1. **Set the version.** `python tools/version.py 0.3.0` writes it everywhere it is kept
+1. **Set the version.** `python tools/version.py 0.0.0` writes it everywhere it is kept
    (`deltapatcher/__init__.py`, `app/package.json` and its lock file; `pyproject.toml` reads it from the
    code). `patch`, `minor` or `major` instead of a number gives the next one; `python tools/version.py`
    alone shows the version and checks that every copy agrees.
 2. **Commit and push** to `main`.
-3. **Wait for the *Build* run** (the repository's **Actions** tab) to pass on Windows, Linux and macOS.
+3. **Wait for the *Builds* run** (the repository's **Actions** tab) to pass on Windows, Linux and macOS.
 4. **Download its artifacts**: on the run's **Summary** page, under **Artifacts**: `deltapatcher-Windows`,
    `deltapatcher-Linux` and `deltapatcher-macOS`, one zip each.
-5. **Make the release**: **Releases** > **Draft a new release**, tag `v0.3.0` (the tag must name the same
+5. **Make the release**: **Releases** > **Draft a new release**, tag `v0.0.0` (the tag must name the same
    version, or the build stops), and attach every file from the three zips:
 
    | System | Files |
    | --- | --- |
-   | Windows | `DeltaPatcher-0.3.0-setup.exe`, `DeltaPatcher-0.3.0-windows-x64.zip`, `DeltaPatcher-0.3.0-portable.exe`, `deltapatcher-cli-windows-x64.exe` |
-   | macOS | `DeltaPatcher-0.3.0-arm64.dmg`, `DeltaPatcher-0.3.0-arm64-mac.zip`, `deltapatcher-cli-macos-arm64.tar.gz` |
-   | Linux | `DeltaPatcher-0.3.0.AppImage`, `DeltaPatcher-0.3.0-linux-x64.tar.gz`, `deltapatcher-cli-linux-x64.tar.gz` |
+   | Windows | `DeltaPatcher-0.0.0-setup.exe`, `DeltaPatcher-0.0.0-windows-x64.zip`, `DeltaPatcher-0.0.0-portable.exe`, `deltapatcher-cli-windows-x64.exe` |
+   | macOS | `DeltaPatcher-0.0.0-arm64.dmg`, `DeltaPatcher-0.0.0-arm64-mac.zip`, `deltapatcher-cli-macos-arm64.tar.gz` |
+   | Linux | `DeltaPatcher-0.0.0.AppImage`, `DeltaPatcher-0.0.0-linux-x64.tar.gz`, `deltapatcher-cli-linux-x64.tar.gz` |
 
    The app's files carry the version in their names; the command line's do not.
 6. **Everyone on an older version is offered it**: the app shows **Update DeltaPatcher**, and the command
    line says `deltapatcher self-update`. They find the files by these names, so keep them as they are.
 7. **Add its compatibility fixture**, so every later version is tested against what this one writes:
-   `git archive v0.3.0 deltapatcher | tar -x -C ../dp-0.3.0`, then
-   `python tests/fixtures/compat/make_fixture.py ../dp-0.3.0 0.3.0`, and commit the new folder.
+   `git archive v0.0.0 deltapatcher | tar -x -C ../dp-0.0.0`, then
+   `python tests/fixtures/compat/make_fixture.py ../dp-0.0.0 0.0.0`, and commit the new folder.
 
 </details>
 

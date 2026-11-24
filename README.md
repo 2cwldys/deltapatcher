@@ -10,6 +10,12 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml"><img alt="Build" src="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml/badge.svg"></a>
+  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml/badge.svg"></a>
+  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml"><img alt="Secret scan" src="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml/badge.svg"></a>
+</p>
+
+<p align="center">
   <a href="https://github.com/2cwldys/deltapatcher/releases/latest"><img alt="Download" src="https://img.shields.io/badge/Download-19b3a0?style=for-the-badge"></a>&nbsp;
   <a href="https://github.com/2cwldys/deltapatcher/wiki"><img alt="Read the wiki" src="https://img.shields.io/badge/Read_the_wiki-f2a33a?style=for-the-badge"></a>&nbsp;
   <a href="https://github.com/2cwldys/deltapatcher/wiki/Quick-start"><img alt="Quick start" src="https://img.shields.io/badge/Quick_start-2b3748?style=for-the-badge"></a>
@@ -205,12 +211,6 @@ full-page `preview.png`, taken with the Edge, Chrome or Chromium already on your
 </details>
 
 ## Contributing
-
-<p>
-  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml"><img alt="Build" src="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml/badge.svg"></a>
-  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml/badge.svg"></a>
-  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml"><img alt="Secret scan" src="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml/badge.svg"></a>
-</p>
 
 Pull requests are welcome. Every push and pull request is built and tested on Windows, Linux and macOS,
 and checked by CodeQL and a secret scan. Run `python tools/secret_scan.py` before you commit: it refuses

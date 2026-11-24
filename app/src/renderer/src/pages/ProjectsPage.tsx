@@ -1,72 +1,20 @@
 // The Projects page: every project at a glance with its state. Check or update one, or all of them at once
-// (several at the same time, each with its own progress); open one on the other pages; make, add, rename
-// and remove projects.
-import { ReactNode, useEffect } from 'react'
+// (several at the same time, each with its own progress); open one on the other pages; make, add, import,
+// export, rename and remove projects. A long list gets compact rows; the filter finds one.
+import { ReactNode, useEffect, useState } from 'react'
 import {
   ArrowRight, Boxes, CircleAlert, CircleCheck, Download, FilePlus, FileSearch, FolderKanban, Pencil, Plus, Search,
-  Square, Trash2
+  Share2, Square, Trash2
 } from 'lucide-react'
 import { ProjectInfo, ProjectRun, Progress, UpdateResult, running, useApp } from '../store/app'
 import { ask } from '../store/modal'
+import { newProject, openProjectFile, removeAll, removeProject, renameProject, startExport } from '../store/projectActions'
 import { Banner, Button, Card, Chip, human } from '../components/ui'
 import { insecure } from './UpdatePage'
+import { anotherRun } from '../store/schedule'
 
-const RESERVED = new Set(['CON', 'PRN', 'AUX', 'NUL', ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((i) => [`COM${i}`, `LPT${i}`])])
-
-// what is wrong with a project's name ('' when nothing): the engine's own rules, said while it is typed
-export function nameProblem(name: string, taken: string[]): string {
-  const n = name.trim()
-  if (!n) return 'Give it a name.'
-  if (n.length > 60) return 'At most 60 characters.'
-  if (!/^[A-Za-z0-9 _.()-]+$/.test(n)) return 'Letters, digits, spaces and - _ . ( ) only.'
-  if (n.startsWith('-')) return 'It cannot start with a dash.'
-  if (n.endsWith('.')) return 'It cannot end with a dot.'
-  if (RESERVED.has(n.split('.')[0].trim().toUpperCase())) return 'Windows keeps that name for a device: choose another.'
-  if (taken.some((t) => t.toLowerCase() === n.toLowerCase())) return 'Another project has that name.'
-  return ''
-}
-
-// a new project in DeltaPatcher's projects folder, shown at once
-export async function newProject(): Promise<void> {
-  const st = useApp.getState()
-  const taken = st.projects.map((p) => p.title)
-  const name = await ask.prompt(
-    'New project',
-    'A game, a mod or a server of its own: its own folder to keep up to date, its own release.\n\n' +
-      'Its name (letters, digits, spaces and - _ . ( ), up to 60 characters):',
-    '',
-    'Make it',
-    (v) => nameProblem(v, taken)
-  )
-  if (!name) return
-  const r = await st.side(['project', 'new', name])
-  if (!r.ok) return ask.info('No project made', r.message ?? 'The engine gave no reason.')
-  await st.loadProjects()
-  await useApp.getState().selectProject(String(r.data.file))
-}
-
-// a project file kept elsewhere (a game's folder, a share): listed, never moved
-export async function addProjectFile(): Promise<void> {
-  const st = useApp.getState()
-  const file = await window.api.pickFile('')
-  if (!file) return
-  let r = await st.side(['project', 'add', file])
-  if (!r.ok && r.code === 'name-taken') {
-    const taken = st.projects.map((p) => p.title)
-    const name = await ask.prompt(
-      'Give it another name',
-      `There is a project named ${String(r.data.name)} already. A name for the one in\n${file}\n\nIt is written into that file.`,
-      `${String(r.data.name)} 2`,
-      'Add it',
-      (v) => nameProblem(v, taken)
-    )
-    if (!name) return
-    r = await st.side(['project', 'add', file, `--name=${name}`])
-  }
-  if (!r.ok) return ask.info('Not added', r.message ?? 'The engine gave no reason.')
-  await st.loadProjects()
-  await useApp.getState().selectProject(String(r.data.file))
-}
+// more projects than this get compact rows
+const COMPACT = 6
 
 // how far an update is: downloading is most of it, installing the rest
 function percent(p?: Progress): number {
@@ -111,7 +59,7 @@ function Path(props: { children: ReactNode }): JSX.Element {
   return <span className="font-mono text-[12.5px] text-slate-100">{props.children}</span>
 }
 
-function ProjectRow(props: { p: ProjectInfo }): JSX.Element {
+function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
   const p = props.p
   const r = useApp((s) => s.runs[p.file])
   const shown = useApp((s) => s.project === p.file)
@@ -119,12 +67,13 @@ function ProjectRow(props: { p: ProjectInfo }): JSX.Element {
   const active = running(r)
   // its own check or update, its turn in Update all, or a job on the other pages while it is the one shown
   const held = active || p.missing || (shown && Boolean(busy))
+  const label = (text: string): string | undefined => (props.compact ? undefined : text)
 
   const update = async (): Promise<void> => {
     if (insecure(p.source_url)) {
       const go = await ask.confirm(
         'Plain http to another machine',
-        `${p.source_url} is not https.\n\nEvery file is still checked against the manifest's SHA-256, but the manifest itself could be changed on the way. Continue only on a network you trust, or when the release is signed and you set the publisher key.`,
+        `${p.source_url} is not https.\n\nEvery file is still checked against the manifest's SHA-256.\nThe manifest itself could be changed on the way.\nContinue only on a network you trust, or when the release is signed and you set the publisher key.`,
         'Continue'
       )
       if (!go) return
@@ -135,35 +84,46 @@ function ProjectRow(props: { p: ProjectInfo }): JSX.Element {
     await useApp.getState().selectProject(p.file)
     useApp.getState().setPage('update')
   }
-  const rename = async (): Promise<void> => {
-    const st = useApp.getState()
-    const taken = st.projects.filter((x) => x.file !== p.file).map((x) => x.title)
-    const name = await ask.prompt(
-      'Rename the project',
-      `Its name in DeltaPatcher's lists. Its settings file stays where it is:\n${p.file}`,
-      p.title,
-      'Rename',
-      (v) => nameProblem(v, taken)
+  const done = r?.state === 'done' && r.result && !r.check && !r.result.empty ? r.result : null
+  const buttons = (
+    <>
+      <Button small icon={Search} title="Check" disabled={held || !p.update_ready} onClick={() => useApp.getState().runProject(p.file, true)}>
+        {label('Check')}
+      </Button>
+      <Button small icon={Download} title="Update" disabled={held || !p.update_ready} onClick={update}>{label('Update')}</Button>
+      <Button small icon={ArrowRight} title="Open it on the Update page" disabled={p.missing || Boolean(busy)} onClick={open}>
+        {label('Open')}
+      </Button>
+      <div className={props.compact ? 'ml-2 flex gap-1' : 'ml-auto flex flex-wrap gap-1'}>
+        <Button small variant="ghost" icon={Share2} title="Export it to a project file" disabled={p.missing || !p.address}
+          onClick={() => startExport(p.file)}>{label('Export...')}</Button>
+        <Button small variant="ghost" icon={Pencil} title="Rename" disabled={p.missing} onClick={() => renameProject(p)}>
+          {label('Rename')}
+        </Button>
+        <Button small variant="ghost" icon={FileSearch} title="Show its settings file" disabled={p.missing}
+          onClick={() => window.api.show(p.file)}>{label('Show file')}</Button>
+        {p.kind !== 'main' && (
+          <Button small variant="remove" icon={Trash2} title="Remove this project" disabled={active || (shown && Boolean(busy))}
+            onClick={() => removeProject(p)}>{label('Remove')}</Button>
+        )}
+      </div>
+    </>
+  )
+
+  if (props.compact) {
+    return (
+      <section className={`flex items-center gap-3 rounded-lg border bg-ink-850/80 px-4 py-2 ${shown ? 'border-delta/40 ring-1 ring-delta/30' : 'border-ink-700'}`}>
+        <FolderKanban size={15} className="shrink-0 text-delta" />
+        <span className="min-w-0 max-w-[13rem] shrink-0 truncate text-sm font-semibold text-slate-100" title={p.file}>{p.title}</span>
+        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-400" title={p.install_dir || p.publish_src}>
+          {p.install_dir || p.publish_src || 'not set up yet'}
+        </span>
+        <span className="shrink-0"><StateChip p={p} r={r} /></span>
+        <div className="flex shrink-0 items-center gap-1">{buttons}</div>
+      </section>
     )
-    if (!name || name === p.title) return
-    const res = await st.side(['project', 'rename', p.file, name])
-    if (!res.ok) return ask.info('Not renamed', res.message ?? 'The engine gave no reason.')
-    await st.loadProjects()
-  }
-  const remove = async (): Promise<void> => {
-    const body =
-      p.kind === 'folder'
-        ? `Its settings file is deleted:\n${p.file}\n\nThe folders it updates and releases stay as they are.`
-        : `It leaves the list. Its settings file stays where it is:\n${p.file}`
-    if (!(await ask.confirm(`Remove ${p.title}?`, body, 'Remove', true))) return
-    const st = useApp.getState()
-    const res = await st.side(['project', 'remove', p.file, '--yes'])
-    if (!res.ok) return ask.info('Not removed', res.message ?? 'The engine gave no reason.')
-    if (st.project === p.file && st.projects[0]) await st.selectProject(st.projects[0].file)
-    await useApp.getState().loadProjects()
   }
 
-  const done = r?.state === 'done' && r.result && !r.check && !r.result.empty ? r.result : null
   return (
     <section className={`rounded-xl border bg-ink-850/80 px-5 py-4 shadow-lg shadow-black/20 ${shown ? 'border-delta/40 ring-1 ring-delta/30' : 'border-ink-700'}`}>
       <header className="mb-3 flex items-center justify-between gap-3">
@@ -171,15 +131,24 @@ function ProjectRow(props: { p: ProjectInfo }): JSX.Element {
           <FolderKanban size={16} className="shrink-0 text-delta" />
           <span className="truncate">{p.title}</span>
           {shown && <span className="shrink-0 text-[11px] font-normal text-delta-light">selected</span>}
-          {p.kind === 'added' && <span className="shrink-0 text-[11px] font-normal text-ink-400">added file</span>}
+          {p.kind === 'added' && <span className="shrink-0 text-[11px] font-normal text-ink-400">added settings file</span>}
         </h2>
         <StateChip p={p} r={r} />
       </header>
       <div className="space-y-1.5 text-sm">
         {p.missing ? (
-          <Banner kind="bad">Its settings file is gone: {p.file}. Put it back, or remove the project from the list.</Banner>
+          <Banner kind="bad">
+            Its settings file is gone: {p.file}.
+            <br />
+            Put it back, or remove the project from the list.
+          </Banner>
         ) : (
           <>
+            {p.description && <p className="text-ink-300">{p.description}</p>}
+            {p.install_hint && <p className="text-ink-400">{p.install_hint}</p>}
+            {p.install_folder && (
+              <Line label="Folder"><Path>{p.install_folder}</Path> <span className="text-ink-400">inside the folder a player picks</span></Line>
+            )}
             {p.install_dir && (
               <Line label="Update"><Path>{p.install_dir}</Path> <span className="text-ink-400">from</span> <Path>{p.source_url}</Path></Line>
             )}
@@ -189,8 +158,15 @@ function ProjectRow(props: { p: ProjectInfo }): JSX.Element {
                 {p.where ? <span className="text-slate-100">{p.where}</span> : <span>where it goes is not set up yet (the Release page)</span>}
               </Line>
             )}
+            {p.website && (
+              <Line label="Website">
+                <a href={p.website} target="_blank" rel="noreferrer" className="text-delta-light hover:underline">{p.website}</a>
+              </Line>
+            )}
             {!p.install_dir && !p.publish_src && (
-              <p className="text-ink-400">Nothing set up yet. Open it, then choose the folder to keep up to date, or the folder to release.</p>
+              <p className="whitespace-pre-line text-ink-400">
+                {'Nothing set up yet.\nOpen it, then choose the folder to keep up to date, or the folder to release.'}
+              </p>
             )}
           </>
         )}
@@ -205,16 +181,7 @@ function ProjectRow(props: { p: ProjectInfo }): JSX.Element {
         {r?.state === 'failed' && r.stopped && <p className="text-xs text-ink-400">Stopped before it was done: the folder is as it was.</p>}
         {done && <p className="text-xs text-ink-400">Updated: {changes(done, 'downloaded')}.</p>}
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <Button small icon={Search} disabled={held || !p.update_ready} onClick={() => useApp.getState().runProject(p.file, true)}>Check</Button>
-        <Button small icon={Download} disabled={held || !p.update_ready} onClick={update}>Update</Button>
-        <Button small icon={ArrowRight} disabled={p.missing || Boolean(busy)} onClick={open}>Open</Button>
-        <div className="ml-auto flex flex-wrap gap-1">
-          <Button small variant="ghost" icon={Pencil} disabled={p.missing} onClick={rename}>Rename</Button>
-          <Button small variant="ghost" icon={FileSearch} disabled={p.missing} onClick={() => window.api.show(p.file)}>Show file</Button>
-          {p.kind !== 'main' && <Button small variant="ghost" icon={Trash2} disabled={active || (shown && Boolean(busy))} onClick={remove}>Remove</Button>}
-        </div>
-      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2">{buttons}</div>
     </section>
   )
 }
@@ -224,16 +191,23 @@ export default function ProjectsPage(): JSX.Element {
   const runs = useApp((s) => s.runs)
   const allJob = useApp((s) => s.allJob)
   const parallel = useApp((s) => s.parallel)
+  const busy = useApp((s) => s.busy)
+  const [filter, setFilter] = useState('')
   const ready = projects.filter((p) => p.update_ready)
   const ownJobs = Object.values(runs).some((r) => running(r) && !r.inAll)
+  const words = filter.trim().toLowerCase()
+  const listed = words
+    ? projects.filter((p) => [p.title, p.install_dir, p.publish_src, p.source_url, p.description].some((t) => (t ?? '').toLowerCase().includes(words)))
+    : projects
+  const compact = listed.length > COMPACT
 
-  // the list as it is now (another page may have set a folder up), and once a session every project checked
+  // the list as it is now (another page may have set a folder up), and every project checked once a session
   useEffect(() => {
     useApp.getState().loadProjects().then(() => {
       const st = useApp.getState()
       if (st.autoChecked) return
       useApp.setState({ autoChecked: true })
-      if (!st.allJob && st.projects.some((p) => p.update_ready)) st.runAll(true)
+      if (!anotherRun(st) && st.projects.some((p) => p.update_ready)) st.runAll(true)
     })
   }, [])
 
@@ -242,7 +216,7 @@ export default function ProjectsPage(): JSX.Element {
     if (plain.length) {
       const go = await ask.confirm(
         'Plain http to another machine',
-        `${plain.map((p) => `${p.title}: ${p.source_url}`).join('\n')}\n\nEvery file is still checked against the manifest's SHA-256, but the manifest itself could be changed on the way. Continue only on a network you trust, or when the release is signed and the publisher key is set.`,
+        `${plain.map((p) => `${p.title}: ${p.source_url}`).join('\n')}\n\nEvery file is still checked against the manifest's SHA-256.\nThe manifest itself could be changed on the way.\nContinue only on a network you trust, or when the release is signed and the publisher key is set.`,
         'Continue'
       )
       if (!go) return
@@ -265,17 +239,27 @@ export default function ProjectsPage(): JSX.Element {
           )}
           <div className="ml-auto flex flex-wrap gap-2">
             <Button variant="ghost" icon={Plus} onClick={newProject}>New project</Button>
-            <Button variant="ghost" icon={FilePlus} onClick={addProjectFile}>Add a project file</Button>
+            <Button variant="ghost" icon={FilePlus} onClick={openProjectFile}>Add a project file...</Button>
+            <Button variant="ghost" icon={Share2} disabled={!projects.some((p) => p.address)} onClick={() => startExport()}>Export...</Button>
+            <Button variant="remove" icon={Trash2} disabled={projects.length < 2 || Boolean(allJob) || ownJobs || Boolean(busy)}
+              onClick={removeAll}>Remove all</Button>
           </div>
         </div>
+        <div className="relative mt-4">
+          <Search size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-ink-400" />
+          <input className="input pl-9" placeholder="Filter projects by name, folder or address" value={filter} spellCheck={false}
+            onChange={(e) => setFilter(e.target.value)} />
+        </div>
         <p className="hint">
-          Update all brings every project with a folder and a source up to date, {parallel === 1 ? 'one at a time' : `${parallel} at the same time`}
-          {' '}(parallel_updates, on the Settings page). Each project keeps its own folders and settings.
+          {`Update all brings every project with a folder and a source up to date, ${parallel === 1 ? 'one at a time' : `${parallel} at the same time`} (parallel_updates, on the Settings page).\n` +
+            "Add a project file takes a .deltapatch or .html file from a publisher, or (advanced) a project's .ini settings file.\n" +
+            'Export... writes a project file to give to players.'}
         </p>
       </Card>
-      {projects.map((p) => (
-        <ProjectRow key={p.file} p={p} />
+      {listed.map((p) => (
+        <ProjectRow key={p.file} p={p} compact={compact} />
       ))}
+      {words && !listed.length && <p className="text-sm text-ink-400">No project matches {filter.trim()}.</p>}
     </div>
   )
 }

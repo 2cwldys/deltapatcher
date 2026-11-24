@@ -38,6 +38,15 @@ ENV = "DELTAPATCHER_CONFIG"
 SCHEMA = [
     ("project", "title", "", "This project's name in DeltaPatcher's lists. Empty: the file's name (Default for the "
                              "main settings file)."),
+    ("project", "description", "", "A line about this project, shown with it and in the project files it is shared in."),
+    ("project", "website", "", "The project's web page (https://...), shown with it and in the project files it is "
+                               "shared in."),
+    ("project", "install_hint", "", "Where this project goes, shown with it, in the project files it is shared in and to "
+                                    "players as they pick its folder, for example: Pick the game's folder; this goes "
+                                    "into its Mods folder."),
+    ("project", "install_folder", "", "The folder this project goes into inside the folder a player picks, for example "
+                                      "Mods: one name, by the rules of a project's name. Empty: the folder the player "
+                                      "picks."),
     ("update", "source_url", DEFAULT_URL, "Where releases come from: an http(s) address or a folder."),
     ("update", "install_dir", "", "The folder to keep up to date (a game folder, for instance)."),
     ("update", "trust_key", "", "The publisher's public key (ed25519:...). Empty: unsigned releases are fine, and the key "
@@ -67,11 +76,21 @@ SCHEMA = [
     ("server", "public_url", "", "The address players update from: what the web server gives the remote folder or the "
                                  "folder (https://game.example.com/). Shown after each release."),
     ("window", "close_to_tray", False, "Closing the window keeps DeltaPatcher in the tray (yes/no)."),
+    ("window", "minimize_to_tray", False, "Minimizing the window hides it in the tray, off the taskbar; a click on the "
+                                          "tray icon brings it back (yes/no)."),
+    ("window", "start_with_system", False, "Start DeltaPatcher with the computer, straight into the tray (yes/no). Only an "
+                                           "installed copy can: one run from source cannot."),
     ("window", "check_updates", True, "Look for a newer DeltaPatcher once a day and say so (yes/no). Nothing is "
                                       "downloaded without asking."),
     ("general", "parallel_updates", 3, "How many projects Update all updates at the same time."),
-    ("general", "project_files", "", "Project files kept elsewhere (a game's folder, a share), listed with the projects: "
-                                     "their paths, separated by ;. The projects folder beside this file is always listed."),
+    ("general", "check_every_hours", 1, "The window checks every project for an update when it starts, and again every "
+                                        "this many hours while it runs (0: only when it starts). A check changes nothing "
+                                        "unless auto_update is on."),
+    ("general", "auto_update", False, "Projects with an update are updated by themselves when the window checks them, "
+                                      "and a notification says what was done (yes/no)."),
+    ("general", "project_files", "", "The settings files of projects kept elsewhere (a game's folder, a share), listed "
+                                     "with the projects: their paths, separated by ;. The projects folder beside this "
+                                     "file is always listed."),
     ("general", "current_project", "", "The project the app shows: its file's name in the projects folder, or its full "
                                        "path. Empty: Default."),
 ]
@@ -267,11 +286,20 @@ def _write(p, values, template):
             lines += ["", "[%s]" % sect]
             at = len(lines)
         lines.insert(at, "%s = %s" % (key, values[key]))
-    # a temporary file of its own, so two writers never share one; on Windows the replace can be refused
-    # for a moment while another DeltaPatcher reads the file, so it is tried again
+    _replace(p, "\n".join(lines) + "\n")
+
+
+def write_defaults():
+    """The main settings file back to every default, as a new copy of DeltaPatcher writes it (Reset)."""
+    _replace(path(), placeholder())
+
+
+def _replace(p, text):
+    """Write the file p whole. A temporary file of its own, so two writers never share one; on Windows the
+    replace can be refused for a moment while another DeltaPatcher reads the file, so it is tried again."""
     tmp = "%s.%d.%d.tmp" % (p, os.getpid(), int(time.time() * 1000000) % 1000000)
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
-        f.write("\n".join(lines) + "\n")
+        f.write(text)
     for attempt in range(50):
         try:
             os.replace(tmp, p)

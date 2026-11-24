@@ -78,6 +78,7 @@ jobs:
         run: |
           npm ci --no-audit --no-fund
           npm run typecheck
+          npm test
           # Linux: the .tar.gz at gzip level 6 (electron-builder's own level takes minutes); see build.sh
           if [ "$RUNNER_OS" = "Linux" ]; then export ELECTRON_BUILDER_COMPRESSION_LEVEL=6; fi
           npm run dist

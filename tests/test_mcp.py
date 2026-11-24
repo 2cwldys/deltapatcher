@@ -205,6 +205,53 @@ class Mcp(TempCase):
         self.assertIn("dry_run", got["messages"][0]["content"]["text"])
         self.assertEqual(c.request("prompts/get", {"name": "release_new_version", "arguments": {}})["error"]["code"], -32602)
 
+    def test_project_files_export_and_import(self):
+        c = Client(self)
+        c.start()
+        self.assertFalse(c.tool("project_new", name="Mod")["isError"])
+        r = c.tool("set_settings", project="Mod", values={"public_url": "https://mod.example.com/",
+                                                          "description": "A mod", "install_dir": self.p("mine"),
+                                                          "install_hint": "Pick the game's folder.",
+                                                          "install_folder": "Mods"})
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        r = c.tool("project_export", projects=["Mod"], out=self.p("mod.deltapatch"))
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        self.assertEqual((r["structuredContent"]["signed"], r["structuredContent"]["projects"]), (False, ["Mod"]))
+        text = read(self.p("mod.deltapatch")).decode()
+        self.assertIn("https://mod.example.com/", text)
+        self.assertNotIn(self.tmp.replace("\\", "\\\\"), text)                         # never a folder of this computer
+        self.assertFalse(c.tool("project_remove", project="Mod")["isError"])
+
+        r = c.tool("project_import", file=self.p("mod.deltapatch"), dry_run=True)
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        found = r["structuredContent"]["projects"][0]
+        self.assertEqual((found["title"], found["install_hint"], found["install_folder"]),
+                         ("Mod", "Pick the game's folder.", "Mods"))
+        self.assertIn("not signed", r["content"][0]["text"])
+        r = c.tool("project_import", file=self.p("mod.deltapatch"), folder=self.p("player"))
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        r = c.tool("get_settings", project="Mod")
+        settings = r["structuredContent"]["settings"]
+        self.assertEqual((settings["source_url"], settings["description"], settings["install_dir"],
+                          settings["install_hint"], settings["install_folder"]),
+                         ("https://mod.example.com/", "A mod", self.p("player", "Mods"), "Pick the game's folder.", "Mods"))
+        write(self.p("broken.html"), b"<html>no projects</html>")
+        self.assertTrue(c.tool("project_import", file=self.p("broken.html"))["isError"])
+
+    def test_no_tool_removes_every_project_or_resets(self):
+        c = Client(self)
+        c.start()
+        self.assertFalse(c.tool("project_new", name="Mod")["isError"])
+        for value in ("--all", " --all", "-x"):
+            r = c.tool("project_remove", project=value)
+            self.assertTrue(r["isError"], value)
+        self.assertTrue(os.path.isfile(os.path.join(os.path.dirname(os.environ["DELTAPATCHER_CONFIG"]), "projects",
+                                                    "Mod.ini")))
+        names = [t["name"] for t in c.request("tools/list")["result"]["tools"]]
+        self.assertFalse([n for n in names if "reset" in n or "remove_all" in n])
+        export = next(t for t in c.request("tools/list")["result"]["tools"] if t["name"] == "project_export")
+        self.assertNotIn("sign", export["inputSchema"]["properties"])                 # signing needs a passphrase
+
     def test_a_cancelled_request_gets_no_answer(self):
         silent = socket.socket()                                       # accepts, never answers: a check would hang
         silent.bind(("127.0.0.1", 0))

@@ -34,7 +34,7 @@ import threading
 import time
 import traceback
 
-from . import APP_NAME, __version__, client, config, deploy, logs, projects, publish, selfupdate, serve, signing, ssh
+from . import APP_NAME, __version__, client, config, deploy, logs, presets, projects, publish, selfupdate, serve, signing, ssh
 from .color import enable as color_enable
 from .color import paint, plain
 from .manifest import ManifestError
@@ -70,6 +70,12 @@ several games or mods: a project each, with settings of its own (commands use De
   %%(prog)s project new "My Mod"        (then: --project "My Mod" before or after any command)
   %%(prog)s projects                    (every project, and what each one updates and releases)
   %%(prog)s update --all                (every project's folder, several at the same time)
+  %%(prog)s project export "My Mod" --out MyMod.deltapatch     (a project file to give players; --sign)
+  %%(prog)s project import MyMod.deltapatch                    (the projects of a project file, added here)
+
+the guides, on the wiki in your browser:
+  %%(prog)s wiki                        (where to start)
+  %%(prog)s wiki cli                    (every command; also quickstart, players, publishing, vps, troubleshooting)
 
 The log: %s (--log FILE elsewhere, --no-log for none).
 """ % logs.default_path().replace("%", "%%")
@@ -905,6 +911,8 @@ def cmd_config(a, cfg):
             changes[k] = config._convert(k, v)
         if changes.get("title"):
             changes["title"] = projects.check_name(changes["title"], project)
+        if changes.get("install_folder") and projects.folder_name_problem(changes["install_folder"]):
+            raise CliError(projects.folder_name_problem(changes["install_folder"]), "bad-name")
         config.save(changes, project)     # only these keys change, each in its own file; everything else stays
         return {"path": own, "settings": config.load(project)}
     data = {"path": own, "main_path": p, "project": dict(project.tag(), kind=project.kind),
@@ -962,6 +970,9 @@ def cmd_project(a, cfg):
                                          % (prog_name(), p.title), "code"))
         return projects.describe(p)
     if c == "add":
+        if presets.is_project_file(a.file):
+            raise CliError("%s is a project file: import it with  deltapatcher project import FILE" % a.file,
+                           "project-file")
         p = projects.add(a.file, a.name)
         say("Added the project %s: %s" % (p.title, paint(p.path, "code")), "ok")
         return projects.describe(p)
@@ -972,6 +983,13 @@ def cmd_project(a, cfg):
         say("Renamed the project %s to %s" % (old, p.title), "ok")
         return projects.describe(p)
     if c == "remove":
+        if a.all:
+            if a.target:
+                raise CliError("give one project, or --all for every one but Default: not both", "bad-arguments")
+            return remove_all(a)
+        if not a.target:
+            raise CliError("give the project to remove (its name or settings file), or --all for every one but Default",
+                           "bad-arguments")
         p = projects.resolve(a.target, allow_missing=True)
         projects.check_removable(p)
         if not a.yes:
@@ -982,11 +1000,8 @@ def cmd_project(a, cfg):
                 say("Remove the project %s? Its settings file is deleted: %s" % (p.title, p.path), "warn")
             else:
                 say("Remove the project %s from the list? Its file stays where it is: %s" % (p.title, p.path), "warn")
-            try:
-                sure = ask_yes("Remove it", default=False)
-            except EOFError:
-                sure = False
-            if not sure:
+            say("The folders it updates or releases are not touched.")
+            if not ask_sure("Remove it"):
                 raise CliError("not removed", "cancelled")
         done = projects.remove(p)
         if done == "deleted":
@@ -994,7 +1009,216 @@ def cmd_project(a, cfg):
         else:
             say("Took the project %s off the list; its file stays where it is." % p.title, "ok")
         return dict(p.tag(), removed=done)
-    raise CliError("project what? new, add, rename or remove")
+    if c == "export":
+        return project_export(a)
+    if c == "import":
+        return project_import(a)
+    raise CliError("project what? new, add, import, export, rename or remove")
+
+
+def ask_sure(question):
+    """A yes from the person at the terminal; no when the input ends."""
+    try:
+        return ask_yes(question, default=False)
+    except EOFError:
+        return False
+
+
+def ask_text(question):
+    """A line typed at the terminal; '' when the input ends."""
+    try:
+        return input("%s: " % question).strip().strip('"').strip()
+    except EOFError:
+        return ""
+
+
+def removal_word(p):
+    return "its settings file is deleted" if p.kind == "folder" else "it only leaves the list; its file stays"
+
+
+def remove_all(a):
+    """project remove --all: every project but Default leaves, after one question that names them."""
+    every = projects.all_projects()[1:]
+    if not every:
+        say("There is no project to remove: Default is the only one.")
+        return {"removed": []}
+    if not a.yes:
+        if not interactive():
+            raise CliError("removing every project asks first: add --yes to remove them without asking",
+                           "confirm-needed", {"projects": [dict(p.tag(), kind=p.kind) for p in every]})
+        say("Remove every project but Default?", "warn")
+        for p in every:
+            say("  %s  (%s)" % (p.title, removal_word(p)))
+        say("The folders they update or release are not touched.")
+        if not ask_sure("Remove them"):
+            raise CliError("nothing was removed", "cancelled")
+    done = projects.remove_all()
+    say("Removed %d project%s; Default stays." % (len(done), "" if len(done) == 1 else "s"), "ok")
+    return {"removed": [dict(p.tag(), removed=how) for p, how in done]}
+
+
+def loopback(url):
+    import urllib.parse
+    return (urllib.parse.urlsplit(url).hostname or "").lower() in presets.LOOPBACK
+
+
+def project_export(a):
+    """project export NAME... --out FILE: a project file with these projects, signed with --sign."""
+    out = os.path.abspath(os.path.expanduser(a.out))
+    if not presets.is_project_file(out):
+        raise CliError("a project file's name ends in .deltapatch (it opens DeltaPatcher with a double-click) or "
+                       ".html (a page anyone can read in a browser): %s" % out, "bad-name")
+    chosen = []
+    for name in a.names:
+        p = projects.resolve(name)
+        if not any(projects.same(p, q) for q in chosen):
+            chosen.append(p)
+    signer, key_path = None, ""
+    if a.sign is not None:
+        key_path = a.sign or config.load(chosen[0])["signing_key"] or signing.default_key_path()
+        signer = load_signer(a, key_path)
+    signer_text = signing.public_key_text(signer) if signer is not None else ""
+    entries = [presets.entry(p, config.load(p), signer_text, key_path) for p in chosen]
+    presets.write(out, presets.build(entries, signer))
+    titles = ", ".join(e["title"] for e in entries)
+    if signer is not None:
+        say("Wrote %s: %s, signed by %s." % (paint(out, "code"), titles,
+                                             signing.fingerprint(signing.parse_key(signer_text))), "ok")
+    else:
+        say("Wrote %s: %s, not signed." % (paint(out, "code"), titles), "ok")
+        say("Whoever adds it is told it is not signed: --sign signs it with your signing key.", "warn")
+    for e in entries:
+        if loopback(e["source_url"]):
+            say("%s updates from this computer (%s): the file works on this computer only." % (e["title"], e["source_url"]),
+                "warn")
+    return {"file": out, "projects": [e["title"] for e in entries], "signed": signer is not None, "signer": signer_text}
+
+
+def project_import(a):
+    """project import FILE: the projects of a project file become projects here, after one question."""
+    path = os.path.abspath(os.path.expanduser(a.file))
+    if path.lower().endswith(".ini"):
+        raise CliError("%s is a settings file: add it with  deltapatcher project add FILE" % path, "settings-file")
+    found = presets.read(path)
+    entries = found["projects"]
+    if a.only:
+        wanted = [n.strip().lower() for n in a.only]
+        missing = [n for n in a.only if n.strip().lower() not in {e["title"].lower() for e in entries}]
+        if missing:
+            raise CliError("%s holds no project named %s" % (os.path.basename(path), ", ".join(missing)), "no-such-project")
+        entries = [e for e in entries if e["title"].lower() in wanted]
+    if a.name and len(entries) != 1:
+        raise CliError("--name names one project: pick it with --only", "bad-arguments")
+    if a.as_is and (len(entries) != 1 or not a.folder):
+        raise CliError("--as-is takes --folder and one project: pick it with --only", "bad-arguments")
+    taken = {p.title.lower() for p in projects.all_projects()}
+    signer = found["signer"]
+    info = {"file": path, "signed": bool(signer), "signer": signer, "made": found["made"],
+            "fingerprint": signing.fingerprint(signing.parse_key(signer)) if signer else "",
+            "projects": [dict(e, taken=(a.name or e["title"]).lower() in taken) for e in entries]}
+    if not OUT.json:
+        if signer:
+            say("%s holds %d project%s, signed by %s." % (os.path.basename(path), len(entries),
+                                                       "" if len(entries) == 1 else "s", info["fingerprint"]), "ok")
+        else:
+            say("%s holds %d project%s. It is not signed: anyone could have made or changed it." %
+                (os.path.basename(path), len(entries), "" if len(entries) == 1 else "s"), "warn")
+        for e in info["projects"]:
+            say("  %s  %s  %s%s" % (e["title"], paint(e["source_url"], "code"),
+                                   ("publisher key " + signing.fingerprint(signing.parse_key(e["trust_key"])))
+                                   if e.get("trust_key") else "no publisher key",
+                                   "  (a project has this name already)" if e["taken"] else ""))
+    elif not signer:
+        say("The project file is not signed: anyone could have made or changed it.", "warn")
+    if a.dry_run:
+        return info
+    if not a.yes:
+        if not interactive():
+            raise CliError("adding projects asks first: add --yes to add them without asking", "confirm-needed", info)
+        if not ask_sure("Add %s" % ("it" if len(entries) == 1 else "them")):
+            raise CliError("nothing was added", "cancelled")
+    added, skipped = [], []
+    for e in entries:
+        name = a.name or e["title"]
+        if a.folder:
+            folder = a.folder if a.as_is else presets.folder_for(e, a.folder, name, len(entries) > 1)
+        elif not a.yes and interactive():
+            if e.get("install_hint"):
+                say("Where %s goes: %s" % (name, e["install_hint"]))
+            if e.get("install_folder"):
+                folder = ask_text("The folder to put %s in: it goes into %s inside it (Enter: choose it later)"
+                                  % (name, e["install_folder"]))
+            else:
+                folder = ask_text("The folder %s keeps up to date (Enter: choose it later)" % name)
+            folder = presets.folder_for(e, folder, name, False) if folder else ""
+        else:
+            folder = ""
+        try:
+            p = presets.add(e, name, folder)
+        except projects.ProjectError as x:
+            skipped.append({"title": e["title"], "reason": str(x), "code": x.code})
+            say("Not added: %s: %s" % (e["title"], x), "warn")
+            continue
+        own = config.load(p)["install_dir"]
+        added.append(dict(p.tag(), install_dir=own))
+        say("Added the project %s%s" % (name, (": it keeps %s up to date" % own) if own else "; choose its folder later"),
+            "ok")
+    result = dict(info, added=added, skipped=skipped)
+    if skipped:
+        raise CliError("%d of %d projects were not added: %s" % (len(skipped), len(entries),
+                                                                 ", ".join(s["title"] for s in skipped)), "not-added", result)
+    if added and not OUT.json:
+        say("Update them:  %s" % paint(prog_name() + " update --all", "code"))
+    return result
+
+
+def cmd_reset(a, cfg):
+    """reset: DeltaPatcher as it was just installed, after one question that says everything it does."""
+    from . import reset as resetting
+    plan = resetting.plan()
+    if not a.yes:
+        if not interactive():
+            raise CliError("a reset asks first: add --yes to reset without asking", "confirm-needed", plan)
+        say("Reset DeltaPatcher to how it was just installed?", "warn")
+        names = ", ".join(p["project"] for p in plan["removed"])
+        say("  Removed:          %s" % (("every project but Default: %s (a file in the projects folder is deleted, "
+                                        "an added one only leaves the list)" % names) if names else "no project but Default"))
+        say("  Back to defaults: %s" % plan["settings"])
+        say("  Cleared:          the cached check for a newer DeltaPatcher (the window clears its own saved state)")
+        say("  Never touched:    the folders projects update or release and their files, the signing key, SSH keys")
+        say("  Kept:             trusted server host keys, the log, prepared releases (stores)")
+        say("  A copy of the settings files as they are goes to %s" % paint(plan["copy"], "code"))
+        if not ask_sure("Reset now"):
+            raise CliError("nothing was reset", "cancelled")
+    done = resetting.reset()
+    say("DeltaPatcher is reset: as it was just installed.", "ok")
+    say("The settings files as they were are in %s" % paint(done["copy"], "code"))
+    return done
+
+
+def cmd_wiki(a, cfg):
+    """wiki [GUIDE]: the wiki in the browser, at its home or at one guide; the address is printed too."""
+    import webbrowser
+    from .mcp_server import GUIDE, GUIDES, WIKI
+    name = (a.guide or "").strip().lower()
+    if name in ("", "home", "index"):
+        url = WIKI
+    elif name in GUIDE:
+        url = "%s/%s" % (WIKI, GUIDE[name][2])
+    else:
+        raise CliError("there is no guide %s: %s" % (a.guide, ", ".join(g[0] for g in GUIDES if g[0] != "index")),
+                       "no-such-guide")
+    say("The wiki: %s" % paint(url, "code"))
+    opened = False
+    graphical = os.name == "nt" or sys.platform == "darwin" or os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    if graphical and not OUT.json:
+        try:
+            opened = bool(webbrowser.open(url))
+        except webbrowser.Error:
+            opened = False
+    if not opened and not OUT.json:
+        say("No browser opened here: copy the address into one.")
+    return {"url": url, "opened": opened}
 
 
 def cmd_version(a, cfg):
@@ -1254,22 +1478,49 @@ def build_parser():
 
     sub.add_parser("projects", help="every project: the folder it updates and where from, the folder it releases and "
                                     "where to")
-    s = sub.add_parser("project", help="make, add, rename or remove a project (a settings file of its own)")
+    s = sub.add_parser("project", help="make, add, import, export, rename or remove a project (a settings file of its "
+                                       "own)")
     ss = s.add_subparsers(dest="project_cmd")
     k = ss.add_parser("new", help="a new project, its settings file in the projects folder beside the main one")
     k.add_argument("name", help="its name: letters, digits, spaces and - _ . ( ), up to %d characters"
                                 % projects.NAME_MAX)
-    k = ss.add_parser("add", help="list a project file kept elsewhere (in a game's folder, on a share)")
+    k = ss.add_parser("add", help="list a project's settings file (.ini) kept elsewhere (in a game's folder, on a share)")
     k.add_argument("file")
     k.add_argument("--name", help="give it this name (written into the file)")
+    k = ss.add_parser("import", help="add the projects of a project file (.deltapatch or .html, from a publisher)")
+    k.add_argument("file", help="the project file")
+    k.add_argument("--folder", metavar="DIR", help="the folder the project keeps up to date; when the file names a "
+                                                  "folder for it (install_folder), that folder inside DIR, unless DIR "
+                                                  "already is it; with several, a folder each inside DIR, named by "
+                                                  "install_folder or after the project (default: ask, or later)")
+    k.add_argument("--as-is", action="store_true", help="with --folder and one project: DIR itself, without the folder "
+                                                        "the file names for it")
+    k.add_argument("--only", action="append", metavar="NAME", help="add only this project of the file (repeatable)")
+    k.add_argument("--name", help="with one project: give it this name here")
+    k.add_argument("--dry-run", action="store_true", help="read the file and say what it holds; add nothing")
+    k.add_argument("--yes", action="store_true", help="do not ask first")
+    k = ss.add_parser("export", help="write a project file with these projects, to give to players: NAME.deltapatch "
+                                     "opens DeltaPatcher with a double-click, NAME.html is a page anyone can read")
+    k.add_argument("names", nargs="+", metavar="NAME", help="a project: its name or its settings file")
+    k.add_argument("--out", required=True, metavar="FILE", help="the file to write: .deltapatch or .html")
+    k.add_argument("--sign", nargs="?", const="", metavar="KEYFILE",
+                   help="sign it (default key: the first project's signing key, else %s)" % signing.default_key_path())
+    pass_stdin(k)
     k = ss.add_parser("rename", help="give a project another name (its file stays where it is)")
     k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
     k.add_argument("new", metavar="NEW")
     k = ss.add_parser("remove", help="remove a project: one in the projects folder is deleted, an added one only "
-                                     "leaves the list")
-    k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
+                                     "leaves the list; the folders it updates or releases are not touched")
+    k.add_argument("target", metavar="NAME", nargs="?", help="the project: its name or its settings file")
+    k.add_argument("--all", action="store_true", help="every project but Default")
     k.add_argument("--yes", action="store_true", help="do not ask first")
 
+    s = sub.add_parser("reset", help="DeltaPatcher as it was just installed: every project removed, the settings back "
+                                     "to their defaults (a copy is kept); folders and keys are not touched")
+    s.add_argument("--yes", action="store_true", help="do not ask first")
+    s = sub.add_parser("wiki", help="the guides, on the wiki, in your browser")
+    s.add_argument("guide", nargs="?", metavar="GUIDE", help="one guide: quickstart, players, publishing, vps, cli, docker, "
+                                                            "mcp, format, troubleshooting or security")
     sub.add_parser("mcp", help="DeltaPatcher for AI assistants (Claude Code, Claude Desktop, VS Code): an MCP server "
                                "on standard input and output; see mcp/README.md")
     sub.add_parser("version", help="the version")
@@ -1280,21 +1531,25 @@ def build_parser():
 PROJECT_HELP = "the project whose settings to use: its name or its settings file (default: Default)"
 
 
-def _project_everywhere(parser):
-    """--project after the command works too (deltapatcher update --project NAME), at every level."""
+def _project_everywhere(parser, top=True):
+    """--project after the command works too (deltapatcher update --project NAME), at every level. The commands
+    that only name projects themselves (projects, project ...) or none (version, self-update, mcp) take it
+    before the command only, so their help does not offer an option that means nothing there."""
     for action in parser._actions:
         if isinstance(action, argparse._SubParsersAction):
-            for sp in action.choices.values():
+            for name, sp in action.choices.items():
+                if top and name in ("projects", "project", "version", "self-update", "mcp"):
+                    continue
                 sp.add_argument("--project", metavar="NAME", default=argparse.SUPPRESS, help=PROJECT_HELP)
-                _project_everywhere(sp)
+                _project_everywhere(sp, top=False)
 
 
 HANDLERS = {"publish": cmd_publish, "release": cmd_release, "serve": cmd_serve, "update": cmd_update,
             "check": cmd_check, "rollback": cmd_rollback, "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign,
             "config": cmd_config, "projects": cmd_projects, "project": cmd_project, "version": cmd_version,
-            "self-update": cmd_self_update}
+            "self-update": cmd_self_update, "reset": cmd_reset, "wiki": cmd_wiki}
 # commands that work on no single project
-WITHOUT_PROJECT = ("version", "self-update", "projects", "project")
+WITHOUT_PROJECT = ("version", "self-update", "projects", "project", "reset", "wiki")
 
 
 def split_line(line):
@@ -1378,6 +1633,8 @@ def main(argv=None, prompt=True, project=None):
     project: the menu's project, for a command typed at its prompt."""
     global OUT
     argv = sys.argv[1:] if argv is None else argv
+    if len(argv) == 1 and presets.is_project_file(argv[0]) and os.path.isfile(argv[0]):
+        argv = ["project", "import", argv[0]]                   # a project file dropped onto the program
     if prompt and getattr(sys, "frozen", False):
         selfupdate.remove_leftover()                            # the old program a Windows self-update left
     color_enable(not {"--no-color", "--json"} & set(argv))     # the help is printed while the arguments are read
@@ -1441,7 +1698,7 @@ def main(argv=None, prompt=True, project=None):
         data = HANDLERS[a.cmd](a, cfg) or {}
         rc = data.pop("exit", 0) if isinstance(data, dict) else 0
         OUT.result(data)
-    except (CliError, projects.ProjectError) as e:
+    except (CliError, projects.ProjectError, presets.PresetError) as e:
         OUT.error(str(e), e.code, e.data)
         rc = 1
     except FAILURES as e:

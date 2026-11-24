@@ -11,6 +11,15 @@ directories:
 files:
   - out/**/*
   - package.json
+# a project file opens DeltaPatcher with a double-click (the Windows setup and macOS register the type;
+# on Linux the AppImage's desktop file says so, where the system reads it); the app takes the file from its
+# command line, from a second start while it runs, or from macOS's open-file event
+fileAssociations:
+  - ext: deltapatch
+    name: DeltaPatcher project file
+    description: DeltaPatcher project file
+    mimeType: application/x-deltapatch
+    role: Viewer
 extraResources:
   - from: resources/engine
     to: engine
@@ -34,6 +43,7 @@ nsis:
   artifactName: DeltaPatcher-${version}-setup.exe
   oneClick: false
   allowToChangeInstallationDirectory: true
+  include: nsis/uninstall.nsh
 linux:
   executableName: deltapatcher
   artifactName: DeltaPatcher-${version}-linux-${arch}.${ext}

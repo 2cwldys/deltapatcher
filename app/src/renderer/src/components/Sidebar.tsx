@@ -1,15 +1,52 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpCircle, BookOpen, Boxes, Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
-import { Page, useApp } from '../store/app'
+import { ArrowUpCircle, BookOpen, Boxes, Bug, CircleHelp, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
+import { Page, useApp, waitingCount } from '../store/app'
 import { REPO_URL } from '@shared/project'
 import ProjectPicker from './ProjectPicker'
 
 const LINKS: { page: Page; label: string; hint: string; Icon: LucideIcon }[] = [
   { page: 'projects', label: 'Projects', hint: 'Every game, mod or server', Icon: Boxes },
-  { page: 'update', label: 'Update', hint: 'Get the latest release', Icon: RefreshCw },
+  { page: 'update', label: 'Update', hint: "The picked project's folder", Icon: RefreshCw },
   { page: 'release', label: 'Release', hint: 'Send players a new version', Icon: Rocket },
   { page: 'settings', label: 'Settings', hint: 'deltapatcher.ini', Icon: SlidersHorizontal }
 ]
+
+// Help, at the bottom: the wiki, reporting an issue, and the version, folded into one menu
+function HelpMenu(): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const [version, setVersion] = useState('')
+  useEffect(() => {
+    window.api.info().then((i) => setVersion(i.version))
+  }, [])
+  const item = 'flex items-center gap-2 px-3 py-2 text-xs text-ink-300 transition-colors hover:bg-ink-700/60 hover:text-slate-100'
+  return (
+    <div className="relative mt-3">
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-0 right-0 z-40 mb-1 overflow-hidden rounded-lg border border-ink-600 bg-ink-850 py-1 shadow-xl shadow-black/50">
+            <a href={`${REPO_URL}/wiki`} target="_blank" rel="noreferrer" className={item} onClick={() => setOpen(false)}>
+              <BookOpen size={14} className="text-delta-light" />
+              Read the wiki
+            </a>
+            <a href={`${REPO_URL}/issues/new`} target="_blank" rel="noreferrer" className={item} onClick={() => setOpen(false)}>
+              <Bug size={14} className="text-blob-light" />
+              Report an issue
+            </a>
+            <div className="mt-1 border-t border-ink-700 px-3 pb-1 pt-2 font-mono text-[11px] tracking-wider text-ink-400">
+              DeltaPatcher {version ? `v${version}` : ''}
+            </div>
+          </div>
+        </>
+      )}
+      <button type="button" onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100">
+        <CircleHelp size={14} className="text-delta-light" />
+        Help
+      </button>
+    </div>
+  )
+}
 
 export default function Sidebar(): JSX.Element {
   const page = useApp((s) => s.page)
@@ -17,10 +54,8 @@ export default function Sidebar(): JSX.Element {
   const appUpdate = useApp((s) => s.appUpdate)
   const installAppUpdate = useApp((s) => s.installAppUpdate)
   const busy = useApp((s) => s.busy)
-  const [version, setVersion] = useState('')
-  useEffect(() => {
-    window.api.info().then((i) => setVersion(i.version))
-  }, [])
+  // the projects the last check found an update for
+  const waiting = useApp(waitingCount)
 
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900/95">
@@ -45,10 +80,16 @@ export default function Sidebar(): JSX.Element {
               }`}
             >
               <Icon size={17} className={on ? 'text-delta' : 'text-ink-400 group-hover:text-ink-300'} />
-              <span>
+              <span className="min-w-0 flex-1">
                 <span className="block text-sm font-medium">{label}</span>
                 <span className="block text-[11px] text-ink-400">{hint}</span>
               </span>
+              {p === 'projects' && waiting > 0 && (
+                <span title={`${waiting} ${waiting === 1 ? 'project has' : 'projects have'} an update`}
+                  className="shrink-0 rounded-full bg-blob px-1.5 text-[11px] font-semibold leading-5 tabular-nums text-ink-950">
+                  {waiting}
+                </span>
+              )}
             </button>
           )
         })}
@@ -74,25 +115,7 @@ export default function Sidebar(): JSX.Element {
         <div className="rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 text-[11px] leading-relaxed text-ink-400">
           Every file is checked against its <span className="text-blob">SHA-256</span> before it is used.
         </div>
-        <a
-          href={`${REPO_URL}/wiki`}
-          target="_blank"
-          rel="noreferrer"
-          className="mt-3 flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100"
-        >
-          <BookOpen size={14} className="text-delta-light" />
-          Read the wiki
-        </a>
-        <a
-          href={`${REPO_URL}/issues/new`}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100"
-        >
-          <Bug size={14} className="text-blob-light" />
-          Report an issue
-        </a>
-        <div className="mt-1 px-1 font-mono text-[11px] tracking-wider text-ink-400">{version ? `v${version}` : ''}</div>
+        <HelpMenu />
       </div>
     </aside>
   )

@@ -5,10 +5,10 @@ import { AlertTriangle, Copy, KeyRound, PenLine, ShieldCheck } from 'lucide-reac
 import { useModal } from '../store/modal'
 import { Button } from './ui'
 
-function Frame(props: { title: string; icon?: JSX.Element; children: React.ReactNode; footer: React.ReactNode }): JSX.Element {
+export function Frame(props: { title: string; icon?: JSX.Element; children: React.ReactNode; footer: React.ReactNode; wide?: boolean }): JSX.Element {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm">
-      <div className="w-full max-w-lg rounded-xl border border-ink-600 bg-ink-850 shadow-2xl shadow-black/50">
+      <div className={`w-full ${props.wide ? 'max-w-2xl' : 'max-w-lg'} rounded-xl border border-ink-600 bg-ink-850 shadow-2xl shadow-black/50`}>
         <div className="flex items-center gap-3 border-b border-ink-700 px-6 py-4">
           {props.icon}
           <h3 className="text-base font-semibold">{props.title}</h3>

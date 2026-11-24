@@ -1,5 +1,5 @@
 // The only bridge between the window and the rest: a small, fixed API. The window never gets Node.
-import { contextBridge, ipcRenderer, IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
 import { AppInfo, EngineEvent, EngineOutcome, RunRequest } from '../shared/types'
 
 const api = {
@@ -13,6 +13,23 @@ const api = {
   },
   pickFolder: (start: string): Promise<string | null> => ipcRenderer.invoke('dialog:folder', start),
   pickFile: (start: string): Promise<string | null> => ipcRenderer.invoke('dialog:file', start),
+  pickProjectFile: (start: string): Promise<string | null> => ipcRenderer.invoke('dialog:project-file', start),
+  saveProjectFile: (name: string, ext: string): Promise<string | null> => ipcRenderer.invoke('dialog:save-project-file', name, ext),
+  // the path of a file dropped onto the window
+  pathOf: (file: File): string => webUtils.getPathForFile(file),
+  takeOpenedFile: (): Promise<string | null> => ipcRenderer.invoke('app:take-opened-file'),
+  onOpenFile: (cb: (path: string) => void): void => {
+    ipcRenderer.on('app:open-file', (_e: IpcRendererEvent, path: string) => cb(path))
+  },
+  onShowPage: (cb: (page: string) => void): void => {
+    ipcRenderer.on('app:show-page', (_e: IpcRendererEvent, page: string) => cb(page))
+  },
+  notify: (title: string, body: string, onlyHidden: boolean): Promise<string> =>
+    ipcRenderer.invoke('app:notify', title, body, onlyHidden),
+  setMinimizeToTray: (on: boolean): Promise<void> => ipcRenderer.invoke('app:minimize-to-tray', on),
+  // '' when the system is in step with the setting, else what went wrong
+  setStartWithSystem: (on: boolean): Promise<string> => ipcRenderer.invoke('app:start-with-system', on),
+  startAfresh: (): Promise<boolean> => ipcRenderer.invoke('app:start-afresh'),
   open: (path: string): Promise<string> => ipcRenderer.invoke('shell:open', path),
   show: (path: string): Promise<string> => ipcRenderer.invoke('shell:show', path),
   copy: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),

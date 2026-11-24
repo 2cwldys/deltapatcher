@@ -110,8 +110,8 @@ class Window(unittest.TestCase):
         self.assertEqual(rc, 0)
 
     def test_double_clicked_opens_the_menu_and_its_prompt(self):
-        # the menu's 5 is the prompt; exit there goes back to the menu, and 0 closes it
-        typed = ["5", "", "version", cli.prog_name() + " version", "help update", "nonsense", "--json version", "exit",
+        # the menu's 7 is the prompt; exit there goes back to the menu, and 0 closes it
+        typed = ["7", "", "version", cli.prog_name() + " version", "help update", "nonsense", "--json version", "exit",
                  "0", "version"]
         with own_window(), mock.patch("builtins.input", side_effect=typed) as keys:
             rc, text, err = run(["--no-log"])

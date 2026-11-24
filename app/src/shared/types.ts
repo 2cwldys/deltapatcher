@@ -78,9 +78,12 @@ export interface AppInfo {
   engine: string
   capture: boolean
   install: InstallKind
+  // '' when this copy can start with the computer, else why not
+  startWithSystem: string
 }
 
 // the engine commands the window may run; anything else is refused by the main process
 export const ENGINE_COMMANDS = [
-  'update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve', 'self-update', 'projects', 'project'
+  'update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve', 'self-update', 'projects', 'project',
+  'reset'
 ] as const

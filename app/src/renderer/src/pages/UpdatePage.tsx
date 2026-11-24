@@ -10,7 +10,7 @@ interface Result extends UpdateResult {
 function busyElsewhere(r: ProjectRun): string {
   const who = r.inAll ? (r.check ? 'Check all' : 'Update all') : 'The Projects page'
   const what = r.state === 'waiting' ? 'has this project in its queue' : r.state === 'checking' ? 'is checking this project' : 'is updating this project'
-  return `${who} ${what}. Update, Check and Roll back come back here when it is done.`
+  return `${who} ${what}.\nUpdate, Check and Roll back come back here when it is done.`
 }
 
 export function insecure(url: string): boolean {
@@ -78,7 +78,7 @@ export default function UpdatePage(): JSX.Element {
         </div>
         {blocked && elsewhere && (
           <div className="mt-5">
-            <Banner kind="info">{busyElsewhere(elsewhere)}</Banner>
+            <Banner kind="info"><span className="whitespace-pre-line">{busyElsewhere(elsewhere)}</span></Banner>
           </div>
         )}
         <div className="mt-6 flex flex-wrap gap-2">

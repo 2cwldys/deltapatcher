@@ -4,14 +4,15 @@ Plain questions instead of commands. Every answer is saved in deltapatcher.ini (
 one, so the second time is mostly Enter), and every choice runs the same command a terminal would: the
 menu is a way in, not a second program.
 
-With several projects the menu says which one it works on, picks another, and updates them all; its
-answers are saved in that project's settings, and its commands run with --project.
+Its Projects entry opens a short list: choose another project, add projects from a project file, share
+projects as one, remove one, remove all. With several projects the menu says which one it works on and
+updates them all; its answers are saved in that project's settings, and its commands run with --project.
 """
 
 import os
 import sys
 
-from . import APP_NAME, __version__, config, projects, selfupdate, ssh
+from . import APP_NAME, __version__, config, presets, projects, selfupdate, signing, ssh
 from .color import paint
 from .projects import where
 
@@ -208,17 +209,156 @@ def choose_project():
     _project = chosen
 
 
-CHOICES = [
-    ("1", "Release a new version", "sends players only what changed", release),
-    ("2", "Set up where releases go", "your server, a folder, or this computer", setup),
-    ("3", "Update a folder", "gets the latest release", update),
-    ("4", "Update DeltaPatcher", "itself, to the newest version", update_self),
-    ("5", "Type commands yourself", "every command, at a prompt", commands),
-    ("6", "Update all projects", "each one's folder, several at the same time", update_all),
-    ("7", "Choose another project", "the menu then works on that one", choose_project),
-    ("0", "Exit", "", None),
+def remove_project():
+    """Remove a project, as project remove does: a projects-folder file is deleted, an added one only leaves the
+    list, and the folders it updates or releases are not touched."""
+    global _project
+    every = projects.all_projects()[1:]
+    heading("Remove a project")
+    for i, p in enumerate(every, 1):
+        print("  %s  %s  (%s)" % (paint(str(i), "code"), p.title,
+                                  "its settings file is deleted" if p.kind == "folder" else
+                                  "it only leaves the list; its file stays"))
+    pick = ask("Number (Enter: none)")
+    if not pick:
+        return
+    if not pick.isdigit() or not 1 <= int(pick) <= len(every):
+        print(paint("  Type one of the numbers above.", "warn"))
+        return pause()
+    chosen = every[int(pick) - 1]
+    print("  The folders it updates or releases are not touched.")
+    if not yes("Remove %s?" % chosen.title, default=False):
+        return pause()
+    if run("project", "remove", chosen.path, "--yes") and projects.same(chosen, _project):
+        _project = None                                     # the menu goes on with Default
+    pause()
+
+
+def remove_every():
+    """Remove every project but Default, as project remove --all does: it names them and asks first."""
+    global _project
+    heading("Remove every project")
+    if run("project", "remove", "--all"):
+        _project = None                                     # the menu goes on with Default
+    pause()
+
+
+def import_file():
+    """Add projects from a project file, as project import does: what the file holds and who signed it, one
+    question, then the folder each project keeps up to date. The menu then works on the first one added."""
+    global _project
+    heading("Add projects from a project file")
+    path = ask("The project file (type its path, or drag it into this window)",
+               example="D:\\Downloads\\MyMod.deltapatch")
+    if not path:
+        return
+    if not os.path.isfile(path):
+        print(paint("  There is no file %s." % path, "err"))
+        return pause()
+    before = {os.path.normcase(p.path) for p in projects.all_projects()}
+    run("project", "import", path)
+    added = [p for p in projects.all_projects() if os.path.normcase(p.path) not in before]
+    if added:
+        _project = added[0]
+    pause()
+
+
+def near_at_hand():
+    """Where a project file is saved unless another place is typed: the desktop when there is one, else home."""
+    home = os.path.expanduser("~")
+    desktop = os.path.join(home, "Desktop")
+    return desktop if os.path.isdir(desktop) else home
+
+
+def share():
+    """Share projects as a project file, as project export does: which projects, which kind of file and where
+    it goes. It is signed when the signing key of the first project (or the default one) is there."""
+    every = [p for p in projects.all_projects() if not p.missing]
+    heading("Share projects as a project file")
+    chosen = every
+    if len(every) > 1:
+        for i, p in enumerate(every, 1):
+            print("  %s  %s" % (paint(str(i), "code"), p.title))
+        picks = ask("Which ones go in it (their numbers, separated by spaces; Enter: every one)")
+        if picks:
+            numbers = picks.replace(",", " ").split()
+            if not all(n.isdigit() and 1 <= int(n) <= len(every) for n in numbers):
+                print(paint("  Type numbers from the list above.", "warn"))
+                return pause()
+            chosen = [every[int(n) - 1] for n in dict.fromkeys(str(int(n)) for n in numbers)]
+    print("  1  .deltapatch   opens DeltaPatcher with a double-click")
+    print("  2  .html         a page anyone can read in a browser")
+    ext = {"1": ".deltapatch", "2": ".html"}.get(ask("Choose 1 or 2", "1"))
+    if not ext:
+        print(paint("  Type 1 or 2.", "warn"))
+        return pause()
+    name = chosen[0].title if len(chosen) == 1 else "Projects"
+    out = ask("Save it as", os.path.join(near_at_hand(), name + ext))
+    if not presets.is_project_file(out):
+        out += ext
+    argv = ["project", "export"] + [p.path for p in chosen] + ["--out", out]
+    key = config.load(chosen[0])["signing_key"] or signing.default_key_path()
+    if os.path.isfile(key) and signing.can_sign():
+        argv.append("--sign=" + key)
+    run(*argv)
+    pause()
+
+
+def open_wiki():
+    from . import cli
+    heading("The wiki")
+    run("wiki")
+    print("  One guide:  %s" % paint(cli.prog_name() + " wiki NAME", "code"))
+    print("  (quickstart, players, publishing, vps, cli, docker, mcp, format, troubleshooting, security)")
+    pause()
+
+
+# each choice: (label, hint, action); two hints are (with several projects, with one)
+PROJECT_CHOICES = [
+    ("Choose another project", "the menu then works on that one", choose_project),
+    ("Add projects from a project file", "a .deltapatch or .html file from a publisher", import_file),
+    ("Share projects as a project file", "to give to players; signed when you have a signing key", share),
+    ("Remove a project", "its settings; never its folders", remove_project),
+    ("Remove every project", "all but Default; never their folders", remove_every),
 ]
-SEVERAL = ("6", "7")        # shown when there is more than one project
+SEVERAL = (choose_project, remove_project, remove_every, update_all)     # shown when there is more than one project
+
+
+def numbered(choices, several):
+    """The choices shown, numbered from 1: [(number, label, hint, action)]."""
+    shown = [c for c in choices if several or c[2] not in SEVERAL]
+    return [(str(i), label, hint if isinstance(hint, str) else hint[0 if several else 1], action)
+            for i, (label, hint, action) in enumerate(shown, 1)]
+
+
+def projects_menu():
+    """The Projects entry: what can be done with projects, one of them, then back to the menu."""
+    heading("Projects")
+    choices = numbered(PROJECT_CHOICES, len(projects.all_projects()) > 1)
+    for key, label, hint, _action in choices:
+        print("  %s  %-34s %s" % (paint(key, "code"), label, hint))
+    print("  %s  Back to the menu" % paint("0", "code"))
+    while True:
+        pick = ask("Type a number and press Enter")
+        if pick in ("", "0"):
+            return
+        action = next((a for k, _l, _h, a in choices if k == pick), None)
+        if action is not None:
+            return action()
+        print(paint("  Type one of the numbers above.", "warn"))
+
+
+CHOICES = [
+    ("Release a new version", "sends players only what changed", release),
+    ("Set up where releases go", "your server, a folder, or this computer", setup),
+    ("Update a folder", "gets the latest release", update),
+    ("Update all projects", "each one's folder, several at the same time", update_all),
+    ("Projects", ("choose, add, share or remove projects", "add projects from a project file, or share them"),
+     projects_menu),
+    ("Open the wiki", "every guide, in your browser", open_wiki),
+    ("Update DeltaPatcher", "itself, to the newest version", update_self),
+    ("Type commands yourself", "every command, at a prompt", commands),
+]
 
 
 def newer_out(cfg):
@@ -240,10 +380,12 @@ def run_menu(project=None):
         while True:
             cfg = load()
             several = len(projects.all_projects()) > 1
+            shown = numbered(CHOICES, several)
             heading("%s %s" % (APP_NAME, __version__))
             newest = newer_out(cfg)
             if newest:
-                print(paint("DeltaPatcher %s is out: choose 4 to update." % newest, "warn"))
+                print(paint("DeltaPatcher %s is out: choose %s to update." %
+                            (newest, next(k for k, _l, _h, a in shown if a is update_self)), "warn"))
             if several:
                 print("Project: %s" % paint(_project.title if _project is not None else projects.main_project().title,
                                             "head"))
@@ -252,18 +394,18 @@ def run_menu(project=None):
                 print("Your release: %s  ->  %s" % (cfg["publish_src"], goes))
             print()
             print("What do you want to do?")
-            shown = [c for c in CHOICES if several or c[0] not in SEVERAL]
             for key, label, hint, _action in shown:
                 print("  %s  %-26s %s" % (paint(key, "code"), label, hint))
+            print("  %s  Exit" % paint("0", "code"))
             try:
                 choice = _input("\nType a number and press Enter: ").strip()
             except (EOFError, KeyboardInterrupt):
                 print()
                 return
-            action = next((a for k, _l, _h, a in shown if k == choice), "?")
-            if action is None:
+            if choice == "0":
                 return
-            if action == "?":
+            action = next((a for k, _l, _h, a in shown if k == choice), None)
+            if action is None:
                 print(paint("Type one of the numbers above.", "warn"))
                 continue
             try:

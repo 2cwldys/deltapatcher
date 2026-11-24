@@ -26,7 +26,8 @@ const jobs = new Map<string, ChildProcessWithoutNullStreams>()
 const ALLOWED_OPTIONS = new Set([
   '--source', '--trust-key', '--check', '--name', '--version', '--protect', '--leave-out', '--sign', '--no-htaccess',
   '--passphrase-stdin', '--port', '--to-folder', '--host', '--user', '--key', '--remote-root', '--dry-run',
-  '--path', '--accept', '--forget', '--app', '--project', '--all', '--jobs', '--yes'
+  '--path', '--accept', '--forget', '--app', '--project', '--all', '--jobs', '--yes', '--out', '--only', '--folder',
+  '--as-is'
 ])
 
 function repoRoot(): string {

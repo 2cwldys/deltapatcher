@@ -3,6 +3,7 @@
 import { create } from 'zustand'
 import type { EngineEvent, EngineOutcome, Style } from '@shared/types'
 import { ask } from './modal'
+import { anotherRun } from './schedule'
 
 export type Value = string | number | boolean
 export interface SchemaItem {
@@ -36,8 +37,50 @@ export interface ProjectInfo {
   source_url: string
   publish_src: string
   where: string
+  description: string
+  website: string
+  // where it goes for players, and the folder it goes into inside the one they pick
+  install_hint: string
+  install_folder: string
+  // the http(s) address a project file gives for it ('' when it has none)
+  address: string
   update_ready: boolean
   release_ready: boolean
+}
+
+// a project of a project file being imported: what the file says, and what the person chose
+export interface ImportEntry {
+  title: string
+  source_url: string
+  trust_key?: string
+  description?: string
+  website?: string
+  install_hint?: string
+  install_folder?: string
+  taken: boolean
+  pick: boolean
+  name: string
+  folder: string
+}
+
+export interface Importing {
+  file: string
+  signed: boolean
+  signer: string
+  fingerprint: string
+  entries: ImportEntry[]
+  updateNow: boolean
+  working: boolean
+}
+
+// the export dialog: the projects ticked, the kind of file, and the signing key
+export interface Exporting {
+  picks: Record<string, boolean>
+  kind: 'deltapatch' | 'html'
+  sign: boolean
+  key: string
+  keyExists: boolean
+  keyLocked: boolean
 }
 
 // what an update (or a check) found and did
@@ -125,14 +168,18 @@ interface State {
   parallel: number
   loadProjects: () => Promise<void>
   selectProject: (file: string) => Promise<void>
-  // a project command beside whatever else runs (projects, project new/add/rename/remove)
-  side: (args: string[]) => Promise<EngineOutcome>
+  // a project command beside whatever else runs (projects, project new/add/rename/remove/import/export)
+  side: (args: string[], passphrase?: string) => Promise<EngineOutcome>
+  // the import and export dialogs of project files
+  importing: Importing | null
+  exporting: Exporting | null
   // the Projects page: each project's check or update, by its file, and Update all / Check all
   runs: Record<string, ProjectRun>
   allJob: AllJob | null
   autoChecked: boolean
   runProject: (file: string, check: boolean) => Promise<void>
-  runAll: (check: boolean) => Promise<void>
+  // auto: a check (or an update) DeltaPatcher started by itself, which may notify or update on its own
+  runAll: (check: boolean, auto?: boolean) => Promise<void>
   stopAll: () => void
   noteResult: (file: string, result: UpdateResult, check: boolean) => void
 }
@@ -150,6 +197,10 @@ let pending: Record<string, Value> = {}
 let pendingFor = ''
 let saveTimer: ReturnType<typeof setTimeout> | null = null
 let saving = false
+// the projects a notification has named as having an update, until they are up to date again
+const notified = new Set<string>()
+// the project picked last: when two picks overlap, the last one wins
+let pickedLast = ''
 
 // the commands that work on no single project; every other one gets the shown project's settings file
 const NO_PROJECT = ['self-update', 'version', 'projects', 'project']
@@ -161,6 +212,12 @@ export function withProject(args: string[], file: string): string[] {
 
 export function running(r: ProjectRun | undefined): boolean {
   return Boolean(r && (r.state === 'waiting' || r.state === 'checking' || r.state === 'updating'))
+}
+
+// the system put in step with start_with_system: at every start, and when the switch changes
+async function startWithSystem(on: boolean, log: (t: string, s?: Style) => void): Promise<void> {
+  const problem = await window.api.setStartWithSystem(on)
+  if (problem) log(`Starting with the computer could not be ${on ? 'set up' : 'turned off'}: ${problem}`, 'err')
 }
 
 async function flushSettings(log: (t: string, s?: Style) => void): Promise<void> {
@@ -206,15 +263,19 @@ function failure(err: unknown): EngineOutcome {
 }
 
 export const useApp = create<State>((set, get) => {
-  // the shown project's settings, read again (at the start, and when another project is picked)
-  const readSettings = async (): Promise<void> => {
-    const r = await window.api.run({ jobId: `cfg-${++jobSeq}`, args: withProject(['config', 'get'], get().project) })
+  // the shown project's settings, read again (at the start); with `file`, another project's, shown together
+  // with them, so a page never names one project and shows another's settings
+  const readSettings = async (file?: string): Promise<void> => {
+    const r = await window.api.run({ jobId: `cfg-${++jobSeq}`, args: withProject(['config', 'get'], file ?? get().project) })
+    if (file !== undefined && file !== pickedLast) return
+    const shown = file === undefined ? {} : { project: file, results: resultsOf.get(file) ?? {} }
     if (!r.ok) {
       get().log(`Settings could not be read: ${r.message}`, 'err')
-      set({ settings: {} })
+      set({ ...shown, settings: {} })
       return
     }
     set({
+      ...shown,
       settings: r.data.settings ?? {},
       schema: r.data.schema ?? [],
       settingsPath: r.data.path ?? '',
@@ -222,6 +283,8 @@ export const useApp = create<State>((set, get) => {
       logDir: r.data.log_dir ?? ''
     })
     window.api.setCloseToTray(Boolean(r.data.settings?.close_to_tray))
+    window.api.setMinimizeToTray(Boolean(r.data.settings?.minimize_to_tray))
+    void startWithSystem(Boolean(r.data.settings?.start_with_system), get().log)
   }
 
   const putRun = (file: string, change: Partial<ProjectRun>): void => {
@@ -254,6 +317,8 @@ export const useApp = create<State>((set, get) => {
     runs: {},
     allJob: null,
     autoChecked: false,
+    importing: null,
+    exporting: null,
 
     // GitHub's newest release against this version, by number; quiet, and nothing when offline
     checkAppUpdate: async () => {
@@ -367,17 +432,17 @@ export const useApp = create<State>((set, get) => {
     selectProject: async (file) => {
       const before = get().project
       if (!file || file === before) return
+      pickedLast = file
       await settle(get().log)
       resultsOf.set(before, get().results)
-      set({ project: file, results: resultsOf.get(file) ?? {} })
+      await readSettings(file)
       const p = get().projects.find((x) => x.file === file)
       await get().side(['config', 'set', `current_project=${p ? p.ref : file}`])
-      await readSettings()
     },
 
-    side: async (args) => {
+    side: async (args, passphrase) => {
       try {
-        return await window.api.run({ jobId: `side-${++jobSeq}`, args })
+        return await window.api.run({ jobId: `side-${++jobSeq}`, args, passphrase })
       } catch (err) {
         return failure(err)
       }
@@ -387,6 +452,8 @@ export const useApp = create<State>((set, get) => {
     set: (key, value) => {
       set({ settings: { ...get().settings, [key]: value } })
       if (key === 'close_to_tray') window.api.setCloseToTray(Boolean(value))
+      if (key === 'minimize_to_tray') window.api.setMinimizeToTray(Boolean(value))
+      if (key === 'start_with_system') void startWithSystem(Boolean(value), get().log)
       if (Object.keys(pending).length === 0) pendingFor = get().project
       pending[key] = value
       if (saveTimer) clearTimeout(saveTimer)
@@ -462,8 +529,9 @@ export const useApp = create<State>((set, get) => {
 
     // every project with a folder to update, several at the same time, in one engine job; each one's
     // progress and result come tagged with its file
-    runAll: async (check) => {
+    runAll: async (check, auto = false) => {
       if (get().allJob) return
+      const ended: Ended[] = []
       const jobId = `all-${++jobSeq}`
       const label = check ? 'Check all' : 'Update all'
       set({ allJob: { jobId, check, total: 0, done: 0 } })
@@ -482,6 +550,7 @@ export const useApp = create<State>((set, get) => {
         } else if (e.event === 'progress' && e.file) {
           putRun(e.file, { progress: { done: e.done, total: e.total, label: e.label } })
         } else if (e.event === 'project-end') {
+          ended.push({ file: e.file, ok: e.ok, result: e.data as UpdateResult | undefined, message: e.message })
           if (e.ok) {
             putRun(e.file, { state: 'done', inAll: false, check, progress: undefined, message: undefined, result: e.data as UpdateResult })
           } else {
@@ -512,6 +581,7 @@ export const useApp = create<State>((set, get) => {
         if (r.ok) set({ status: `${label} done.`, statusKind: 'ok', progress: { done: total, total, label: 'projects' } })
         else set({ status: r.code === 'stopped' ? `${label} stopped.` : `${label}: ${r.message}`, statusKind: 'err', progress: null })
       }
+      if (auto) await afterAutomatic(check, ended)
     },
 
     stopAll: () => {
@@ -543,4 +613,71 @@ window.api.onEvent((jobId, e) => {
 
 export function newJobId(prefix: string): string {
   return `${prefix}-${++jobSeq}`
+}
+
+// one project's end in Update all or Check all
+interface Ended {
+  file: string
+  ok: boolean
+  result?: UpdateResult
+  message?: string
+}
+
+export function hasUpdate(r: ProjectRun | undefined): boolean {
+  return Boolean(r && r.state === 'done' && r.check && r.result && !r.result.empty)
+}
+
+// how many projects the last checks found an update for: the count beside Projects
+export function waitingCount(s: { projects: ProjectInfo[]; runs: Record<string, ProjectRun> }): number {
+  return s.projects.filter((p) => hasUpdate(s.runs[p.file])).length
+}
+
+// names in a sentence: A; A and B; A, B and C; A, B, C and 2 more
+export function joinNames(names: string[]): string {
+  if (names.length <= 1) return names.join('')
+  const shown = names.length > 4 ? [...names.slice(0, 3), `${names.length - 3} more`] : names
+  return `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}`
+}
+
+// Every project checked by DeltaPatcher itself (at the start, then every check_every_hours hours), never while
+// another run goes: 'busy' then, and the check waits; 'nothing' when no project has a folder and a source.
+export function autoCheck(): 'started' | 'busy' | 'nothing' {
+  const st = useApp.getState()
+  if (anotherRun(st)) return 'busy'
+  if (!st.projects.some((p) => p.update_ready)) return 'nothing'
+  useApp.setState({ autoChecked: true })
+  void st.runAll(true, true)
+  return 'started'
+}
+
+// What an automatic check found, acted on: with auto_update the projects with an update update by themselves,
+// and a notification says what was done; otherwise, or while another run goes, a notification names them
+// while the window is not on screen.
+async function afterAutomatic(check: boolean, ended: Ended[]): Promise<void> {
+  const st = useApp.getState()
+  const titleOf = (file: string): string => st.projects.find((p) => p.file === file)?.title ?? file
+  if (check) {
+    const waiting = ended.filter((e) => e.ok && e.result && !e.result.empty).map((e) => e.file)
+    for (const f of [...notified]) if (!waiting.includes(f)) notified.delete(f)
+    if (!waiting.length) return
+    if (st.settings.auto_update === true && !anotherRun(useApp.getState())) {
+      await st.runAll(false, true)
+      return
+    }
+    if (waiting.every((f) => notified.has(f))) return
+    waiting.forEach((f) => notified.add(f))
+    const names = joinNames(waiting.map(titleOf))
+    const text = waiting.length === 1 ? `${names} has an update.` : `${waiting.length} projects have an update: ${names}.`
+    st.log(text, 'warn')
+    await window.api.notify('DeltaPatcher', text, true)
+    return
+  }
+  const updated = ended.filter((e) => e.ok && e.result && !e.result.empty).map((e) => titleOf(e.file))
+  const failed = ended.filter((e) => !e.ok)
+  ended.forEach((e) => notified.delete(e.file))
+  const lines = updated.length ? [`Updated by itself: ${joinNames(updated)}.`] : []
+  for (const e of failed) lines.push(`${titleOf(e.file)} failed: ${e.message ?? 'see the console'}`)
+  if (!lines.length) return
+  st.log(lines.join('\n'), failed.length ? 'warn' : 'ok')
+  await window.api.notify('DeltaPatcher', lines.join('\n'), false)
 }

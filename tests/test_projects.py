@@ -15,7 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from helpers import TempCase, read, snapshot, write  # noqa: E402  (first: settings and logs go to a sandbox)
-from deltapatcher import cli, client, config, logs, projects, publish, signing  # noqa: E402
+from deltapatcher import cli, client, config, logs, presets, projects, publish, signing  # noqa: E402
 from deltapatcher.projects import ProjectError  # noqa: E402
 
 
@@ -145,6 +145,23 @@ class Settings(TempCase):
                          (self.p("game"), 5, True, "Mod"))
         cfg = config.load()                          # Default
         self.assertEqual((cfg["install_dir"], cfg["parallel_updates"], cfg["name"]), ("", 5, ""))
+
+    def test_the_checks_and_starting_with_the_computer_are_deltapatchers_own(self):
+        cfg = config.load()
+        self.assertEqual((cfg["check_every_hours"], cfg["auto_update"], cfg["start_with_system"]), (1, False, False))
+        text = read(config.path()).decode()
+        self.assertIn("start_with_system = no\n", text.split("[window]")[1].split("[general]")[0])
+        self.assertIn("check_every_hours = 1\n", text.split("[general]")[1])
+        mod = projects.new("Mod")
+        config.save({"check_every_hours": 0, "start_with_system": True}, mod)       # the main file, whichever project
+        self.assertEqual(config.file_values(config.path(), ["check_every_hours", "start_with_system"]),
+                         {"check_every_hours": 0, "start_with_system": True})
+        self.assertNotIn("check_every_hours", read(mod.path).decode())
+        self.assertEqual((config.load(mod)["check_every_hours"], config.load(mod)["start_with_system"]), (0, True))
+        write(config.path(), "[general]\nparallel_updates = 2\n")                    # written before these settings
+        cfg = config.load()
+        self.assertEqual((cfg["check_every_hours"], cfg["start_with_system"]), (1, False))
+        self.assertEqual(read(config.path()).decode(), "[general]\nparallel_updates = 2\n")    # and left as it was
 
     def test_a_project_file_never_holds_deltapatchers_own_settings(self):
         mod = projects.new("Mod")
@@ -560,19 +577,27 @@ class Menu(TempCase):
         return rc, out.getvalue()
 
     def test_one_project_shows_no_project_choices(self):
-        rc, text = self.menu(["7", "0"])
+        rc, text = self.menu(["4", "0", "8", "0"])                           # Projects, back; a number not there
         self.assertEqual(rc, 0)
-        self.assertNotIn("Choose another project", text)
-        self.assertNotIn("Project:", text)
+        for listed in ("  1  Release a new version", "  4  Projects", "  5  Open the wiki", "  6  Update DeltaPatcher",
+                       "  7  Type commands yourself", "  0  Exit", "  1  Add projects from a project file",
+                       "  2  Share projects as a project file", "  0  Back to the menu"):
+            self.assertIn(listed, text)
+        for hidden in ("Update all projects", "Choose another project", "Remove a project", "Remove every project",
+                       "Project:"):
+            self.assertNotIn(hidden, text)
         self.assertIn("Type one of the numbers above.", text)
 
     def test_choose_a_project_and_update_it_then_all(self):
         mod = projects.new("Mod")
-        rc, text = self.menu(["7", "2",                                      # choose Mod
+        rc, text = self.menu(["5", "1", "2",                                 # Projects: choose Mod
                               "3", self.p("player"), self.p("www"), "",       # update a folder, in Mod
-                              "6", "",                                        # update all projects
+                              "4", "",                                        # update all projects
                               "0"])
         self.assertEqual(rc, 0)
+        for listed in ("  4  Update all projects", "  5  Projects", "  8  Type commands yourself",
+                       "  1  Choose another project", "  4  Remove a project", "  5  Remove every project"):
+            self.assertIn(listed, text)
         self.assertIn("Project: Default", text)
         self.assertIn("Project: Mod", text)
         self.assertEqual(read(self.p("player", "game.exe")), b"the program")
@@ -586,6 +611,197 @@ class Menu(TempCase):
         projects.new("Mod")
         rc, text = self.menu(["0"], ["--project", "mod"])
         self.assertIn("Project: Mod", text)
+
+    def test_remove_a_project_from_the_menu(self):
+        mod = projects.new("Mod")
+        config.save({"install_dir": self.p("player")}, mod)
+        write(self.p("player", "kept.txt"), b"mine")
+        rc, text = self.menu(["5", "1", "2",                                 # the menu works on Mod
+                              "5", "4", "1", "n", "",                         # Projects: remove Mod? no
+                              "5", "4", "1", "y", "",                         # yes
+                              "0"])
+        self.assertEqual(rc, 0)
+        self.assertIn("its settings file is deleted", text)
+        self.assertIn("The folders it updates or releases are not touched.", text)
+        self.assertFalse(os.path.exists(mod.path))
+        self.assertEqual(read(self.p("player", "kept.txt")), b"mine")
+        self.assertEqual([p.title for p in projects.all_projects()], ["Default"])
+        self.assertNotIn("Project: Mod", text.split("Removed the project Mod")[-1])   # back on Default
+
+    def test_open_the_wiki_from_the_menu(self):
+        with mock.patch("webbrowser.open", return_value=True) as browser, \
+                mock.patch.dict(os.environ, {"DISPLAY": ":0"}):
+            rc, text = self.menu(["5", "", "0"])
+        self.assertEqual(rc, 0)
+        browser.assert_called_once_with("https://github.com/2cwldys/deltapatcher/wiki")
+        self.assertIn("https://github.com/2cwldys/deltapatcher/wiki", text)
+
+    def test_add_projects_from_a_project_file_in_the_menu(self):
+        maps = projects.new("Maps")
+        config.save({"public_url": "https://maps.example.com/", "description": "Twelve maps"}, maps)
+        rc, ev = run_json(["project", "export", "Maps", "--out", self.p("Maps.deltapatch")])
+        self.assertEqual(rc, 0, ev[-1])
+        os.environ["DELTAPATCHER_CONFIG"] = self.p("player", "deltapatcher.ini")      # another computer's settings
+        with mock.patch.object(cli, "interactive", return_value=True):
+            rc, text = self.menu(["4", "1", '"%s"' % self.p("Maps.deltapatch"),       # Projects: add, dragged in
+                                  "y", self.p("maps"), "",                             # add it; its folder
+                                  "0"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Maps.deltapatch holds 1 project", text)
+        self.assertIn("Added the project Maps", text)
+        self.assertIn("Project: Maps", text)                                           # the menu works on it now
+        cfg = config.load(projects.resolve("Maps"))
+        self.assertEqual((cfg["source_url"], cfg["description"], cfg["install_dir"]),
+                         ("https://maps.example.com/", "Twelve maps", self.p("maps")))
+
+    @unittest.skipUnless(signing.can_sign(), "needs cryptography")
+    def test_share_projects_as_a_project_file_in_the_menu(self):
+        key = self.p("keys", "signing-key.pem")
+        public = signing.generate_key(key, "")
+        config.save({"public_url": "https://maps.example.com/", "signing_key": key}, projects.new("Maps"))
+        config.save({"public_url": "https://mod.example.com/", "signing_key": self.p("keys", "none.pem")},
+                    projects.new("Mod"))
+        rc, text = self.menu(["5", "3", "2, 3", "2", self.p("out", "packs"), "",           # Maps and Mod, a page
+                              "5", "3", "3", "", self.p("out", "mod.deltapatch"), "",      # Mod, the first kind
+                              "5", "3", "4", "", "",                                       # a number not listed
+                              "0"])
+        self.assertEqual(rc, 0)
+        self.assertIn("  1  .deltapatch   opens DeltaPatcher with a double-click", text)
+        found = presets.read(self.p("out", "packs.html"))                       # its kind's ending added
+        self.assertEqual(([e["title"] for e in found["projects"]], found["signer"]), (["Maps", "Mod"], public))
+        found = presets.read(self.p("out", "mod.deltapatch"))
+        self.assertEqual([e["title"] for e in found["projects"]], ["Mod"])
+        self.assertFalse(found["signer"])                                       # no signing key there: not signed
+        self.assertIn("Type numbers from the list above.", text)
+
+    def test_remove_every_project_from_the_menu(self):
+        projects.new("Maps")
+        mod = projects.new("Mod")
+        config.save({"install_dir": self.p("player")}, mod)
+        write(self.p("player", "kept.txt"), b"mine")
+        with mock.patch.object(cli, "interactive", return_value=True):
+            rc, text = self.menu(["5", "1", "3",                                 # the menu works on Mod
+                                  "5", "5", "n", "",                              # Projects: remove every one? no
+                                  "5", "5", "y", "",                              # yes
+                                  "0"])
+        self.assertEqual(rc, 0)
+        self.assertIn("Remove every project but Default?", text)
+        self.assertIn("  Mod  (its settings file is deleted)", text)
+        self.assertEqual([p.title for p in projects.all_projects()], ["Default"])
+        self.assertEqual(read(self.p("player", "kept.txt")), b"mine")
+        after = text.split("Removed 2 projects; Default stays.")[1]
+        self.assertNotIn("Project:", after)                                       # back on Default, the only one
+        self.assertIn("  4  Projects", after)
+
+
+class RemoveAllAndReset(TempCase):
+    def setUp(self):
+        TempCase.setUp(self)
+        write(self.p("game", "game.exe"), b"the game")
+        write(self.p("dev", "mod.pk3"), b"the mod")
+        self.mod = projects.new("Mod")
+        config.save({"install_dir": self.p("game"), "publish_src": self.p("dev"), "source_url": "https://mod.example.com/"},
+                    self.mod)
+        self.shared = self.p("share", "server.ini")
+        write(self.shared, "[project]\ntitle = Shared\n\n[update]\ninstall_dir = %s\n" % self.p("server"))
+        projects.add(self.shared)
+        write(self.p("server", "server.cfg"), b"port 27015")
+        config.save({"current_project": self.mod.ref(), "parallel_updates": 5, "source_url": "https://game.example.com/"})
+        self.folders = {k: snapshot(self.p(k)) for k in ("game", "dev", "server")}
+
+    def untouched(self):
+        for k, before in self.folders.items():
+            self.assertEqual(snapshot(self.p(k)), before, k)
+
+    def test_remove_all(self):
+        rc, ev = run_json(["project", "remove", "--all"])
+        self.assertEqual((rc, ev[-1]["code"]), (1, "confirm-needed"))
+        self.assertEqual([p["project"] for p in ev[-1]["data"]["projects"]], ["Mod", "Shared"])
+        with mock.patch.object(cli, "interactive", return_value=True), mock.patch("builtins.input", return_value="n"):
+            rc, text = run_text(["project", "remove", "--all"])
+        self.assertEqual(rc, 1)
+        self.assertIn("Mod  (its settings file is deleted)", text)
+        self.assertIn("Shared  (it only leaves the list; its file stays)", text)
+        self.assertTrue(os.path.isfile(self.mod.path))
+        rc, ev = run_json(["project", "remove", "--all", "--yes"])
+        self.assertEqual(rc, 0, ev[-1])
+        self.assertEqual(sorted((r["project"], r["removed"]) for r in ev[-1]["data"]["removed"]),
+                         [("Mod", "deleted"), ("Shared", "unlisted")])
+        self.assertEqual([p.title for p in projects.all_projects()], ["Default"])
+        self.assertFalse(os.path.exists(self.mod.path))
+        self.assertTrue(os.path.isfile(self.shared))                                  # an added file is never deleted
+        self.assertEqual(config.load()["current_project"], "")
+        self.untouched()
+        self.assertEqual(run_json(["project", "remove", "--all", "--yes"])[1][-1]["data"]["removed"], [])
+        self.assertEqual(run_json(["project", "remove", "Mod", "--all", "--yes"])[1][-1]["code"], "bad-arguments")
+        self.assertEqual(run_json(["project", "remove", "--yes"])[1][-1]["code"], "bad-arguments")
+
+    def test_reset(self):
+        here = os.path.dirname(config.path())
+        keep = {"signing-key.pem": b"-----BEGIN " + b"PRIVATE KEY-----", "known_hosts": b"game.example.com ssh-ed25519 AAAA",
+                os.path.join("stores", "game-1", "manifest.json"): b"{}", os.path.join("logs", "deltapatcher.log"): b"a line"}
+        for name, data in keep.items():
+            write(os.path.join(here, name), data)
+        write(os.path.join(here, "update-check.json"), b'{"checked": 1, "latest": "9.9.9"}')
+        main_before, mod_before = read(config.path()), read(self.mod.path)
+        rc, ev = run_json(["reset"])
+        self.assertEqual((rc, ev[-1]["code"]), (1, "confirm-needed"))
+        plan = ev[-1]["data"]
+        self.assertEqual([p["project"] for p in plan["removed"]], ["Mod", "Shared"])
+        self.assertTrue(os.path.basename(plan["copy"]).startswith("settings-before-reset-"))
+        with mock.patch.object(cli, "interactive", return_value=True), mock.patch("builtins.input", return_value="y"):
+            rc, text = run_text(["reset"])
+        self.assertEqual(rc, 0, text)
+        for words in ("Never touched:    the folders projects update or release", "the signing key, SSH keys",
+                      "Kept:             trusted server host keys, the log, prepared releases", "A copy of the settings"):
+            self.assertIn(words, text)
+        self.assertEqual(read(config.path()).decode(), config.placeholder())         # as just installed
+        self.assertEqual([p.title for p in projects.all_projects()], ["Default"])
+        self.assertFalse(os.path.exists(projects.folder()))
+        self.assertTrue(os.path.isfile(self.shared))
+        self.assertFalse(os.path.exists(os.path.join(here, "update-check.json")))
+        for name, data in keep.items():
+            self.assertEqual(read(os.path.join(here, name)), data, name)
+        self.untouched()
+        copies = [d for d in os.listdir(here) if d.startswith("settings-before-reset-")]
+        self.assertEqual(len(copies), 1)
+        copy = os.path.join(here, copies[0])
+        self.assertEqual(read(os.path.join(copy, "deltapatcher.ini")), main_before)    # undo by hand: copy it back
+        self.assertEqual(read(os.path.join(copy, "projects", "Mod.ini")), mod_before)
+
+    def test_a_portable_copy_is_reset_and_the_copy_keeps_its_makers_source(self):
+        program = self.p("portable", "DeltaPatcher.exe")
+        ini = self.p("portable", "deltapatcher.ini")
+        shipped = "[update]\nsource_url = https://maker.example.com/\ntrust_key = %s\n" % ("ed25519:" + "A" * 43 + "=")
+        write(ini, shipped)
+        write(program, b"")
+        with mock.patch.dict(os.environ), mock.patch.object(sys, "frozen", True, create=True), \
+                mock.patch.object(sys, "executable", program):
+            os.environ.pop("DELTAPATCHER_CONFIG", None)
+            self.assertEqual(config.path(), ini)
+            rc, ev = run_json(["reset", "--yes"])
+            self.assertEqual(rc, 0, ev[-1])
+            copy = ev[-1]["data"]["copy"]
+            self.assertEqual(os.path.dirname(copy), self.p("portable"))
+            self.assertEqual(read(os.path.join(copy, "deltapatcher.ini")).decode(), shipped)
+            self.assertEqual(config.load()["source_url"], config.DEFAULTS["source_url"])
+
+    def test_the_wiki(self):
+        with mock.patch("webbrowser.open", return_value=True) as browser, \
+                mock.patch.dict(os.environ, {"DISPLAY": ":0"}):
+            rc, text = run_text(["wiki"])
+            self.assertEqual(rc, 0)
+            rc, text = run_text(["wiki", "VPS"])
+            self.assertEqual(rc, 0)
+            self.assertIn("https://github.com/2cwldys/deltapatcher/wiki/Setting-up-a-VPS", text)
+            rc, text = run_text(["wiki", "nonsense"])
+            self.assertEqual(rc, 1)
+            self.assertIn("quickstart, players, publishing, vps", text)
+            rc, ev = run_json(["wiki", "cli"])                                       # a program gets the address
+        self.assertEqual(ev[-1]["data"]["url"], "https://github.com/2cwldys/deltapatcher/wiki/Command-line")
+        self.assertEqual([c[0][0] for c in browser.call_args_list],
+                         ["https://github.com/2cwldys/deltapatcher/wiki",
+                          "https://github.com/2cwldys/deltapatcher/wiki/Setting-up-a-VPS"])
 
 
 if __name__ == "__main__":

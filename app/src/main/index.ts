@@ -5,6 +5,7 @@ import {
   IpcMainEvent,
   IpcMainInvokeEvent,
   Menu,
+  Notification,
   Tray,
   clipboard,
   dialog,
@@ -14,11 +15,12 @@ import {
   shell
 } from 'electron'
 import { spawn } from 'child_process'
-import { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { homedir, tmpdir } from 'os'
 import { basename, dirname, join, resolve } from 'path'
 import { InstallKind, RunRequest } from '../shared/types'
 import { cancelJob, engineCommand, runEngine, stopAll, stopJob } from './engine'
+import { apply as applyStartWithSystem, HIDDEN_ARG, LOGIN_ITEM_NAME, startedHidden, System, unavailable } from './startWithSystem'
 
 // How this copy of DeltaPatcher was installed, which decides how it updates itself: the Windows setup
 // (its uninstaller sits beside the program), the Windows zip, an AppImage, macOS, or from source.
@@ -68,6 +70,71 @@ let win: BrowserWindow | null = null
 let tray: Tray | null = null
 let quitting = false
 let closeToTray = false
+let minimizeToTray = false
+// started with the computer: the first window stays in the tray until it is asked for
+let hideFirstWindow = false
+// start_with_system as this run last put it in place (null: not yet)
+let startWithSystem: boolean | null = null
+
+// what starting with the computer works through: this copy and Electron's login items
+function system(): System {
+  return {
+    platform: process.platform,
+    packaged: app.isPackaged,
+    execPath: process.execPath,
+    env: process.env,
+    home: homedir(),
+    setLoginItem: (item) => app.setLoginItemSettings(item),
+    isLoginItem: () => {
+      const now = app.getLoginItemSettings()
+      return process.platform === 'win32' ? (now.launchItems ?? []).some((i) => i.name === LOGIN_ITEM_NAME) : now.openAtLogin
+    },
+    readFile: (path) => {
+      try {
+        return readFileSync(path, 'utf8')
+      } catch {
+        return null
+      }
+    },
+    writeFile: (path, text) => {
+      mkdirSync(dirname(path), { recursive: true })
+      writeFileSync(path, text, { mode: 0o644 })
+    },
+    removeFile: (path) => rmSync(path, { force: true })
+  }
+}
+
+// A project file (.deltapatch, .html) or a settings file (.ini) DeltaPatcher was asked to open: double-clicked,
+// given on the command line, or opened from Finder. The window takes it once it is ready; one that comes while
+// it runs is handed over at once.
+const OPENABLE = /\.(deltapatch|html?|ini)$/i
+let openedFile: string | null = null
+let windowTakesFiles = false
+// the notifications on screen: kept, so a click on one still reaches its handler
+const notes = new Set<Notification>()
+
+function fileFrom(argv: string[]): string | null {
+  for (const a of argv.slice(1)) {
+    if (!a || a.startsWith('-') || !OPENABLE.test(a)) continue
+    try {
+      const full = resolve(a)
+      if (existsSync(full) && statSync(full).isFile()) return full
+    } catch {
+      // not a file this can open
+    }
+  }
+  return null
+}
+
+function openFile(path: string): void {
+  if (captureDir) return
+  if (win && windowTakesFiles) {
+    win.webContents.send('app:open-file', path)
+    showWindow()
+  } else {
+    openedFile = path
+  }
+}
 
 function asset(name: string): string {
   return app.isPackaged ? join(process.resourcesPath, name) : join(__dirname, '..', '..', 'build', name)
@@ -95,7 +162,11 @@ function createWindow(): void {
       nodeIntegration: false
     }
   })
-  win.once('ready-to-show', () => win?.show())
+  win.once('ready-to-show', () => {
+    const hidden = hideFirstWindow && tray !== null
+    hideFirstWindow = false
+    if (!hidden) win?.show()
+  })
   // links open in the browser; the window itself never navigates anywhere
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith('https://')) shell.openExternal(url)
@@ -107,6 +178,10 @@ function createWindow(): void {
       e.preventDefault()
       win?.hide()
     }
+  })
+  // minimized to the tray: off the taskbar until the tray icon brings it back
+  win.on('minimize', () => {
+    if (minimizeToTray && tray) win?.hide()
   })
   win.on('closed', () => {
     win = null
@@ -138,6 +213,7 @@ function showWindow(): void {
     createWindow()
     return
   }
+  if (win.isMinimized()) win.restore()
   win.show()
   win.focus()
 }
@@ -175,6 +251,34 @@ function registerIpc(): void {
     const r = await dialog.showOpenDialog(win, { properties: ['openFile', 'showHiddenFiles'], defaultPath: start || undefined })
     return r.canceled ? null : r.filePaths[0]
   })
+  // Add a project file...: a project file from a publisher, or (advanced) a project's settings file
+  handle('dialog:project-file', async (_e, start: string) => {
+    if (!win) return null
+    const r = await dialog.showOpenDialog(win, {
+      properties: ['openFile'],
+      defaultPath: start || undefined,
+      filters: [
+        { name: 'DeltaPatcher project files (*.deltapatch, *.html)', extensions: ['deltapatch', 'html', 'htm'] },
+        { name: 'Settings files (*.ini)', extensions: ['ini'] },
+        { name: 'All files', extensions: ['*'] }
+      ]
+    })
+    return r.canceled ? null : r.filePaths[0]
+  })
+  // where to save a project file, with its type's extension
+  handle('dialog:save-project-file', async (_e, name: string, ext: string) => {
+    if (!win || (ext !== 'deltapatch' && ext !== 'html')) return null
+    const r = await dialog.showSaveDialog(win, {
+      defaultPath: `${String(name).replace(/[\\/:*?"<>|]/g, '')}.${ext}`,
+      filters: [
+        ext === 'html'
+          ? { name: 'A page anyone can read in a browser (*.html)', extensions: ['html'] }
+          : { name: 'DeltaPatcher project file (*.deltapatch)', extensions: ['deltapatch'] }
+      ]
+    })
+    if (r.canceled || !r.filePath) return null
+    return r.filePath.toLowerCase().endsWith(`.${ext}`) ? r.filePath : `${r.filePath}.${ext}`
+  })
   // opens a folder, or a settings, log or text file: never a program
   handle('shell:open', async (_e, path: string) => {
     if (typeof path !== 'string' || !existsSync(path)) return 'not found'
@@ -189,12 +293,53 @@ function registerIpc(): void {
     return ''
   })
   handle('clipboard:write', (_e, text: string) => clipboard.writeText(String(text)))
+  // the file DeltaPatcher was started with, once; files that come later are sent as they come
+  handle('app:take-opened-file', () => {
+    windowTakesFiles = true
+    const f = openedFile
+    openedFile = null
+    return f
+  })
+  // a desktop notification; onlyHidden: only while the window is not on screen (in the tray, or minimized)
+  handle('app:notify', (_e, title: string, body: string, onlyHidden: boolean) => {
+    if (!Notification.isSupported()) return 'unsupported'
+    if (onlyHidden && win && win.isVisible() && !win.isMinimized()) return 'window shown'
+    const n = new Notification({ title: String(title).slice(0, 120), body: String(body).slice(0, 400), icon: windowIcon() })
+    notes.add(n)
+    n.on('click', () => {
+      notes.delete(n)
+      showWindow()
+      win?.webContents.send('app:show-page', 'projects')
+    })
+    n.on('close', () => notes.delete(n))
+    n.show()
+    return 'shown'
+  })
+  handle('app:minimize-to-tray', (_e, on: boolean) => {
+    minimizeToTray = Boolean(on)
+  })
+  // start_with_system, put in place at every start and on every change: '' when done, else what went wrong
+  handle('app:start-with-system', (_e, on: boolean) => {
+    if (captureDir || startWithSystem === Boolean(on)) return ''
+    const problem = applyStartWithSystem(system(), Boolean(on))
+    if (!problem) startWithSystem = Boolean(on)
+    return problem
+  })
+  // Reset: what the window keeps of its own (its web storage and cache) is cleared, and the window starts
+  // afresh (a reload from here: the page itself may not navigate)
+  handle('app:start-afresh', async () => {
+    await session.defaultSession.clearStorageData()
+    await session.defaultSession.clearCache()
+    win?.webContents.reload()
+    return true
+  })
   handle('app:info', () => ({
     version: app.getVersion(),
     platform: process.platform,
     engine: engineCommand().describe,
     capture: Boolean(captureDir),
-    install: installKind()
+    install: installKind(),
+    startWithSystem: unavailable(system())
   }))
   handle('update:install', (_e, file: string, kind: string) => installUpdate(String(file), String(kind)))
   handle('app:close-to-tray', (_e, on: boolean) => {
@@ -217,17 +362,31 @@ function registerIpc(): void {
   })
 }
 
+// macOS hands a double-clicked file over as an event, possibly before the app is ready
+app.on('open-file', (e, path) => {
+  e.preventDefault()
+  openFile(path)
+})
+openedFile = captureDir ? null : fileFrom(process.argv)
+
 const single = captureDir ? true : app.requestSingleInstanceLock()
 if (!single) {
   app.quit()
 } else {
-  app.on('second-instance', () => showWindow())
+  app.on('second-instance', (_e, argv) => {
+    const f = fileFrom(argv)
+    if (f) openFile(f)
+    else if (argv.includes(HIDDEN_ARG)) return
+    showWindow()
+  })
   app.whenReady().then(() => {
     if (process.platform !== 'darwin') Menu.setApplicationMenu(null)
     app.setAppUserModelId('io.github.deltapatcher')
     // the window needs no camera, microphone, notifications or anything else a page can ask for
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
     registerIpc()
+    hideFirstWindow = !captureDir &&
+      startedHidden(process.platform, process.argv, process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin)
     createWindow()
     if (!captureDir) createTray()
     app.on('activate', () => {

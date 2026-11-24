@@ -474,6 +474,22 @@ def b_ssh_trust(a):
     return argv
 
 
+def b_project_remove(a):
+    """One project, named: removing every project (or resetting DeltaPatcher) is for a person to do."""
+    if a["project"].strip().startswith("-"):
+        raise ToolProblem("give one project, by its name or its settings file")
+    return ["project", "remove", a["project"], "--yes"]
+
+
+def b_project_import(a):
+    argv = ["project", "import", path_of(a["file"])]
+    for name in a.get("projects") or []:
+        argv += ["--only", name]
+    opt(argv, "--folder", a.get("folder"), path_of)
+    argv.append("--dry-run" if a.get("dry_run") else "--yes")
+    return argv
+
+
 # ---------------------------------------------------------------------------------------------------------
 # tools of their own
 
@@ -662,7 +678,32 @@ TOOLS_LIST = [
     Tool("project_remove", "Remove a project",
          "Remove a project: one in the projects folder is deleted with its settings; an added file only leaves "
          "the list. The folders it updates or releases are not touched.",
-         schema(["project"], project=PROJECT), CHANGES, build=lambda a: ["project", "remove", a["project"], "--yes"]),
+         schema(["project"], project=PROJECT), CHANGES, build=b_project_remove),
+    Tool("project_export", "Export projects to a project file",
+         "Write a project file holding projects to give to players: their names, the http(s) address each updates "
+         "from, their publisher keys, descriptions, websites and where each goes (install_hint, and install_folder: "
+         "the folder it goes into inside the one a player picks); never a folder path, a server login or a key file. "
+         "out ending in .deltapatch opens DeltaPatcher with a double-click; .html is a page anyone can read in a "
+         "browser. It is not signed: signing needs the passphrase, which this server never handles (export it from "
+         "the DeltaPatcher app or its command line to sign it).",
+         schema(["projects", "out"], projects=s_list("The projects: their names or settings files."),
+                out=s_str("The file to write: NAME.deltapatch or NAME.html.")),
+         WRITES, build=lambda a: ["project", "export"] + [str(n) for n in a["projects"]] + ["--out", path_of(a["out"])]),
+    Tool("project_import", "Import a project file",
+         "Add the projects of a project file (.deltapatch or .html, from a publisher) as projects here. "
+         "dry_run=true only reads it: what it holds and who signed it. A signed file changed after it was signed is "
+         "refused; an unsigned one is added with a warning. Each project keeps the folder given (with several, a "
+         "folder each inside it, named after the project), or one chosen later. A project whose file names a folder "
+         "for it (install_folder) goes into that folder inside the one given, unless the one given already is it; its "
+         "install_hint says where it goes.",
+         schema(["file"], file=s_str("The project file."),
+                folder=s_str("The folder to keep up to date (several projects: a folder each inside it, named by "
+                             "install_folder or after the project). Left out: chosen later, with set_settings "
+                             "install_dir."),
+                projects=s_list("Only these projects of the file, by name (left out: every one)."),
+                dry_run=s_bool("Read the file and say what it holds; add nothing.")),
+         {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
+         build=b_project_import),
     Tool("check_for_new_version", "Is DeltaPatcher up to date",
          "Whether a newer DeltaPatcher is out. Updating DeltaPatcher itself is done in its app or command line.",
          schema(), RO_NET, build=simple("self-update", "--check")),

@@ -21,12 +21,14 @@ export function Card(props: { title?: string; icon?: LucideIcon; actions?: React
   )
 }
 
-type Variant = 'primary' | 'secondary' | 'ghost' | 'danger'
+type Variant = 'primary' | 'secondary' | 'ghost' | 'danger' | 'remove'
 const VARIANTS: Record<Variant, string> = {
   primary: 'bg-delta text-ink-950 hover:bg-delta-light font-semibold shadow-md shadow-delta/20',
   secondary: 'bg-ink-700 text-slate-100 hover:bg-ink-600 border border-ink-600',
   ghost: 'text-ink-300 hover:text-slate-100 hover:bg-ink-700/60',
-  danger: 'bg-rose-600/90 text-white hover:bg-rose-500 font-semibold'
+  danger: 'bg-rose-600/90 text-white hover:bg-rose-500 font-semibold',
+  // a quiet button that removes something: red when the pointer is on it
+  remove: 'text-ink-300 border border-ink-600 hover:border-rose-500/50 hover:bg-rose-500/10 hover:text-rose-300'
 }
 
 export function Button(props: {
@@ -65,12 +67,16 @@ export function Field(props: {
   mono?: boolean
   type?: 'text' | 'number'
   className?: string
+  // what is wrong with a typed value ('' when nothing): such a value stays on screen, unsaved, and the hint
+  // says what is wrong
+  check?: (v: string) => string
 }): JSX.Element {
   const value = useApp((s) => s.settings[props.setting])
   const fallback = useApp((s) => s.schema.find((x) => x.key === props.setting)?.default)
   const set = useApp((s) => s.set)
   const text = value === undefined || value === null ? '' : String(value)
-  const [draft, setDraft] = useState<string | null>(null)   // a number field while it is not a whole number
+  const [draft, setDraft] = useState<string | null>(null)   // a value not saved while it is not right
+  const problem = draft !== null && props.check ? props.check(draft) : ''
   const placeholder = props.placeholder ?? (fallback !== undefined && fallback !== '' ? String(fallback) : undefined)
   const browse = async (): Promise<void> => {
     const p = props.browse === 'file' ? await window.api.pickFile(text) : await window.api.pickFolder(text)
@@ -88,6 +94,11 @@ export function Field(props: {
           spellCheck={false}
           onChange={(e) => {
             const v = e.target.value
+            if (props.check) {
+              if (props.check(v)) return setDraft(v)
+              setDraft(null)
+              return set(props.setting, v)
+            }
             if (props.type !== 'number') return set(props.setting, v)
             // whole numbers only: anything else stays on screen until it is one, and is never saved as 0
             if (/^\d{1,6}$/.test(v)) {
@@ -105,20 +116,21 @@ export function Field(props: {
           </Button>
         )}
       </div>
-      {props.hint && <p className="hint">{props.hint}</p>}
+      {problem ? <p className="hint text-rose-300">{problem}</p> : props.hint && <p className="hint">{props.hint}</p>}
     </div>
   )
 }
 
-export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string }): JSX.Element {
+export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void; label: string; hint?: string; disabled?: boolean }): JSX.Element {
   return (
-    <label className="flex cursor-pointer items-start gap-3">
+    <label className={`flex items-start gap-3 ${props.disabled ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
       <button
         type="button"
         role="switch"
         aria-checked={props.checked}
+        disabled={props.disabled}
         onClick={() => props.onChange(!props.checked)}
-        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${props.checked ? 'bg-delta' : 'bg-ink-600'}`}
+        className={`relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors ${props.checked ? 'bg-delta' : 'bg-ink-600'} ${props.disabled ? 'opacity-50' : ''}`}
       >
         <span
           className={`absolute top-0.5 h-4 w-4 rounded-full bg-white shadow transition-all ${props.checked ? 'left-[18px]' : 'left-0.5'}`}
@@ -132,10 +144,15 @@ export function Toggle(props: { checked: boolean; onChange: (v: boolean) => void
   )
 }
 
-export function SettingToggle(props: { setting: string; label: string; hint?: string }): JSX.Element {
+// blocked: the setting cannot work here; the switch shows off and the hint says why
+export function SettingToggle(props: { setting: string; label: string; hint?: string; blocked?: string }): JSX.Element {
   const value = useApp((s) => Boolean(s.settings[props.setting]))
   const set = useApp((s) => s.set)
-  return <Toggle checked={value} onChange={(v) => set(props.setting, v)} label={props.label} hint={props.hint} />
+  return props.blocked ? (
+    <Toggle checked={false} disabled onChange={() => undefined} label={props.label} hint={props.blocked} />
+  ) : (
+    <Toggle checked={value} onChange={(v) => set(props.setting, v)} label={props.label} hint={props.hint} />
+  )
 }
 
 type ChipKind = 'ok' | 'warn' | 'bad' | 'info' | 'muted'

@@ -6,8 +6,9 @@ up to date and where that comes from), publish (the folder it releases) and serv
     is the project every command uses unless --project names another.
   - Every .ini file in the projects folder beside the main file is a project; `project new` makes one.
     Removing one of these deletes its file.
-  - A project file kept anywhere else (a game's folder, a share) can be added: the main file lists its
-    path in project_files. Removing one only takes it off the list; the file stays where it is.
+  - A project's settings file kept anywhere else (a game's folder, a share) can be added: the main file
+    lists its path in project_files. Removing one only takes it off the list; the file stays where it is.
+  - A project file (presets.py) shares projects with other people: importing one makes projects here.
 
 A project's name is its title, else its file's name ("Default" for the main file). Names are unique,
 letter case aside, so a name always says which project is meant.
@@ -105,7 +106,7 @@ def main_project():
 
 
 def added_files():
-    """The project files kept elsewhere, as the main file lists them."""
+    """The settings files of projects kept elsewhere, as the main file lists them."""
     listed = config.file_values(config.ensure(), ["project_files"]).get("project_files", "")
     return [os.path.abspath(os.path.expanduser(p)) for p in _list(listed)]
 
@@ -151,7 +152,7 @@ def check_file(path):
 def resolve(text, allow_missing=False):
     """The project `text` names: a project's name (letter case aside), its settings file, or a file's name in
     the projects folder; empty: Default. A settings file that is not listed is used as it is (a launcher can
-    name a project file anywhere). allow_missing: a listed project whose file is gone, to take it off the list."""
+    name a settings file anywhere). allow_missing: a listed project whose file is gone, to take it off the list."""
     every = all_projects()
     text = str(text or "").strip()
     if not text:
@@ -182,24 +183,49 @@ def resolve(text, allow_missing=False):
     raise ProjectError("there is no project %s:  deltapatcher projects  lists them" % text, "no-such-project")
 
 
-def check_name(name, project=None):
-    """A project's name as it will be kept, or ProjectError. Letters, digits, spaces and - _ . ( ), at most 60
-    characters, not starting with a dash (a command line would take it for an option), not ending with a dot,
-    not a name Windows keeps for its devices (CON, NUL, COM1, ...), and no other project's name (letter case
-    aside). `project`: the one being renamed, which may keep its own."""
+def name_problem(name):
+    """What is wrong with a project's name by the rules alone ('' when nothing): letters, digits, spaces and
+    - _ . ( ), at most 60 characters, not starting with a dash (a command line would take it for an option),
+    not ending with a dot, and not a name Windows keeps for its devices (CON, NUL, COM1, ...)."""
     name = str(name or "").strip()
     if not name:
-        raise ProjectError("give the project a name", "bad-name")
+        return "give the project a name"
+    return _name_rules(name, "a project's name")
+
+
+def folder_name_problem(name):
+    """What is wrong with the name of the folder a project goes into inside the folder a player picks
+    (install_folder), '' when nothing: one folder's name, by the rules of a project's name, and no space at
+    either end."""
+    name = str(name or "")
+    if not name.strip():
+        return "give the folder a name"
+    if name != name.strip():
+        return "a folder's name cannot start or end with a space"
+    return _name_rules(name, "a folder's name")
+
+
+def _name_rules(name, what):
     if len(name) > NAME_MAX:
-        raise ProjectError("a project's name is at most %d characters" % NAME_MAX, "bad-name")
+        return "%s is at most %d characters" % (what, NAME_MAX)
     if not _NAME.match(name):
-        raise ProjectError("a project's name has letters, digits, spaces and - _ . ( ) only: %s" % name, "bad-name")
+        return "%s has letters, digits, spaces and - _ . ( ) only: %s" % (what, name)
     if name.startswith("-"):
-        raise ProjectError("a project's name cannot start with a dash: %s" % name, "bad-name")
+        return "%s cannot start with a dash: %s" % (what, name)
     if name.endswith("."):
-        raise ProjectError("a project's name cannot end with a dot: %s" % name, "bad-name")
+        return "%s cannot end with a dot: %s" % (what, name)
     if name.split(".")[0].strip().upper() in RESERVED:
-        raise ProjectError("%s is a name Windows keeps for a device: choose another" % name, "bad-name")
+        return "%s is a name Windows keeps for a device: choose another" % name
+    return ""
+
+
+def check_name(name, project=None):
+    """A project's name as it will be kept, or ProjectError: the rules of name_problem(), and no other
+    project's name (letter case aside). `project`: the one being renamed, which may keep its own."""
+    name = str(name or "").strip()
+    problem = name_problem(name)
+    if problem:
+        raise ProjectError(problem, "bad-name")
     for p in all_projects():
         if p.title.lower() == name.lower() and not (project is not None and same(p, project)):
             raise ProjectError("there is a project named %s already" % p.title, "name-taken", {"name": name})
@@ -224,12 +250,13 @@ def new(name):
 
 
 def add(path, name=None):
-    """List a project file kept elsewhere; `name` gives it that name (written into the file). Returns it."""
+    """List a project's settings file kept elsewhere; `name` gives it that name (written into the file).
+    Returns it."""
     full = os.path.abspath(os.path.expanduser(str(path or "").strip().strip('"')))
     if not os.path.isfile(full):
         raise ProjectError("there is no file %s" % full, "not-found")
     if ";" in full:
-        raise ProjectError("a project file's path cannot have a ; in it: %s" % full, "bad-path")
+        raise ProjectError("a settings file's path cannot have a ; in it: %s" % full, "bad-path")
     for p in all_projects():
         if _key(p.path) == _key(full):
             raise ProjectError("%s is the project %s already" % (full, p.title), "listed", p.tag())
@@ -276,6 +303,11 @@ def remove(project):
     return done
 
 
+def remove_all():
+    """Every project but Default leaves, as remove() does each. Returns [(project, "deleted" or "unlisted")]."""
+    return [(p, remove(p)) for p in all_projects()[1:]]
+
+
 def rename(project, name):
     """Give a project a new name: its title changes; its file stays where and what it is."""
     name = check_name(name, project)
@@ -320,7 +352,9 @@ def where(cfg):
 
 def describe(project, cfg=None):
     """A project for listings: its name and file, and what is set up: the folder it updates and its source,
-    the folder it releases and where that goes."""
+    the folder it releases and where that goes; its description, website and where it goes for players; the
+    http(s) address a project file would give for it ('' when it has none)."""
+    from .presets import address
     if cfg is None:
         cfg = dict(config.DEFAULTS) if project.missing else config.load(project)
     goes = where(cfg)
@@ -328,5 +362,7 @@ def describe(project, cfg=None):
             "missing": project.missing,
             "install_dir": cfg["install_dir"], "source_url": cfg["source_url"], "publish_src": cfg["publish_src"],
             "deploy_mode": cfg["deploy_mode"], "where": goes or "",
+            "description": cfg["description"], "website": cfg["website"], "install_hint": cfg["install_hint"],
+            "install_folder": cfg["install_folder"], "address": address(cfg),
             "update_ready": bool(cfg["install_dir"]) and bool(cfg["source_url"]) and not project.missing,
             "release_ready": bool(cfg["publish_src"]) and bool(goes) and not project.missing}

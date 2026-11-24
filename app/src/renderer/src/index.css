@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink-950 text-slate-100 font-sans antialiased;
+  user-select: none;
+}
+
+input,
+textarea,
+.selectable {
+  user-select: text;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #2d394b;
+  border-radius: 8px;
+  border: 2px solid #0f141c;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@layer components {
+  .input {
+    @apply w-full rounded-lg bg-ink-900 border border-ink-600 px-3 py-2 text-sm text-slate-100 placeholder:text-ink-400
+      outline-none transition-colors focus:border-delta focus:ring-2 focus:ring-delta/25;
+  }
+  .label {
+    @apply block text-xs font-semibold uppercase tracking-wider text-ink-300 mb-1.5;
+  }
+  .hint {
+    @apply mt-1.5 text-xs text-ink-400 leading-relaxed;
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "name": "deltapatcher-app",
+  "productName": "DeltaPatcher",
+  "version": "0.2.0",
+  "description": "DeltaPatcher: delta patching with SHA-256 blobs. The window; the engine is the Python package beside it.",
+  "author": "DeltaPatcher contributors",
+  "license": "MIT",
+  "private": true,
+  "main": "out/main/index.js",
+  "scripts": {
+    "prepare-assets": "node scripts/prepare.mjs",
+    "dev": "node scripts/prepare.mjs && electron-vite dev",
+    "build": "node scripts/prepare.mjs && electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "dist": "node scripts/prepare.mjs --need-engine && electron-vite build && electron-builder --publish never",
+    "capture": "node scripts/prepare.mjs && electron-vite build && electron . --capture=../docs/images"
+  },
+  "devDependencies": {
+    "@types/node": "20.19.39",
+    "@types/react": "18.3.28",
+    "@types/react-dom": "18.3.7",
+    "@vitejs/plugin-react": "4.7.0",
+    "autoprefixer": "10.5.0",
+    "electron": "31.7.7",
+    "electron-builder": "24.13.3",
+    "electron-vite": "2.3.0",
+    "lucide-react": "0.441.0",
+    "postcss": "8.5.14",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "tailwindcss": "3.4.19",
+    "typescript": "5.9.3",
+    "vite": "5.4.21",
+    "zustand": "4.5.7"
+  }
+}

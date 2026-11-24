@@ -40,6 +40,12 @@ test-data/
 # ---- builds ----
 build/
 dist/
+# the app (app/): its packages, its build output, and what scripts/prepare.mjs copies in
+node_modules/
+app/out/
+*.tsbuildinfo
+app/resources/engine/
+app/src/renderer/public/logo.png
 *.spec.bak
 tools/icon-preview.png
 

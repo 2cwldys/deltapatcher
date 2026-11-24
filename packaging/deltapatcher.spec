@@ -1,31 +1,21 @@
-# PyInstaller spec: two single-file programs from one source tree.
-#   dist/DeltaPatcher.exe       the window (no console), the .ico on the file, the window and the tray
-#   dist/deltapatcher-cli.exe   the command line
+# PyInstaller spec: the engine, built two ways from one analysis.
+#   dist/deltapatcher-cli(.exe)    the command line: one self-contained file to copy anywhere
+#   dist/engine/                   the engine the DeltaPatcher app (app/) runs: deltapatcher-engine(.exe)
+#                                  and its _internal folder. A folder starts in a fraction of the time
+#                                  a one-file program takes, which unpacks itself on every run.
+# The two programs need different names: PyInstaller keeps each one's parts under its name in the work folder.
 # Build:  pyinstaller packaging/deltapatcher.spec --noconfirm   (build.ps1 / build.sh do it in a venv)
 import os
-import sys
-
-from PyInstaller.utils.hooks import collect_submodules
 
 ROOT = os.path.abspath(os.path.join(SPECPATH, ".."))
 ICON = os.path.join(ROOT, "deltapatcher", "assets", "deltapatcher.ico")
-DATAS = [(os.path.join(ROOT, "deltapatcher", "assets"), os.path.join("deltapatcher", "assets"))]
-HIDDEN = collect_submodules("pystray") + ["PIL.IcoImagePlugin", "PIL.PngImagePlugin"]
-EXCLUDES = ["numpy", "scipy", "pandas", "matplotlib", "torch", "IPython", "pytest"]
+EXCLUDES = ["numpy", "scipy", "pandas", "matplotlib", "torch", "IPython", "pytest", "tkinter", "PIL"]
+OPTIONS = dict(console=True, icon=ICON if os.name == "nt" else None, upx=False, strip=False, debug=False)
 
+a = Analysis([os.path.join(SPECPATH, "entry_cli.py")], pathex=[ROOT], excludes=EXCLUDES, noarchive=False)
+pyz = PYZ(a.pure)
 
-def analysis(script):
-    return Analysis([os.path.join(SPECPATH, script)], pathex=[ROOT], datas=DATAS, hiddenimports=HIDDEN,
-                    excludes=EXCLUDES, noarchive=False)
+EXE(pyz, a.scripts, a.binaries, a.datas, [], name="deltapatcher-cli", runtime_tmpdir=None, **OPTIONS)
 
-
-def onefile(a, name, console):
-    pyz = PYZ(a.pure)
-    return EXE(pyz, a.scripts, a.binaries, a.datas, [], name=name, console=console, icon=ICON,
-               upx=False, strip=False, debug=False, runtime_tmpdir=None)
-
-
-gui = analysis("entry_gui.py")
-cli = analysis("entry_cli.py")
-onefile(gui, "DeltaPatcher", console=False)
-onefile(cli, "deltapatcher-cli", console=True)
+engine = EXE(pyz, a.scripts, [], exclude_binaries=True, name="deltapatcher-engine", **OPTIONS)
+COLLECT(engine, a.binaries, a.datas, name="engine", upx=False, strip=False)

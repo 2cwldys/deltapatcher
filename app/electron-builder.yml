@@ -1,0 +1,56 @@
+# electron-builder: the DeltaPatcher app for Windows, Linux and macOS, with the engine inside.
+# The engine (deltapatcher-cli, built by PyInstaller from the Python package) must be in
+# resources/engine/ first: build.ps1 / build.sh / the build workflow put it there. Each system's
+# engine is built on that system, so each system's app is built on that system too.
+appId: io.github.deltapatcher
+productName: DeltaPatcher
+copyright: Copyright (c) 2026 DeltaPatcher contributors
+directories:
+  buildResources: build
+  output: ../dist/app
+files:
+  - out/**/*
+  - package.json
+extraResources:
+  - from: resources/engine
+    to: engine
+    filter: ['**/*']
+  - from: build/icon.png
+    to: icon.png
+  - from: build/icon.ico
+    to: icon.ico
+win:
+  executableName: DeltaPatcher
+  icon: build/icon.ico
+  target:
+    - target: portable
+      arch: [x64]
+    - target: nsis
+      arch: [x64]
+portable:
+  artifactName: DeltaPatcher-${version}-portable.exe
+nsis:
+  artifactName: DeltaPatcher-${version}-setup.exe
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+linux:
+  executableName: deltapatcher
+  icon: build/icon.png
+  category: Utility
+  target:
+    - target: AppImage
+      arch: [x64]
+    - target: tar.gz
+      arch: [x64]
+appImage:
+  artifactName: DeltaPatcher-${version}.AppImage
+mac:
+  icon: build/icon.png
+  category: public.app-category.utilities
+  identity: null
+  target:
+    - target: dmg
+    - target: zip
+dmg:
+  artifactName: DeltaPatcher-${version}.dmg
+publish: null

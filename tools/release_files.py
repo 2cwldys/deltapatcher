@@ -15,8 +15,10 @@ Each system's files are built on that system; the Build workflow uploads each on
 """
 
 import glob
+import json
 import os
 import platform
+import re
 import shutil
 import sys
 import tarfile
@@ -25,6 +27,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 OUT = os.path.join(DIST, "release")
 APP_FILES = {"windows": (".exe", ".zip"), "linux": (".AppImage", ".tar.gz"), "macos": (".dmg", ".zip")}
+# the app files whose names do not say the system: DeltaPatcher-<version>-setup.exe, .AppImage, -<arch>.dmg, -<arch>-mac.zip
+UNNAMED = {"windows": (".exe",), "linux": (".AppImage",), "macos": (".dmg", "-mac.zip")}
 
 
 def cli_archive(cli, dest):
@@ -47,18 +51,19 @@ def main():
     cli = os.path.join(DIST, "deltapatcher-cli" + exe)
     if not os.path.isfile(cli):
         sys.exit("no %s: build first (build.ps1 or build.sh)" % cli)
+    # this version's app files only: dist/app keeps what earlier builds made there
+    with open(os.path.join(ROOT, "app", "package.json"), encoding="utf-8") as f:
+        version = json.load(f)["version"]
+    this_version = re.compile(r"^DeltaPatcher-%s[-.]" % re.escape(version), re.I)
     app = sorted(p for p in glob.glob(os.path.join(DIST, "app", "*"))
-                 if os.path.isfile(p) and os.path.basename(p).lower().startswith("deltapatcher-")
-                 and p.endswith(APP_FILES[system]))
+                 if os.path.isfile(p) and this_version.match(os.path.basename(p)) and p.endswith(APP_FILES[system]))
     if not app:
-        print("no app files in dist/app/ (an engine-only build): only the command line is gathered")
+        print("no %s app files in dist/app/ (an engine-only build): only the command line is gathered" % version)
 
     os.makedirs(OUT, exist_ok=True)
     # this system's files from an earlier run go; another system's stay
     for name in os.listdir(OUT):
-        mine = ("-%s-" % system in name) or (name.lower().startswith("deltapatcher-") and name.endswith(APP_FILES[system])
-                                              and not name.startswith("deltapatcher-cli-"))
-        if mine:
+        if "-%s-" % system in name or (name.startswith("DeltaPatcher-") and name.endswith(UNNAMED[system])):
             os.remove(os.path.join(OUT, name))
 
     base = "deltapatcher-cli-%s-%s" % (system, arch)

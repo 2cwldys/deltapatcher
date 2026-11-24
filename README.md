@@ -123,7 +123,7 @@ app/              the app (Electron, React, Tailwind): the window, which runs th
 cli/              deltapatcher.bat / deltapatcher.sh: the command line straight from the repository
 packaging/        the PyInstaller spec: the engine as one self-contained file, and as a folder for the app
 tests/            the engine's tests
-tools/            the icon, the README screenshots, the social preview, the secret scan, the release files
+tools/            the icon, the README screenshots, the social preview, the secret scan, the release files, CI annotations
 docs/             the guides
 ```
 
@@ -170,7 +170,7 @@ releases, deploy through a stand-in SFTP server, and drive the engine's JSON mod
 ## Contributing
 
 Pull requests are welcome. On every push and pull request, GitHub runs:
-- **Build**: the tests on Windows, Linux and macOS, then the engine and the app
+- **Build**: on Windows, Linux and macOS, each on its own: the tests, then the engine and the app, uploaded as that system's artifact (a failing test shows as an annotation on the run)
 - **CodeQL**: Python and TypeScript
 - **Secret scan**: [`tools/secret_scan.py`](tools/secret_scan.py) and gitleaks
 

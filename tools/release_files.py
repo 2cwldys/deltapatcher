@@ -3,22 +3,24 @@
     python tools/release_files.py          (build.ps1 / build.sh run it last)
 
 dist/release/ then holds, for this system:
-    deltapatcher-cli-<system>-<arch>[.exe]              the command line (renamed: every system's is
-                                                        called deltapatcher-cli when it is built). No
-                                                        version in the name: a Linux or macOS program has
-                                                        no extension, and Windows would take ".0-linux-x64"
-                                                        after the version's last dot for one.
-    DeltaPatcher-<version>-...                          the app: .exe (Windows), .AppImage and .tar.gz
-                                                        (Linux), .dmg and .zip (macOS)
+    DeltaPatcher-<version>-...                        the app: .exe (Windows), .AppImage and .tar.gz
+                                                      (Linux), .dmg and .zip (macOS)
+    deltapatcher-cli-<version>-windows-x64.exe        the command line on Windows
+    deltapatcher-cli-<version>-<system>-<arch>.tar.gz the command line on Linux and macOS: deltapatcher-cli
+                                                      inside, runnable as soon as it is unpacked. A bare
+                                                      program there has no extension, and Windows would read
+                                                      everything after the version's last dot as one.
 Files another system put there are left alone, so one folder can gather every system's files.
 Each system's files are built on that system; the Build workflow uploads each one's dist/release/.
 """
 
 import glob
+import json
 import os
 import platform
 import shutil
 import sys
+import tarfile
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
@@ -26,7 +28,20 @@ OUT = os.path.join(DIST, "release")
 APP_FILES = {"windows": (".exe",), "linux": (".AppImage", ".tar.gz"), "macos": (".dmg", ".zip")}
 
 
+def cli_archive(cli, dest):
+    """deltapatcher-cli alone in a .tar.gz, executable for everyone once unpacked."""
+    def runnable(info):
+        info.mode = 0o755
+        info.uid = info.gid = 0
+        info.uname = info.gname = ""
+        return info
+    with tarfile.open(dest, "w:gz") as tar:
+        tar.add(cli, arcname="deltapatcher-cli", filter=runnable)
+
+
 def main():
+    with open(os.path.join(ROOT, "app", "package.json"), encoding="utf-8") as f:
+        version = json.load(f)["version"]
     system = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
     machine = platform.machine().lower()
     arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}.get(machine, machine)
@@ -49,8 +64,13 @@ def main():
         if mine:
             os.remove(os.path.join(OUT, name))
 
-    names = ["deltapatcher-cli-%s-%s%s" % (system, arch, exe)]
-    shutil.copy2(cli, os.path.join(OUT, names[0]))
+    base = "deltapatcher-cli-%s-%s-%s" % (version, system, arch)
+    if system == "windows":
+        names = [base + ".exe"]
+        shutil.copy2(cli, os.path.join(OUT, names[0]))
+    else:
+        names = [base + ".tar.gz"]
+        cli_archive(cli, os.path.join(OUT, names[0]))
     for p in app:
         shutil.copy2(p, os.path.join(OUT, os.path.basename(p)))
         names.append(os.path.basename(p))

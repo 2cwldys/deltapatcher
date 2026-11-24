@@ -66,13 +66,14 @@ artifacts) or **Releases**:
 
 | System | App | Command line |
 | --- | --- | --- |
-| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli-windows-x64.exe` |
-| Linux | `DeltaPatcher-<version>.AppImage` or `.tar.gz` | `deltapatcher-cli-linux-x64` |
-| macOS (Apple silicon) | `DeltaPatcher-<version>-arm64.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli-macos-arm64` |
+| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli-<version>-windows-x64.exe` |
+| Linux | `DeltaPatcher-<version>.AppImage` or `-linux-x64.tar.gz` | `deltapatcher-cli-<version>-linux-x64.tar.gz` |
+| macOS (Apple silicon) | `DeltaPatcher-<version>-arm64.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli-<version>-macos-arm64.tar.gz` |
 
-Everything is self-contained: the app carries its own engine, and the command line is one file (rename it
-to `deltapatcher-cli` if you like). On Linux and macOS, make a downloaded program runnable first:
-`chmod +x <file>`.
+Everything is self-contained: the app carries its own engine, and the command line is one program. On
+Linux and macOS it comes in a `.tar.gz`: `tar -xzf <file>`, then `./deltapatcher-cli`. The AppImage needs
+`chmod +x` once after downloading. On Windows, double-clicking the command line opens a prompt to type its
+commands in; `--close` makes it close by itself when it is done (for shortcuts and launchers).
 
 ## Quick start
 

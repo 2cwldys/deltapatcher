@@ -38,7 +38,8 @@ function repoRoot(): string {
 // trust_key filled in) is the one the engine uses; the engine itself lives inside the app's resources.
 function portableSettings(): NodeJS.ProcessEnv {
   if (process.env.DELTAPATCHER_CONFIG) return {}
-  // the portable .exe, an AppImage (its own path; execPath is inside the mounted image), or the installed app
+  // a portable .exe, an AppImage (its own path; execPath is inside the mounted image), or the app's own
+  // folder (the unzipped Windows .zip, or the installed app)
   const dirs = [
     process.env.PORTABLE_EXECUTABLE_DIR,
     process.env.APPIMAGE ? dirname(process.env.APPIMAGE) : undefined,

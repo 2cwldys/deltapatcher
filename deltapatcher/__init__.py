@@ -9,3 +9,4 @@ a texture or an executable is just bytes with a hash.
 __version__ = "0.2.0"
 APP_NAME = "DeltaPatcher"
 USER_AGENT = "DeltaPatcher/" + __version__
+REPO = "2cwldys/deltapatcher"          # on GitHub: its releases are where DeltaPatcher's own updates come from

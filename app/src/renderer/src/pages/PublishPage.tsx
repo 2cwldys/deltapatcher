@@ -117,7 +117,7 @@ export default function PublishPage(): JSX.Element {
             hint={'Where manifest.json, blobs/ and sigs/ are written.\nThis is what gets served and deployed.'} />
           <Field label="Name" setting="name" placeholder="My Game" />
           <Field label="Version" setting="version" placeholder="1.0"
-            hint="Raise it for every new release: publishing to the same Store adds only what changed." />
+            hint="Shown to players. Publishing again adds only what changed, with a new version or the same one." />
           <PathList setting="leave_out" label="Leave out of the release" empty="Nothing picked: the whole folder is released."
             hint={'Players never get these. A folder leaves out everything in it.\nAlways left out: .git, .svn, .hg, __pycache__, Thumbs.db, desktop.ini, .DS_Store, *.tmp.'} />
           <PathList setting="protect" label="Players keep their own copy" empty="Nothing picked: every file follows the release."

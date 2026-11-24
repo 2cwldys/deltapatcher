@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import { RefreshCw, UploadCloud, Server, SlidersHorizontal, LucideIcon } from 'lucide-react'
+import { Bug, RefreshCw, UploadCloud, Server, SlidersHorizontal, LucideIcon } from 'lucide-react'
 import { Page, useApp } from '../store/app'
+import { REPO_URL } from '@shared/project'
 
 const LINKS: { page: Page; label: string; hint: string; Icon: LucideIcon }[] = [
   { page: 'update', label: 'Update', hint: 'Keep a folder up to date', Icon: RefreshCw },
@@ -51,7 +52,16 @@ export default function Sidebar(): JSX.Element {
         <div className="rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 text-[11px] leading-relaxed text-ink-400">
           Every file is checked against its <span className="text-blob">SHA-256</span> before it is used.
         </div>
-        <div className="mt-3 font-mono text-[11px] tracking-wider text-ink-400">{version ? `v${version}` : ''}</div>
+        <a
+          href={`${REPO_URL}/issues/new`}
+          target="_blank"
+          rel="noreferrer"
+          className="mt-3 flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100"
+        >
+          <Bug size={14} className="text-blob-light" />
+          Report an issue
+        </a>
+        <div className="mt-1 px-1 font-mono text-[11px] tracking-wider text-ink-400">{version ? `v${version}` : ''}</div>
       </div>
     </aside>
   )

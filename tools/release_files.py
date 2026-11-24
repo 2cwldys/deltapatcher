@@ -3,8 +3,8 @@
     python tools/release_files.py          (build.ps1 / build.sh run it last)
 
 dist/release/ then holds, for this system:
-    DeltaPatcher-<version>-...                        the app: .exe (Windows), .AppImage and .tar.gz
-                                                      (Linux), .dmg and .zip (macOS)
+    DeltaPatcher-<version>-...                        the app: setup .exe and .zip (Windows), .AppImage and
+                                                      .tar.gz (Linux), .dmg and .zip (macOS)
     deltapatcher-cli-windows-x64.exe                  the command line on Windows
     deltapatcher-cli-<system>-<arch>.tar.gz           the command line on Linux and macOS: deltapatcher-cli
                                                       inside, runnable as soon as it is unpacked (a download
@@ -24,7 +24,7 @@ import tarfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DIST = os.path.join(ROOT, "dist")
 OUT = os.path.join(DIST, "release")
-APP_FILES = {"windows": (".exe",), "linux": (".AppImage", ".tar.gz"), "macos": (".dmg", ".zip")}
+APP_FILES = {"windows": (".exe", ".zip"), "linux": (".AppImage", ".tar.gz"), "macos": (".dmg", ".zip")}
 
 
 def cli_archive(cli, dest):

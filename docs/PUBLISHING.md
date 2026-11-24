@@ -116,7 +116,7 @@ Deploying sends only the blobs the target does not have yet.
 
 Players need DeltaPatcher and your source address. Common ways:
 
-- **Ship the DeltaPatcher app** (the portable `.exe` on Windows, the AppImage on Linux) next to the game, with a `deltapatcher.ini` beside it that already holds
+- **Ship the DeltaPatcher app** (the unzipped Windows `.zip`, the AppImage on Linux) next to the game, with a `deltapatcher.ini` beside it that already holds
   `source_url` (and `trust_key` if you sign). Players just click **Update**. Without the file, tell them
   the address once; the window remembers it.
 - **A one-click updater** for your launcher or a `.bat` file, using the command-line program:

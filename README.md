@@ -66,7 +66,7 @@ artifacts) or **Releases**:
 
 | System | App | Command line |
 | --- | --- | --- |
-| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli-windows-x64.exe` |
+| Windows | `DeltaPatcher-<version>-setup.exe`, or `-windows-x64.zip` (no install: unzip, run `DeltaPatcher.exe`) | `deltapatcher-cli-windows-x64.exe` |
 | Linux | `DeltaPatcher-<version>.AppImage` or `-linux-x64.tar.gz` | `deltapatcher-cli-linux-x64.tar.gz` |
 | macOS (Apple silicon) | `DeltaPatcher-<version>-arm64.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli-macos-arm64.tar.gz` |
 
@@ -152,11 +152,26 @@ for a GitHub release and ready to upload to one.
 `dist/` is not tracked by git. Each *Build* workflow artifact is that folder for one system; macOS files
 come only from there (or from a Mac).
 
-**A new version**: `python tools/version.py 1.3.0` writes it everywhere it is kept (`deltapatcher/__init__.py`,
-`app/package.json` and its lock file; `pyproject.toml` reads it from the code). `python tools/version.py` alone
-shows it and checks that every copy agrees. Commit and push, and the *Build* run's app files carry the new
-number (the command line's file names carry none). Tag the release `v1.3.0`: a tag naming another version
-stops the build.
+### Releasing a new version of DeltaPatcher
+
+1. **Set the version.** `python tools/version.py 0.3.0` writes it everywhere it is kept
+   (`deltapatcher/__init__.py`, `app/package.json` and its lock file; `pyproject.toml` reads it from the
+   code). `patch`, `minor` or `major` instead of a number gives the next one; `python tools/version.py`
+   alone shows the version and checks that every copy agrees.
+2. **Commit and push** to `main`.
+3. **Wait for the *Build* run** (the repository's **Actions** tab) to pass on Windows, Linux and macOS.
+4. **Download its artifacts**: on the run's **Summary** page, at the bottom under **Artifacts**:
+   `deltapatcher-Windows`, `deltapatcher-Linux` and `deltapatcher-macOS`, one zip each.
+5. **Make the release**: **Releases** > **Draft a new release**, tag `v0.3.0` (the tag must name the same
+   version: a tag that does not stops the build), and attach the files from the three zips:
+
+   | System | Attach | Leave out |
+   | --- | --- | --- |
+   | Windows | `DeltaPatcher-0.3.0-setup.exe`, `DeltaPatcher-0.3.0-windows-x64.zip`, `deltapatcher-cli-windows-x64.exe` | |
+   | macOS | `DeltaPatcher-0.3.0-arm64.dmg`, `deltapatcher-cli-macos-arm64.tar.gz` | `DeltaPatcher-0.3.0-arm64-mac.zip` (the same app as the .dmg) |
+   | Linux | `DeltaPatcher-0.3.0.AppImage`, `deltapatcher-cli-linux-x64.tar.gz` | `DeltaPatcher-0.3.0-linux-x64.tar.gz` (only for systems that cannot run an AppImage) |
+
+The app's files carry the version in their names; the command line's do not.
 
 **Working on the app**: build the engine once (`build.ps1 -EngineOnly`), then `cd app`, `npm ci`,
 `npm run dev`. Without a built engine the app runs the engine from source (`python -m deltapatcher`).

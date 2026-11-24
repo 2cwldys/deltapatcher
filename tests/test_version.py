@@ -9,6 +9,7 @@ import unittest
 from unittest import mock
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tools"))
 
 import version as tool  # noqa: E402  (tools/version.py)
@@ -24,6 +25,11 @@ class Version(unittest.TestCase):
             text = f.read()
         self.assertIn('dynamic = ["version"]', text)
         self.assertIn('attr = "deltapatcher.__version__"', text)
+
+    def test_the_app_and_the_engine_name_the_same_repository(self):
+        import deltapatcher
+        with open(os.path.join(ROOT, "app", "src", "shared", "project.ts"), encoding="utf-8") as f:
+            self.assertIn("export const REPO = '%s'" % deltapatcher.REPO, f.read())
 
     def test_the_next_version(self):
         self.assertEqual(tool.bumped("0.2.0", "1.4.2"), "1.4.2")

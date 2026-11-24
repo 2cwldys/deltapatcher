@@ -10,7 +10,7 @@ import { Page, useApp } from './store/app'
 
 const TITLES: Record<Page, [string, string]> = {
   update: ['Update', 'Bring a folder up to the latest release, downloading only what changed.'],
-  publish: ['Publish', 'Turn a folder into a release, and every new version into an update: only what changed is added.'],
+  publish: ['Publish', 'Turn a folder into a release. Publishing it again adds only what changed.'],
   server: ['Server', 'Send a release to a VPS over SSH, or to a folder, sending only what is missing.'],
   settings: ['Settings', 'deltapatcher.ini, the log, and about.']
 }

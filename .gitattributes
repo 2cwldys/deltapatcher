@@ -3,6 +3,8 @@
 *.sh text eol=lf
 *.py text eol=lf
 *.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
 
 # ---- binaries go through Git LFS ----
 # archives and game packs

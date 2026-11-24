@@ -109,15 +109,19 @@ class Window(unittest.TestCase):
             rc, text, _ = run(["--json", "--no-log", "version"])
         self.assertEqual(rc, 0)
 
-    def test_double_clicked_keeps_a_prompt_open(self):
-        typed = ["", "version", cli.prog_name() + " version", "help update", "nonsense", "--json version", "exit",
-                 "version"]
+    def test_double_clicked_opens_the_menu_and_its_prompt(self):
+        # the menu's 4 is the prompt; exit there goes back to the menu, and 0 closes it
+        typed = ["4", "", "version", cli.prog_name() + " version", "help update", "nonsense", "--json version", "exit",
+                 "0", "version"]
         with own_window(), mock.patch("builtins.input", side_effect=typed) as keys:
             rc, text, err = run(["--no-log"])
         self.assertEqual(rc, 0)
-        self.assertEqual(keys.call_count, 7)                       # exit closed it: the last line was never read
+        self.assertEqual(keys.call_count, 9)                       # 0 closed it: the last line was never read
+        self.assertIn("What do you want to do?", text)
         self.assertIn("Type a command", text)
-        self.assertEqual(text.count(VERSION_LINE), 2)              # version, then with the program's name first
+        self.assertIn("exit goes back to the menu", text)
+        # the two version commands (one with the program's name first), and the menu's heading, shown twice
+        self.assertEqual(text.count(VERSION_LINE), 4)
         self.assertIn("--source SOURCE", text)                      # help update
         self.assertIn("invalid choice: 'nonsense'", err)           # explained, and the prompt carried on
         self.assertIn("--json is for programs", text)

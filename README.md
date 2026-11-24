@@ -74,8 +74,9 @@ artifacts) or **Releases**:
 
 Everything is self-contained: the app carries its own engine, and the command line is one program. On
 Linux and macOS it comes in a `.tar.gz`: `tar -xzf <file>`, then `./deltapatcher-cli`. The AppImage needs
-`chmod +x` once after downloading. On Windows, double-clicking the command line opens a prompt to type its
-commands in; `--close` makes it close by itself when it is done (for shortcuts and launchers).
+`chmod +x` once after downloading. Double-clicked on Windows (or `deltapatcher menu` in a terminal), the
+command line opens a menu of plain questions: release a new version, set up where releases go, update a
+folder. `--close` makes it close by itself when it is done (for shortcuts and launchers).
 
 ## Quick start
 

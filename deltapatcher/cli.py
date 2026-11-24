@@ -734,6 +734,8 @@ def build_parser():
         sp.add_argument("--no-prune", action="store_true", help="keep blobs no release names")
         pass_stdin(sp)
 
+    sub.add_parser("menu", help="plain questions instead of commands: release, set up where releases go, update a folder")
+
     s = sub.add_parser("release", help="publish a folder and send it where players download it from (the saved "
                                        "server, a folder, or this computer)")
     s.add_argument("src", nargs="?", help="the folder to release (default: the saved one)")
@@ -848,13 +850,12 @@ def split_line(line):
         kernel32.LocalFree(ctypes.cast(words, ctypes.c_void_p))
 
 
-def prompt_loop():
-    """Double-clicked on Windows: a prompt that takes one command after another, so the window stays
-    open until exit (or until it is closed)."""
+def prompt_loop(back="closes this window"):
+    """A prompt that takes one command after another until exit (the menu's "Type commands yourself")."""
     print()
     print(paint("Type a command and press Enter, for example:", "head"))
     print("  " + paint('update "D:\\My Game" --source https://example.com/game/', "code"))
-    print("help lists the commands, help update explains one, exit closes this window.")
+    print("help lists the commands, help update explains one, exit %s." % back)
     names = {prog_name().lower(), "deltapatcher", "deltapatcher-cli"}
     while True:
         try:
@@ -906,10 +907,14 @@ def main(argv=None, prompt=True):
         if stay:
             wait_to_close()                # the help was printed, or a mistake explained: let it be read
         raise
+    if a.cmd == "menu" or (not a.cmd and stay):
+        from . import menu
+        menu.run_menu()                    # double-clicked (or asked for): plain questions, not commands
+        return 0
     if not a.cmd:
         p.print_help()
-        if stay:
-            prompt_loop()                  # double-clicked: one command after another, until exit
+        print()
+        print("New to this? %s walks you through it with plain questions." % paint(prog_name() + " menu", "code"))
         return 0
     OUT = Output(json_mode=a.json)
     CANCEL.clear()

@@ -4,7 +4,7 @@ Two ways to run DeltaPatcher's command line:
 
 | | |
 | --- | --- |
-| **The built program** | `deltapatcher-cli.exe` (Windows) or `deltapatcher-cli` (Linux, macOS), made by `build.ps1` / `build.sh` into `dist/`. It is a console program: run it in a terminal. Double-clicked on Windows, it opens a prompt for its commands instead (`--close`: it closes by itself when done). |
+| **The built program** | `deltapatcher-cli.exe` (Windows) or `deltapatcher-cli` (Linux, macOS), made by `build.ps1` / `build.sh` into `dist/`. It is a console program: run it in a terminal. Double-clicked on Windows, it opens a menu of plain questions instead (`--close`: it closes by itself when done). |
 | **These scripts** | `cli\deltapatcher.bat` (Windows) and `cli/deltapatcher.sh` (Linux, macOS, Git Bash). They run the built program when `dist/` has one, otherwise DeltaPatcher from source with Python 3.8 or later. Nothing to build. |
 
 ```
@@ -20,6 +20,6 @@ To type just `deltapatcher` anywhere:
   Environment Variables > Path > New).
 - Linux, macOS: `ln -s "$PWD/cli/deltapatcher.sh" ~/.local/bin/deltapatcher`
 
-Double-clicking `cli\deltapatcher.bat` opens the same prompt, and the window stays open until `exit`.
+Double-clicking `cli\deltapatcher.bat` opens the same menu (`cli\deltapatcher.bat menu` in a terminal).
 
 Every command, option and exit code: [docs/CLI.md](../docs/CLI.md).

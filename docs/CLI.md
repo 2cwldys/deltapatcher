@@ -12,12 +12,14 @@ deltapatcher <command> [options]
   or macOS `.tar.gz`
 - `python -m deltapatcher` from source, or the `deltapatcher` command after `pip install .`
 
-With no command it prints the help.
+With no command it prints the help. `deltapatcher menu` asks plain questions instead of taking commands:
+release a new version, set up where releases go (your server, a folder, or this computer), update a folder,
+or type commands at a prompt. Every answer is saved, so the second time is mostly Enter.
 
 **Its window.** In a terminal it runs and returns, as any command does. In a window of its own on Windows
 it keeps that window open, so nothing vanishes before it is read:
-- double-clicked (the `.exe`, or `cli\deltapatcher.bat`): the help, then a prompt, `deltapatcher>`, that
-  takes one command after another (`help`, `help update`, `update ...`) until `exit`
+- double-clicked (the `.exe`, or `cli\deltapatcher.bat`): the menu above. Its *Type commands yourself* is a
+  prompt, `deltapatcher>`, that takes one command after another (`help`, `help update`, `update ...`)
 - started with a command from a shortcut or a launcher's own window: it waits for Enter when it is done
 - `--close`: it closes as soon as it is done, with no prompt and no waiting. Use it in shortcuts and
   launchers that should not wait for anyone.

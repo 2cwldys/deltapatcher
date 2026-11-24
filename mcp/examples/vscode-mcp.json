@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "deltapatcher": {
+      "type": "stdio",
+      "command": "C:\\Tools\\deltapatcher-cli-windows-x64.exe",
+      "args": ["mcp"]
+    }
+  }
+}

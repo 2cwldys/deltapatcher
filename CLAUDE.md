@@ -21,6 +21,7 @@ From the repository's root. The build makes `.venv`; use its Python.
 | The wiki | `python tools/wiki.py <a clone of the wiki>`, then commit and push there |
 | Preview a guide | `node tools/readme_preview/render.mjs [FILE.md] [--light]` (`npm ci` in that folder once) |
 | Secret scan | `python tools/secret_scan.py` |
+| The MCP server | `python mcp/server.py` from a clone (built: `deltapatcher mcp`); its tests: `python -m unittest tests.test_mcp` |
 
 ## A change, start to finish
 
@@ -47,6 +48,9 @@ Releasing a new version of DeltaPatcher is in the README, under For developers.
 - **Nothing secret is stored, logged or put on a command line.** Passphrases, server passwords and private
   keys never go into settings, logs, arguments or the environment. Keys are named by their file's path; a
   passphrase travels only on standard input (`--passphrase-stdin`).
+- **MCP tools never take a secret.** No tool of `deltapatcher/mcp_server.py` takes a passphrase, a password
+  or anything like one (`tests/test_mcp.py` checks the parameter names); keys are named by their file's path,
+  as everywhere. A tool that changes files or servers says so in its annotations.
 - **Untrusted input stays untrusted**: manifests, server answers, preset files, anything from the network.
   Paths from a manifest are checked before use; host keys are confirmed once and checked strictly after.
 - **No personal data in the repository**: screenshots and examples use a neutral demo folder,
@@ -59,6 +63,9 @@ Releasing a new version of DeltaPatcher is in the README, under For developers.
   existing file beyond what `config.save()` does.
 - **Pictures in the guides** open full size when clicked (the image links to its raw address) and stand one
   under another, never squeezed into table cells.
+- **Text in the window**: a hint or a page's subtitle puts each sentence on its own line (`\n` between
+  sentences; the `hint` class keeps line breaks), so a second sentence never wraps at a random word. Keep
+  sentences short.
 
 ## Traps
 

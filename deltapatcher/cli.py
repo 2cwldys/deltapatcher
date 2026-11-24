@@ -64,6 +64,7 @@ more:
   %%(prog)s release --to folder --to-folder D:/www/game
   %%(prog)s publish ./game ./store      (only the release's files, sent nowhere)
   %%(prog)s config                      (where the settings file and the log are)
+  %%(prog)s mcp                         (for AI assistants: Claude Code, Claude Desktop, VS Code)
 
 several games or mods: a project each, with settings of its own (commands use Default otherwise):
   %%(prog)s project new "My Mod"        (then: --project "My Mod" before or after any command)
@@ -1269,6 +1270,8 @@ def build_parser():
     k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
     k.add_argument("--yes", action="store_true", help="do not ask first")
 
+    sub.add_parser("mcp", help="DeltaPatcher for AI assistants (Claude Code, Claude Desktop, VS Code): an MCP server "
+                               "on standard input and output; see mcp/README.md")
     sub.add_parser("version", help="the version")
     _project_everywhere(p)
     return p
@@ -1409,6 +1412,9 @@ def main(argv=None, prompt=True, project=None):
         print()
         print("New to this? %s walks you through it with plain questions." % paint(prog_name() + " menu", "code"))
         return 0
+    if a.cmd == "mcp":
+        from . import mcp_server
+        return mcp_server.main()           # standard input and output carry the protocol, and nothing else
     OUT = Output(json_mode=a.json)
     CANCEL.clear()
     USER_CANCEL.clear()

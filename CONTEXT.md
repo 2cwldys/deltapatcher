@@ -23,6 +23,7 @@ SHA-256. Two kinds of people use it:
 | CI | `.github/workflows/` | build (the tests, the engine, the app and the release files on Windows, Linux and macOS), CodeQL, secret scan |
 | Tools | `tools/` | the version, the release files, screenshots, the social preview, the wiki, a README preview, the secret scan, the icon |
 | Containers | `docker/` | an example image and a Pterodactyl egg that bring their files up to date at every start |
+| MCP server | `deltapatcher/mcp_server.py`, `mcp/` | DeltaPatcher for AI assistants (`deltapatcher mcp`): the Model Context Protocol on standard input and output, standard library only; every tool runs the engine with `--json` |
 
 The engine's modules: `config.py` (the settings files), `publish.py`, `manifest.py` and `hashing.py` (a
 folder becomes a store; the rules for leaving files out and for files players keep), `client.py` and
@@ -72,19 +73,22 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
   an interface: app files carry the version, command-line files do not.
 - **Releasing the same version again** with new files (a shadow patch) is an ordinary update: only the
   changed files travel.
+- **AI assistants get tools, never secrets.** The MCP server runs the engine the way the app does, and no
+  tool takes a passphrase or a password: signing, unlocking a key and putting a key on a server stay with a
+  person. Tools that change files or servers are marked so a client asks first.
 
 ## State
 
 Version 0.3.0: one Release page for publishing and sending, a menu of plain questions on the command line,
-self-update, putting a key on a server with its password, Docker and Pterodactyl, the wiki. Several projects
-is being built.
+self-update, putting a key on a server with its password, Docker and Pterodactyl, the wiki. Since then:
+several projects, and an MCP server for AI assistants.
 
 ## Where it is going
 
 One project alone is too narrow a case: several projects is the normal way to use DeltaPatcher, as modular
 as possible without becoming hard to use.
 
-1. **Several projects** (being built). A project is one settings file: what it updates (folder, source,
+1. **Several projects** (built). A project is one settings file: what it updates (folder, source,
    publisher key) and what it releases (folder, server). The main `deltapatcher.ini` stays a project,
    "Default"; others live in `projects/` beside it, or anywhere and are added by path. App-wide settings
    stay in the main file: `[window]`, and `[general]` with `parallel_updates`, `project_files` and

@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "deltapatcher": {
+      "command": "deltapatcher-cli",
+      "args": ["mcp"]
+    }
+  }
+}

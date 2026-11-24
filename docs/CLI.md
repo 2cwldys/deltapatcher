@@ -200,6 +200,18 @@ From source (Python), it says to use `git pull` instead.
 Once a day, a command run in a terminal also says when a newer DeltaPatcher is out. The setting
 `check_updates = no` turns that off; nothing is ever downloaded without asking.
 
+## mcp
+
+```
+deltapatcher mcp
+```
+
+DeltaPatcher as an MCP server, for AI assistants such as Claude Code, Claude Desktop or VS Code: it speaks
+the Model Context Protocol on standard input and output until the assistant closes them. Its tools check,
+update, publish and release projects, show settings and keys, read these guides and run a self-test; none
+of them ever takes a passphrase or a password. How to connect an assistant, and every tool:
+[AI assistants (MCP)](../mcp/README.md).
+
 ## Machine mode (--json)
 
 With `--json` every command writes one JSON object a line, which is how the app drives the engine:

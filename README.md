@@ -115,6 +115,16 @@ New to the code? [CONTEXT.md](CONTEXT.md) explains how it fits together and why,
 is the checklist for changing it, for people and for Claude Code alike.
 
 <details>
+<summary><b>Use it from an AI assistant (MCP)</b></summary>
+
+`deltapatcher mcp` runs DeltaPatcher as an MCP server, so Claude Code, Claude Desktop, VS Code or any other
+MCP client can check, update, publish and release projects, read the guides, and run a self-test of the
+whole cycle. It never handles a passphrase or a password. How to connect one, and every tool:
+[mcp/README.md](mcp/README.md).
+
+</details>
+
+<details>
 <summary><b>Build from source</b></summary>
 
 You need [Python](https://www.python.org) 3.11 or later (the engine itself runs on 3.8 or later),

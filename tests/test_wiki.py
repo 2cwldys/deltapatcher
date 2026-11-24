@@ -17,7 +17,7 @@ import wiki  # noqa: E402  (tools/wiki.py)
 class Wiki(TempCase):
     def test_every_guide_is_a_page(self):
         guides = {"docs/" + f for f in os.listdir(os.path.join(ROOT, "docs")) if f.endswith(".md")}
-        guides |= {"docker/README.md", "SECURITY.md"}
+        guides |= {"docker/README.md", "mcp/README.md", "SECURITY.md"}
         self.assertEqual(guides, set(wiki.PAGE_OF), "add the new guide to PAGES in tools/wiki.py")
 
     def test_the_links_lead_somewhere(self):

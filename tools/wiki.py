@@ -31,6 +31,7 @@ PAGES = [
     ("docs/VPS-SETUP.md", "Setting-up-a-VPS", "Setting up a VPS"),
     ("docs/CLI.md", "Command-line", "Command line"),
     ("docker/README.md", "Docker-and-Pterodactyl", "Docker and Pterodactyl"),
+    ("mcp/README.md", "MCP-server", "AI assistants (MCP)"),
     ("docs/FORMAT.md", "Store-and-manifest-format", "The store and manifest"),
     ("docs/TROUBLESHOOTING.md", "Troubleshooting", "Troubleshooting"),
     ("SECURITY.md", "Security", "Security"),

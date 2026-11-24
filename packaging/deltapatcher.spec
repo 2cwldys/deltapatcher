@@ -12,7 +12,11 @@ ICON = os.path.join(ROOT, "deltapatcher", "assets", "deltapatcher.ico")
 EXCLUDES = ["numpy", "scipy", "pandas", "matplotlib", "torch", "IPython", "pytest", "tkinter", "PIL"]
 OPTIONS = dict(console=True, icon=ICON if os.name == "nt" else None, upx=False, strip=False, debug=False)
 
-a = Analysis([os.path.join(SPECPATH, "entry_cli.py")], pathex=[ROOT], excludes=EXCLUDES, noarchive=False)
+# the guides travel inside, for the MCP server (deltapatcher mcp) to hand to an assistant
+GUIDES = [(os.path.join(ROOT, "docs", "*.md"), "guides/docs"), (os.path.join(ROOT, "docker", "README.md"), "guides/docker"),
+          (os.path.join(ROOT, "mcp", "README.md"), "guides/mcp"), (os.path.join(ROOT, "SECURITY.md"), "guides")]
+
+a = Analysis([os.path.join(SPECPATH, "entry_cli.py")], pathex=[ROOT], datas=GUIDES, excludes=EXCLUDES, noarchive=False)
 pyz = PYZ(a.pure)
 
 EXE(pyz, a.scripts, a.binaries, a.datas, [], name="deltapatcher-cli", runtime_tmpdir=None, **OPTIONS)

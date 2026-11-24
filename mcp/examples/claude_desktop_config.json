@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "deltapatcher": {
+      "command": "C:\\Tools\\deltapatcher-cli-windows-x64.exe",
+      "args": ["mcp"]
+    }
+  }
+}

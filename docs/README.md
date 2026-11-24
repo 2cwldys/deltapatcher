@@ -10,6 +10,7 @@ Pick the page for what you want to do:
 | Host the release on a VPS (Caddy, nginx, Apache) and deploy to it over SSH | [Setting up a VPS](VPS-SETUP.md) |
 | Use it from scripts, a launcher or a server; the settings file and logs | [Command line reference](CLI.md) |
 | Keep the files in my Docker image or Pterodactyl server up to date | [Docker and Pterodactyl](../docker/README.md) |
+| Let an AI assistant (Claude Code, Claude Desktop, VS Code) use DeltaPatcher | [AI assistants (MCP)](../mcp/README.md) |
 | Understand the files, or write my own client | [The store and manifest format](FORMAT.md) |
 | Know what it protects, or report a security problem | [Security](../SECURITY.md) |
 | Fix an error message | [Troubleshooting](TROUBLESHOOTING.md) |

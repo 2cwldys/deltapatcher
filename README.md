@@ -54,6 +54,24 @@ identical files are stored once.
   </tr>
 </table>
 
+## The app
+
+Click a picture to see it full size.
+
+**Update**: the picked project's folder, its source and publisher key; **Check**, **Update** and **Roll back**.
+
+[![The Update page](docs/images/app-update.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-update.png)
+
+**Release**: what to release (with what to leave out and what players keep), where players download it
+from (your server over SSH, a folder, or this computer to test), and one button that sends only what
+changed.
+
+[![The Release page](docs/images/app-release.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-release.png)
+
+**Settings**: every setting of the project and of DeltaPatcher, explained, with the log one click away.
+
+[![The Settings page](docs/images/app-settings.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-settings.png)
+
 ## How it works
 
 ```mermaid
@@ -113,6 +131,16 @@ Step by step, on the [wiki](https://github.com/2cwldys/deltapatcher/wiki):
 - **[The store and manifest](https://github.com/2cwldys/deltapatcher/wiki/Store-and-manifest-format)**: the files, the path rules, signatures, the update algorithm.
 - **[Troubleshooting](https://github.com/2cwldys/deltapatcher/wiki/Troubleshooting)**: every error message and what to do.
 - **[Security](SECURITY.md)**: what DeltaPatcher protects, what it leaves to you, how to report a problem.
+
+## Limitations
+
+- SFTP uploads report progress per batch of files, not per byte, and a blob whose upload was cut is sent
+  again whole (downloads resume; uploads do not).
+- Publishing the same files again keeps the manifest as it was; publish when something changed to make a
+  new "previous release".
+- The built-in server is for testing and LANs; on the internet, use a real web server
+  ([Setting up a VPS](https://github.com/2cwldys/deltapatcher/wiki/Setting-up-a-VPS)).
+- On Linux the tray icon needs a desktop with a tray (AppIndicator or an X tray).
 
 ## For developers
 
@@ -223,7 +251,3 @@ full-page `preview.png`, taken with the Edge, Chrome or Chromium already on your
 Pull requests are welcome. Every push and pull request is built and tested on Windows, Linux and macOS,
 and checked by CodeQL and a secret scan. Run `python tools/secret_scan.py` before you commit: it refuses
 keys, settings files and anything like them.
-
-## Licence
-
-MIT. See [LICENSE](LICENSE).

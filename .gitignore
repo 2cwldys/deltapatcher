@@ -22,6 +22,9 @@ authorized_keys*
 .env
 .env.*
 config.json
+deltapatcher.ini
+signing-key*
+*.log
 askpass.cmd
 askpass.sh
 

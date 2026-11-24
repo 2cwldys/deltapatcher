@@ -1,0 +1,48 @@
+# Security
+
+DeltaPatcher moves files onto people's computers and logs in to servers with SSH keys, so it is
+built to fail closed. This page says what it protects, how, and what it leaves to you.
+
+## Reporting a vulnerability
+
+Please do not open a public issue. Use GitHub's private reporting instead: the repository's
+**Security** tab > **Report a vulnerability**. Include what you found, how to reproduce it, and the
+version (`deltapatcher --version`). You will get an answer, and credit if you want it, once a fix is out.
+
+Only the latest release gets security fixes.
+
+## What it protects
+
+| What | How |
+| --- | --- |
+| **Who made a release** | Releases can be signed with an Ed25519 key (`deltapatcher sign keygen`, then publish with `--sign`). A client checks the signature against the publisher key it was given (`--trust-key`, or the window's *Publisher key*), or against the key of the first signed release it saw, which it then pins. After that, a release signed by another key, or not signed at all, is refused. The signature file is named by the manifest's SHA-256, so it can never be paired with a different manifest, even halfway through a deploy. |
+| **Every file a client installs** | Each blob is checked against the manifest's SHA-256 and size before anything in the folder changes. A damaged, truncated or swapped file is never installed. |
+| **The client's folder** | The manifest is treated as untrusted input. Paths that could leave the folder (`..`, absolute paths, drive letters, links or junctions on the way), Windows device names (`CON`, `con .txt`, `COM1`), names Windows cannot store, and the client's own `.deltapatcher` folder are refused before anything is written. Updates are journalled and undone on failure; files the client did not install are never removed. |
+| **Private SSH keys** | Read only by OpenSSH. DeltaPatcher never opens one; it asks `ssh-keygen` whether a key has a passphrase. New keys are written once, readable by your account only (`icacls` on Windows, mode 600 elsewhere), and an existing key is never overwritten. |
+| **Passphrases** | Never stored, logged, written to a settings file, or put on a command line. SSH keys are unlocked into `ssh-agent`, which asks through DeltaPatcher's dialog or the terminal. A signing key's passphrase is asked for each publish and dropped after. |
+| **Servers** | Host keys are shown and confirmed the first time, then checked strictly on every connection (`StrictHostKeyChecking=yes`, DeltaPatcher's own `known_hosts`). A changed host key stops the deploy. |
+| **Server access** | Deploys need only SFTP, so the key's `authorized_keys` line limits it to SFTP: `restrict,command="internal-sftp"` (no shell, no forwarding). |
+| **Deploys** | Blobs go up first, then the signature, then the manifest, whose size is checked before it is switched in. A deploy that fails part way leaves the server serving the release it served before. Blobs and signatures a live manifest names are never removed. |
+| **What a web server shows** | The built-in server answers only `manifest.json`, `manifest.previous.json`, `blobs/<sha256>` and `sigs/<sha256>.sig`: no listings, no other files. Published stores get a `.htaccess` that makes Apache do the same. |
+| **Access tokens** | A header given with `--header` (an `Authorization` token, say) is sent only to the host it was given for, never after a redirect to another host. A redirect from `https` to `http` is refused. Header values never reach the log. |
+| **Settings and logs** | Settings (`deltapatcher.ini`) hold addresses, folder paths, public keys and the *paths* of key files, never a key or a passphrase. Logs hold what was shown on screen, with header values hidden. |
+| **The repository** | `.gitignore` refuses key files, `known_hosts`, `.env`, settings files, stores, builds and virtual environments. |
+
+## What it leaves to you
+
+- **Use HTTPS for the source.** Without a signature, the manifest is only as trustworthy as the
+  connection it came over: on plain `http` across a network it could be altered on the way (the window
+  warns about it). Signing your releases closes that gap; HTTPS on top keeps players' downloads private.
+- **Keep your signing key safe.** Whoever has it, and its passphrase, can publish releases your players
+  will accept. Keep it off build servers you do not control, give it a passphrase, and back it up. If
+  it leaks, make a new one and give players the new public key: their updater refuses releases signed
+  by the old one only after they trust the new one (`--trust-key`).
+- **First contact is trust on first use.** A player who was not given your publisher key pins the key of
+  the first signed release they download. Ship the key with your game or launcher (`--trust-key`, or a
+  `deltapatcher.ini` beside the program with `trust_key` filled in) to close that window.
+- **Compare host key fingerprints for real.** Confirming a server's key without checking it defeats the
+  check.
+- **Keys without a passphrase** (for build servers) work for anyone who copies the file. Limit them to
+  SFTP and to one deploy user that owns only the web folder.
+- **Antivirus reputation checks** may flag new, unsigned builds of the programs. Signing the programs
+  themselves (Authenticode) is up to whoever distributes them.

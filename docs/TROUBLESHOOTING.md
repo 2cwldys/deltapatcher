@@ -16,12 +16,19 @@ Messages are shown in the window's log and, from the command line, on the screen
 | The update failed with "Access is denied" or "being used by another process" | A file is open, usually because the game is running. Close it and update again. The failed update was already undone. |
 | `cannot clear ... (is a file in it open in another program?)` | A program holds a file in `.deltapatcher`. Close it (or restart) and try again. |
 | `there is no update to roll back` | No completed update is recorded for this folder. |
-| Warning about `plain http to another machine` | The source uses `http://` across a network. Files are still checked by hash, but the manifest could be altered on the way. Use `https://`. |
+| Warning about `plain http to another machine` | The source uses `http://` across a network. Files are still checked by hash, but the manifest could be altered on the way. Use `https://`, or ask the publisher to sign releases. |
+| `the release is not signed, but this folder trusts publisher key ...` | This folder installed a signed release before, so it now refuses unsigned ones. Ask the publisher. If you know the release is genuine: `--trust-key off` (or `trust_key = off` in the settings file) skips the check. |
+| `the release is signed by ..., but this folder trusts ...` | Someone other than the publisher you trust signed it, or the publisher changed keys. Get the new key from the publisher directly, then update once with `--trust-key ed25519:...` (or paste it into *Publisher key*). |
+| `the release's signature is refused: ...` | The signature does not match the manifest: the release was changed after it was signed. Do not install it; tell the publisher. |
+| Where is the log? | **Log folder** in the window, or `deltapatcher config`. Each game folder also has `.deltapatcher/update.log`. |
 
 ## Publishing
 
 | Message | What to do |
 | --- | --- |
+| `the signing key could not be opened (wrong passphrase?)` | Type the signing key's passphrase again. If it is lost, make a new key and give players the new public key. |
+| `no signing key at ...` | Make one: **New signing key...** or `deltapatcher sign keygen`. Or untick **Sign the release**. |
+| `signing needs the 'cryptography' package` | From source: `pip install cryptography`. The built programs include it. |
 | `the store must not be inside the folder it publishes` | Choose a store folder outside the release folder. |
 | `X cannot be published: ...` | A file name that cannot be used on every system (a device name like `CON`, a name ending in a dot or space, a `:`). Rename it. |
 | `skipped X (a link or junction)` | Links are never followed. Copy the real files into the release folder. |

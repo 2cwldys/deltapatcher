@@ -8,9 +8,12 @@ address**, for example `https://game.example.com/`.
 1. Start `DeltaPatcher.exe`. It opens on the **Update** tab.
 2. *Source*: paste the address the game's maker gave you.
 3. *Folder*: the game folder, or an empty folder for a fresh install. Use **Browse** to pick it.
-4. Click **Update**. The bar shows the download; the log says what was installed.
+4. *Publisher key*: if the game's maker gave you one (it starts with `ed25519:`), paste it. Then only
+   releases they signed are installed. Leave it empty otherwise.
+5. Click **Update**. The bar shows the download; the log says what was installed.
 
-DeltaPatcher remembers both fields, so next time you only click **Update**.
+DeltaPatcher remembers these fields, so next time you only click **Update**. If the game came with a
+`deltapatcher.ini` beside `DeltaPatcher.exe`, they are already filled in.
 
 ## Every time after
 
@@ -33,8 +36,16 @@ so a small patch is a small download even when the game is large.
   is never installed.
 - If an update is interrupted (crash, power cut), the next update undoes the half-finished one first,
   so the folder is never left half old, half new.
+- If the release is signed, DeltaPatcher checks the signature before anything else. Once it has
+  installed a release signed by a key, it refuses releases signed by any other key, and unsigned ones,
+  unless you change the *Publisher key* yourself.
 - It keeps its own notes in a hidden `.deltapatcher` folder inside the game folder. Leave it there: it is
-  how DeltaPatcher knows which files it installed, and it holds the copies **Roll back** uses.
+  how DeltaPatcher knows which files it installed, and it holds the copies **Roll back** uses. Its
+  `update.log` lists every file each update added, replaced or removed.
+
+**Log folder** (bottom of the window) opens DeltaPatcher's own log, everything it showed with the time:
+useful when asking the game's maker for help. **Settings file** opens `deltapatcher.ini`, every
+setting with a line explaining it.
 
 ## The tray icon
 

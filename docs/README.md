@@ -6,10 +6,11 @@ Pick the page for what you want to do:
 | --- | --- |
 | Try it on my own PC in five minutes | [Quick start](QUICKSTART.md) |
 | Keep my game folder up to date (I am a player) | [For players](PLAYERS.md) |
-| Release my game, mod or asset pack with it | [Publishing a release](PUBLISHING.md) |
-| Host the release on a VPS and deploy to it over SSH | [Setting up a VPS](VPS-SETUP.md) |
-| Use it from scripts, a launcher or a server | [Command line reference](CLI.md) |
+| Release my game, mod or asset pack with it (and sign it) | [Publishing a release](PUBLISHING.md) |
+| Host the release on a VPS (Caddy, nginx, Apache) and deploy to it over SSH | [Setting up a VPS](VPS-SETUP.md) |
+| Use it from scripts, a launcher or a server; the settings file and logs | [Command line reference](CLI.md) |
 | Understand the files, or write my own client | [The store and manifest format](FORMAT.md) |
+| Know what it protects, or report a security problem | [Security](../SECURITY.md) |
 | Fix an error message | [Troubleshooting](TROUBLESHOOTING.md) |
 
 ## The idea in one paragraph

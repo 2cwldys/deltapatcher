@@ -12,10 +12,36 @@ store/
   blobs/
     3a7bd3e2360a3d29eea436fcfb7e44c735d117c42d1c1835420b6b9942dd4f1b
     ...                    one file per distinct content, named by its SHA-256 (64 lowercase hex characters)
+  sigs/                    signed releases only
+    <sha256 of manifest.json>.sig
+  .htaccess                for Apache (optional): serve the release, nothing else
 ```
 
 A blob's name is the SHA-256 of its bytes, so a blob never changes once written. It can be cached
 forever and checked by anyone.
+
+## Signatures (sigs/)
+
+A signed release has a signature file named by the SHA-256 of the exact bytes of its `manifest.json`:
+
+```json
+{
+ "format": 1,
+ "alg": "ed25519",
+ "key": "ed25519:<base64 of the 32-byte public key>",
+ "manifest_sha256": "<64 hex characters>",
+ "signature": "<base64 of the 64-byte Ed25519 signature of manifest.json's bytes>"
+}
+```
+
+Because the name carries the manifest's hash, a client always fetches the signature of the manifest
+it actually received, even while a deploy is replacing it. A client:
+1. fetches `manifest.json`, hashes its bytes, fetches `sigs/<that hash>.sig` (a 404 means unsigned);
+2. checks `manifest_sha256`, then the Ed25519 signature over the manifest's bytes with `key`;
+3. compares `key` with the publisher key it trusts (given in advance, or pinned from the first signed
+   release) and refuses a mismatch, or an unsigned release once it trusts a key.
+
+A publisher key is written `ed25519:` followed by the base64 of its 32 bytes.
 
 ## manifest.json
 
@@ -60,11 +86,13 @@ A client must refuse the whole manifest if any path:
 
 Clients make plain `GET` requests:
 - `<base>manifest.json`
+- `<base>sigs/<sha256 of manifest.json>.sig` (404 when the release is not signed)
 - `<base>blobs/<sha256>`, with `Range: bytes=N-` to resume (a server without Range support still works;
   the download just restarts)
 
-No directory listing is needed or wanted. Recommended headers: `Cache-Control: no-cache` on the
-manifests, and `Cache-Control: public, max-age=31536000, immutable` on blobs.
+They send `User-Agent: DeltaPatcher/<version>`. No directory listing is needed or wanted. Recommended
+headers: `Cache-Control: no-cache` on the manifests, and `Cache-Control: public, max-age=31536000,
+immutable` on blobs and signatures (the `.htaccess` sets exactly this on Apache).
 
 ## The client's own folder
 
@@ -72,7 +100,8 @@ Inside every folder it updates, the client keeps `.deltapatcher/`:
 
 | Path | |
 | --- | --- |
-| `state.json` | `{"source", "manifest_sha", "version", "files": {path: [size, sha256]}}`: the files this client installed |
+| `state.json` | `{"source", "manifest_sha", "version", "publisher_key", "files": {path: [size, sha256]}}`: the files this client installed, and the publisher key it trusts |
+| `update.log` | Every update's record: when, from where, signed or not, every file added, replaced, removed or kept |
 | `hashes.json` | Cache of the folder's hashes, keyed by path, valid while size and modification time match |
 | `cache/<sha256>` | Downloaded blobs waiting to be installed. `<sha256>.part` is a download to resume. |
 | `rollback/` | The last completed update: `journal.jsonl`, `files/` (the replaced and removed files), `state.prev.json` |
@@ -87,7 +116,7 @@ Inside every folder it updates, the client keeps `.deltapatcher/`:
 
 For anyone writing their own client:
 
-1. Read the manifest and check every path (above).
+1. Read the manifest and check every path (above). Check its signature as in [Signatures](#signatures-sigs).
 2. For each listed file: missing here, add it. Different hash, replace it, unless it matches a
    `protect` pattern. Same hash, leave it.
 3. For each file in `state.json` that the manifest no longer lists: remove it only if its hash still

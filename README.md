@@ -1,4 +1,8 @@
-# DeltaPatcher
+<p align="center">
+  <img src="docs/images/logo.png" alt="DeltaPatcher" width="200">
+</p>
+<h1 align="center">Delta Patcher</h1>
+<p align="center">Delta patching with SHA-256 blobs, for any game and any file.</p>
 
 Delta patching with SHA-256 blobs. Publish a folder, serve it from anywhere (your own PC, a VPS, any
 static web host), and let clients download only the files that changed.
@@ -8,9 +12,14 @@ never looks inside a file. Every file is just bytes with a SHA-256 hash, so a ch
 again and an unchanged one never is, whatever its extension.
 
 - **A window** (tkinter) with a tray icon, for people who just want it to work.
-- **A command line** for scripts, servers and people who prefer one.
+- **A command line** for scripts, servers and people who prefer one: `cli\deltapatcher.bat` and
+  `cli/deltapatcher.sh` run it straight from the repository ([cli/README.md](cli/README.md)).
 - **Self-contained programs** (PyInstaller): `DeltaPatcher.exe` and `deltapatcher-cli.exe`.
-- **Deploys to a VPS over SSH**, using your keys safely (see [Security](#security)).
+- **Signed releases**: players' updaters check that a release really comes from you.
+- **Deploys to a VPS over SSH**, using your keys safely, and an `.htaccess` for Apache hosts
+  (see [SECURITY.md](SECURITY.md)).
+- **A settings file** (`deltapatcher.ini`, made on first run with every setting explained) and **logs**
+  of everything it does.
 - Licensed MIT.
 
 ![The window](docs/images/1-update.png)
@@ -205,18 +214,11 @@ Everything it keeps is in `<folder>/.deltapatcher/` (state, hash cache, download
 
 ## Security
 
-| What | How |
-| --- | --- |
-| Private keys | Read only by OpenSSH. DeltaPatcher never opens one; it asks `ssh-keygen` whether a key has a passphrase. New keys are written once, owner-only (`icacls` on Windows, mode 600 elsewhere). |
-| Passphrases | Never stored, logged, put in a config file, or on a command line. Unlocking goes through `ssh-agent`, which asks via DeltaPatcher's dialog or the terminal. |
-| Host keys | Shown and confirmed the first time; checked strictly every time after (`StrictHostKeyChecking=yes`, own `known_hosts`). |
-| Server access | The key can be limited to SFTP (`restrict,command="internal-sftp"`). |
-| Settings | Kept in your user config folder (`%APPDATA%\DeltaPatcher`, `~/.config/deltapatcher`), never in the project. Only addresses, folder paths and the key's *path*. |
-| The repository | `.gitignore` refuses key files, `known_hosts`, `.env`, `config.json`, stores, builds and virtual environments. |
-| Downloads | Every blob is checked against the manifest's SHA-256. Use `https://` for the source: over plain `http` to another machine the manifest itself could be altered, and the window warns about it. |
-| Manifests | Treated as untrusted input; unsafe paths are refused before anything is written. |
-
-Not included: signing manifests. HTTPS from a host you control is the trust anchor.
+Releases can be signed, and players' updaters then refuse anything not signed by your key. Every
+file is checked against its SHA-256 before it is used, and manifests are treated as untrusted input.
+SSH keys are read only by OpenSSH, and passphrases are never stored. Server host keys are confirmed
+once and checked strictly after. The full list, what is left to you, and how to report a problem
+privately: **[SECURITY.md](SECURITY.md)**.
 
 ## The store's files
 

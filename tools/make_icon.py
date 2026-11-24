@@ -51,8 +51,11 @@ def main():
     frames[-1].save(os.path.join(OUT, "deltapatcher.ico"), format="ICO", sizes=[(n, n) for n in SIZES],
                     append_images=frames[:-1])
     big.resize((256, 256), Image.LANCZOS).save(os.path.join(OUT, "deltapatcher.png"), optimize=True)
-    big.resize((512, 512), Image.LANCZOS).save(os.path.join(HERE, "icon-preview.png"))
-    print("wrote", os.path.join(OUT, "deltapatcher.ico"), "and deltapatcher.png")
+    # the README's logo: large enough to stay sharp on high-DPI screens at the size it is shown
+    docs_images = os.path.join(os.path.dirname(HERE), "docs", "images")
+    os.makedirs(docs_images, exist_ok=True)
+    big.resize((512, 512), Image.LANCZOS).save(os.path.join(docs_images, "logo.png"), optimize=True)
+    print("wrote", os.path.join(OUT, "deltapatcher.ico"), ", deltapatcher.png and docs/images/logo.png")
 
 
 if __name__ == "__main__":

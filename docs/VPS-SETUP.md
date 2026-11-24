@@ -65,7 +65,26 @@ server {
     autoindex off;
     location = /manifest.json { add_header Cache-Control "no-cache"; }
     location /blobs/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
+    location /sigs/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
+    location ~ /\. { deny all; }
 }
+```
+
+Apache (shared hosting included)? Nothing to write: every publish puts a `.htaccess` in the store and
+deploys send it along. It turns listings off, gives blobs a type, sets the cache headers and refuses
+everything that is not part of the release. The host must allow `.htaccess` files (`AllowOverride All`,
+the usual default on shared hosting). A virtual host, for your own Apache:
+
+```
+<VirtualHost *:443>
+    ServerName game.example.com
+    DocumentRoot /var/www/game
+    <Directory /var/www/game>
+        AllowOverride All
+        Require all granted
+    </Directory>
+    # SSLEngine on, SSLCertificateFile ... (or certbot --apache)
+</VirtualHost>
 ```
 
 ## Part 2: a key on your PC
@@ -136,11 +155,12 @@ curl -I https://game.example.com/manifest.json
 1. It asks the server which blobs it already has, and sends only the missing ones (each one is
    uploaded as `<hash>.part` and renamed when complete).
 2. It checks that every blob the new manifest names is on the server, at the right size.
-3. Only then does it upload the new manifest, check its size, and switch it into place. Before that
+3. It puts the release's signature (when it is signed) and the `.htaccess` in place.
+4. Only then does it upload the new manifest, check its size, and switch it into place. Before that
    point a failure changes nothing players see.
-4. The release before it stays available as `manifest.previous.json`.
-5. It removes blobs that no manifest on the server names any more. If a manifest on the server cannot
-   be read, it removes nothing.
+5. The release before it stays available as `manifest.previous.json`.
+6. It removes blobs and signatures that no manifest on the server names any more. If a manifest on the
+   server cannot be read, it removes nothing.
 
 ## Windows Server instead of Linux
 

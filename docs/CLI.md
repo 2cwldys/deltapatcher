@@ -4,12 +4,28 @@
 deltapatcher <command> [options]
 ```
 
-`deltapatcher` is `deltapatcher-cli.exe` from a release, `python -m deltapatcher` from source, or the
-`deltapatcher` command after `pip install .`. With no command, `python -m deltapatcher` opens the
-window and `deltapatcher-cli.exe` prints the help. `deltapatcher gui` always opens the window.
+`deltapatcher` is any of:
+- `cli\deltapatcher.bat` / `cli/deltapatcher.sh` in the repository ([cli/README.md](../cli/README.md)): the
+  built program when there is one, else Python from source
+- `deltapatcher-cli.exe` from a release
+- `python -m deltapatcher` from source, or the `deltapatcher` command after `pip install .`
 
-Remembered settings (the ones the window saves, in `%APPDATA%\DeltaPatcher\config.json` or
-`~/.config/deltapatcher/config.json`) fill in `--source` and the SSH options when you leave them out.
+With no command, `python -m deltapatcher` opens the window and the others print the help.
+`deltapatcher gui` always opens the window.
+
+The settings file (`deltapatcher.ini`, see [Settings and logs](#settings-and-logs)) fills in `--source`,
+`--trust-key`, the signing key and the SSH options when you leave them out.
+
+## Options for every command
+
+| Option | |
+| --- | --- |
+| `--log FILE` | Write the log here instead of the usual place |
+| `--no-log` | Write no log file |
+| `--no-color` | Plain text. Colour is used only in a terminal that shows it, never in files or pipes; `NO_COLOR=1` works too. |
+
+In a terminal the output uses three colours: white for what was done, orange for what needs your
+attention (and for errors, in bold), purple for things to copy or compare (keys, fingerprints, commands).
 
 ## Exit codes
 
@@ -23,10 +39,10 @@ Remembered settings (the ones the window saves, in `%APPDATA%\DeltaPatcher\confi
 ## publish
 
 ```
-deltapatcher publish SRC STORE [--name NAME] [--version VERSION] [--protect GLOB]... [--no-prune]
+deltapatcher publish SRC STORE [--name NAME] [--version VERSION] [--protect GLOB]... [--sign [KEYFILE]] [--no-htaccess] [--no-prune]
 ```
 
-Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`). See
+Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `sigs/`, `.htaccess`). See
 [Publishing a release](PUBLISHING.md).
 
 | Option | |
@@ -34,7 +50,9 @@ Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`). S
 | `--name` | Shown to players and in the log |
 | `--version` | Shown to players and in the log |
 | `--protect GLOB` | Files clients create once and never overwrite. Repeat it for more patterns. |
-| `--no-prune` | Keep blobs no manifest names any more |
+| `--sign [KEYFILE]` | Sign the release (optional). Without a file: the settings file's `signing_key`, else the default key. Asks the key's passphrase. |
+| `--no-htaccess` | Do not write the `.htaccess` for Apache |
+| `--no-prune` | Keep blobs and signatures no manifest names any more |
 
 ## serve
 
@@ -43,13 +61,13 @@ deltapatcher serve STORE [--bind 127.0.0.1] [--port 8000] [--verbose]
 ```
 
 Serve a store over HTTP, for testing or a LAN. It serves only `manifest.json`,
-`manifest.previous.json` and `blobs/<hash>`, never a listing. `--bind 0.0.0.0` makes it reachable
+`manifest.previous.json`, `blobs/<hash>` and `sigs/<hash>.sig`, never a listing. `--bind 0.0.0.0` makes it reachable
 from other machines. For the internet, use a real web server with HTTPS.
 
 ## update
 
 ```
-deltapatcher update FOLDER [--source URL] [--check] [--workers 4] [--header "Name: value"]...
+deltapatcher update FOLDER [--source URL] [--check] [--trust-key KEY] [--workers 4] [--header "Name: value"]...
 ```
 
 Bring `FOLDER` up to the release at `URL` (an `http(s)://` address, a folder path or a `file://` URL;
@@ -58,6 +76,7 @@ default: the remembered one, else `http://localhost:8000/`).
 | Option | |
 | --- | --- |
 | `--check` | Say what would change, change nothing. Exit 2 when out of date. |
+| `--trust-key KEY` | The publisher's key (`ed25519:...`): the release must be signed with it. Without it, unsigned releases are accepted, and the first signed one's key is trusted (and only that key after it). `off` skips signature checks. |
 | `--workers N` | Downloads at the same time (default 4) |
 | `--header` | Extra request header, for a host that needs one (an access token, for example). It is sent only to that host, never after a redirect to another one. |
 
@@ -97,6 +116,39 @@ last. The first time a server is used, its host key is shown for you to confirm.
 | `deltapatcher ssh unlock [--path FILE]` | Add the key to `ssh-agent` (asks for the passphrase once) |
 | `deltapatcher ssh trust --host HOST [--port N] [--forget]` | Show the server's host key fingerprints and remember them after you confirm. `--forget` removes them, for after a server reinstall. |
 | `deltapatcher ssh test --host HOST [--user U] [--remote-root PATH]` | Log in with SFTP and look at the remote folder |
+
+## sign
+
+| Command | |
+| --- | --- |
+| `deltapatcher sign keygen [--path FILE]` | Make a signing key (asks a passphrase) and print its public key, the `ed25519:...` text players use. An existing file is never replaced. |
+| `deltapatcher sign pubkey [--path FILE]` | Print the public key of a signing key |
+
+## config
+
+```
+deltapatcher config [--show]
+```
+
+Print where the settings file and the log are (the settings file is made, with every setting
+explained, if it is missing). `--show` prints the file too.
+
+## Settings and logs
+
+**Settings**: `deltapatcher.ini`, made the first time DeltaPatcher runs, every setting with its default
+and a line saying what it does. Edit it with any text editor; the window saves into it too, keeping
+your comments. Which file is used:
+1. the file named by the environment variable `DELTAPATCHER_CONFIG`
+2. `deltapatcher.ini` beside `DeltaPatcher.exe` / `deltapatcher-cli.exe` (a portable copy: ship it with
+   your game with `source_url` and `trust_key` filled in)
+3. otherwise `%APPDATA%\DeltaPatcher\deltapatcher.ini` (Windows) or `~/.config/deltapatcher/deltapatcher.ini`
+
+**Logs**:
+- everything DeltaPatcher shows, with the time: `%APPDATA%\DeltaPatcher\logs\deltapatcher.log` (Windows)
+  or `~/.config/deltapatcher/logs/deltapatcher.log`; 1 MB, three old ones kept. `deltapatcher config`
+  prints where. Header values given with `--header` are written as `***`.
+- each updated folder's own record: `<folder>/.deltapatcher/update.log`, every file each update added,
+  replaced or removed.
 
 ## Examples
 

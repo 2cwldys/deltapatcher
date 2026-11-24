@@ -47,6 +47,22 @@ class Help(unittest.TestCase):
         example = next(line for p, line in lines.items() if p.lstrip().startswith(cli.prog_name() + " serve"))
         self.assertIn(CODE % (cli.prog_name() + " serve ./store"), example)
 
+    def test_every_example_is_a_real_command(self):
+        import shlex
+        prog = cli.prog_name()
+        examples = [line.strip() for line in cli.build_parser().format_help().splitlines()
+                    if line.startswith("  " + prog + " ")]
+        self.assertGreaterEqual(len(examples), 10)
+        self.assertTrue(any(" deploy ./store" in e for e in examples))              # the VPS route is shown
+        self.assertTrue(any("--source https://" in e for e in examples))
+        for line in examples:
+            command = line.split("  (")[0]                                            # without its (comment)
+            argv = shlex.split(command)[1:]
+            try:
+                cli.build_parser().parse_args(argv)
+            except SystemExit:
+                self.fail("the help's example does not parse: %s" % command)
+
     def test_subcommand_help_too(self):
         with mock.patch.dict(color._on, {"out": True}):
             painted = cli.build_parser()._subparsers._group_actions[0].choices["update"].format_help()

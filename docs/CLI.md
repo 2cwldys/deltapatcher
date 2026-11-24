@@ -195,6 +195,30 @@ your comments. Which file is used:
 
 ## Examples
 
+Your releases on a VPS. Once: save the server, make a key, put its line on the server, check the server's
+host key (the server itself: [Setting up a VPS](VPS-SETUP.md)):
+
+```
+deltapatcher config set ssh_host=game.example.com ssh_user=deploy remote_root=/var/www/game
+deltapatcher ssh keygen
+deltapatcher ssh pubkey          (add the line it prints to ~/.ssh/authorized_keys on the server)
+deltapatcher ssh trust
+deltapatcher ssh test            (optional: can it log in?)
+```
+
+Then for every release: publish it, and send the server only what it does not have yet:
+
+```
+deltapatcher publish ./game ./store --name "My Game" --version 1.1
+deltapatcher deploy ./store
+```
+
+Players update from the address the web server gives that folder:
+
+```
+deltapatcher update ./MyGame --source https://game.example.com/
+```
+
 A launcher's update button:
 
 ```

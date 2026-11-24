@@ -31,16 +31,27 @@ from .source import DEFAULT_URL, SourceError, insecure_remote
 
 # %(prog)s is the name to type (see prog_name); argparse fills it in
 EPILOG = """examples:
-  %%(prog)s publish ./game ./store --name "My Game" --version 1.0 --sign
-  %%(prog)s serve ./store                         (http://localhost:8000/)
-  %%(prog)s update ./my-install --source http://localhost:8000/
-  %%(prog)s sign keygen                           (a signing key for your releases)
-  %%(prog)s ssh keygen                            (a new ed25519 key, with a passphrase)
-  %%(prog)s ssh trust --host example.com          (check and keep the server's host key)
-  %%(prog)s ssh pubkey                            (the line for the server's authorized_keys)
-  %%(prog)s deploy ./store --host example.com --user deploy --remote-root /var/www/game
+
+put releases on your VPS (the first four lines once; then publish and deploy for every release):
+  %%(prog)s config set ssh_host=game.example.com ssh_user=deploy remote_root=/var/www/game
+  %%(prog)s ssh keygen                  (a key for the server, with a passphrase)
+  %%(prog)s ssh pubkey                  (the line for the server's ~/.ssh/authorized_keys)
+  %%(prog)s ssh trust                   (check the server's host key, and keep it)
+  %%(prog)s publish ./game ./store --name "My Game" --version 1.0
+  %%(prog)s deploy ./store              (sends only what the server does not have yet)
+
+players update from it (the web server serves /var/www/game at https://game.example.com/):
+  %%(prog)s update ./MyGame --source https://game.example.com/
+
+try a release on this computer first:
+  %%(prog)s serve ./store               (http://localhost:8000/)
+  %%(prog)s update ./MyGame --source http://localhost:8000/
+
+more:
+  %%(prog)s ssh test                    (can it log in to the server?)
+  %%(prog)s sign keygen                 (once: a signing key; then publish with --sign)
   %%(prog)s deploy ./store --to-folder D:/www/game
-  %%(prog)s config                                (where the settings file and the log are)
+  %%(prog)s config                      (where the settings file and the log are)
 
 The log: %s (--log FILE elsewhere, --no-log for none).
 """ % logs.default_path().replace("%", "%%")

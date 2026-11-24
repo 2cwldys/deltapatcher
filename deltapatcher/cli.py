@@ -491,7 +491,7 @@ def cmd_version(a, cfg):
 # ---- arguments ----------------------------------------------------------------------------------
 
 def prog_name():
-    """The name to type: the built program's own file name (deltapatcher-cli-<version>-windows-x64, say), else deltapatcher."""
+    """The name to type: the built program's own file name (deltapatcher-cli-windows-x64, say), else deltapatcher."""
     if getattr(sys, "frozen", False):
         return os.path.splitext(os.path.basename(sys.executable))[0]
     return "deltapatcher"

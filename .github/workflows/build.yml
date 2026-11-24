@@ -37,6 +37,12 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: app/package-lock.json
+      # every copy of the version agrees, and a release tag (v1.2.3) names the same version
+      - name: the version
+        shell: bash
+        env:
+          TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: python tools/version.py --tag "$TAG"
       # the tests with only what running the engine needs (requirements.txt), so a missing package shows
       # here; each failing test also becomes an annotation, readable without signing in to GitHub
       - name: the engine's tests

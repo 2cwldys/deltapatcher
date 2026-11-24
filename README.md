@@ -66,9 +66,9 @@ artifacts) or **Releases**:
 
 | System | App | Command line |
 | --- | --- | --- |
-| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli-<version>-windows-x64.exe` |
-| Linux | `DeltaPatcher-<version>.AppImage` or `-linux-x64.tar.gz` | `deltapatcher-cli-<version>-linux-x64.tar.gz` |
-| macOS (Apple silicon) | `DeltaPatcher-<version>-arm64.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli-<version>-macos-arm64.tar.gz` |
+| Windows | `DeltaPatcher-<version>-portable.exe` (no install) or `-setup.exe` | `deltapatcher-cli-windows-x64.exe` |
+| Linux | `DeltaPatcher-<version>.AppImage` or `-linux-x64.tar.gz` | `deltapatcher-cli-linux-x64.tar.gz` |
+| macOS (Apple silicon) | `DeltaPatcher-<version>-arm64.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli-macos-arm64.tar.gz` |
 
 Everything is self-contained: the app carries its own engine, and the command line is one program. On
 Linux and macOS it comes in a `.tar.gz`: `tar -xzf <file>`, then `./deltapatcher-cli`. The AppImage needs
@@ -123,7 +123,7 @@ app/              the app (Electron, React, Tailwind): the window, which runs th
 cli/              deltapatcher.bat / deltapatcher.sh: the command line straight from the repository
 packaging/        the PyInstaller spec: the engine as one self-contained file, and as a folder for the app
 tests/            the engine's tests
-tools/            the icon, the README screenshots, the social preview, the secret scan, the release files, CI annotations
+tools/            the icon, the README screenshots, the social preview, the secret scan, the release files, CI annotations, the version
 docs/             the guides
 ```
 
@@ -151,6 +151,12 @@ Last, the build gathers this system's release files into `dist/release/` (`tools
 for a GitHub release and ready to upload to one.
 `dist/` is not tracked by git. Each *Build* workflow artifact is that folder for one system; macOS files
 come only from there (or from a Mac).
+
+**A new version**: `python tools/version.py 1.3.0` writes it everywhere it is kept (`deltapatcher/__init__.py`,
+`app/package.json` and its lock file; `pyproject.toml` reads it from the code). `python tools/version.py` alone
+shows it and checks that every copy agrees. Commit and push, and the *Build* run's app files carry the new
+number (the command line's file names carry none). Tag the release `v1.3.0`: a tag naming another version
+stops the build.
 
 **Working on the app**: build the engine once (`build.ps1 -EngineOnly`), then `cd app`, `npm ci`,
 `npm run dev`. Without a built engine the app runs the engine from source (`python -m deltapatcher`).

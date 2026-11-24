@@ -7,7 +7,7 @@ deltapatcher <command> [options]
 `deltapatcher` is any of:
 - `cli\deltapatcher.bat` / `cli/deltapatcher.sh` in the repository ([cli/README.md](../cli/README.md)): the
   built program when there is one, else Python from source
-- the command line from a release: `deltapatcher-cli-<version>-windows-x64.exe` (rename it
+- the command line from a release: `deltapatcher-cli-windows-x64.exe` (rename it
   `deltapatcher-cli.exe` if you like: the examples here use that name), or `deltapatcher-cli` from the Linux
   or macOS `.tar.gz`
 - `python -m deltapatcher` from source, or the `deltapatcher` command after `pip install .`

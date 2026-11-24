@@ -5,17 +5,16 @@
 dist/release/ then holds, for this system:
     DeltaPatcher-<version>-...                        the app: .exe (Windows), .AppImage and .tar.gz
                                                       (Linux), .dmg and .zip (macOS)
-    deltapatcher-cli-<version>-windows-x64.exe        the command line on Windows
-    deltapatcher-cli-<version>-<system>-<arch>.tar.gz the command line on Linux and macOS: deltapatcher-cli
-                                                      inside, runnable as soon as it is unpacked. A bare
-                                                      program there has no extension, and Windows would read
-                                                      everything after the version's last dot as one.
+    deltapatcher-cli-windows-x64.exe                  the command line on Windows
+    deltapatcher-cli-<system>-<arch>.tar.gz           the command line on Linux and macOS: deltapatcher-cli
+                                                      inside, runnable as soon as it is unpacked (a download
+                                                      of the bare program would lose that)
+The command line's names carry no version; the app's carry the one tools/version.py sets.
 Files another system put there are left alone, so one folder can gather every system's files.
 Each system's files are built on that system; the Build workflow uploads each one's dist/release/.
 """
 
 import glob
-import json
 import os
 import platform
 import shutil
@@ -40,8 +39,6 @@ def cli_archive(cli, dest):
 
 
 def main():
-    with open(os.path.join(ROOT, "app", "package.json"), encoding="utf-8") as f:
-        version = json.load(f)["version"]
     system = {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux")
     machine = platform.machine().lower()
     arch = {"x86_64": "x64", "amd64": "x64", "aarch64": "arm64", "arm64": "arm64"}.get(machine, machine)
@@ -64,7 +61,7 @@ def main():
         if mine:
             os.remove(os.path.join(OUT, name))
 
-    base = "deltapatcher-cli-%s-%s-%s" % (version, system, arch)
+    base = "deltapatcher-cli-%s-%s" % (system, arch)
     if system == "windows":
         names = [base + ".exe"]
         shutil.copy2(cli, os.path.join(OUT, names[0]))

@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deltapatcher"
-version = "0.2.0"
+# the version is deltapatcher/__init__.py's __version__ (set it with tools/version.py)
+dynamic = ["version"]
 description = "Delta patching with SHA-256 blobs: publish a folder, serve it anywhere, update clients with only what changed."
 readme = "README.md"
 license = { text = "MIT" }
@@ -28,6 +29,9 @@ deltapatcher = "deltapatcher.__main__:main"
 
 [tool.setuptools]
 packages = ["deltapatcher"]
+
+[tool.setuptools.dynamic]
+version = { attr = "deltapatcher.__version__" }
 
 [tool.setuptools.package-data]
 deltapatcher = ["assets/*.ico", "assets/*.png"]

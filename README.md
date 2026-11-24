@@ -109,16 +109,6 @@ Step by step, on the [wiki](https://github.com/2cwldys/deltapatcher/wiki):
 - **[Troubleshooting](https://github.com/2cwldys/deltapatcher/wiki/Troubleshooting)**: every error message and what to do.
 - **[Security](SECURITY.md)**: what DeltaPatcher protects, what it leaves to you, how to report a problem.
 
-## Security in short
-
-- Signed releases: players' updaters refuse anything your key did not sign.
-- Every file is checked against its SHA-256 before it is used, and manifests are treated as untrusted input.
-- SSH keys are read only by OpenSSH. Passphrases and server passwords are never stored, and a password
-  goes only to a server whose host key you trusted.
-- DeltaPatcher's own updates are checked against the SHA-256 GitHub gives before they are used.
-
-The details are in [SECURITY.md](SECURITY.md).
-
 ## For developers
 
 New to the code? [CONTEXT.md](CONTEXT.md) explains how it fits together and why, and [CLAUDE.md](CLAUDE.md)

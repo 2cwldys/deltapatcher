@@ -23,7 +23,7 @@ import sys
 import threading
 import time
 
-from . import APP_NAME, __version__, client, config, deploy, logs, publish, serve, signing, ssh
+from . import APP_NAME, __version__, client, config, deploy, logs, publish, selfupdate, serve, signing, ssh
 from .color import enable as color_enable
 from .color import paint, plain
 from .manifest import ManifestError
@@ -340,6 +340,61 @@ def cmd_release(a, cfg):
     else:
         say("Save the address players update from to see it here:  deltapatcher config set public_url=https://...")
     return out
+
+
+def cmd_self_update(a, cfg):
+    """Is a newer DeltaPatcher out; and, unless --check, put it in place (the command line) or download it
+    (--app: the app's file for this system, for the app to install)."""
+    try:
+        found = selfupdate.latest()
+    except selfupdate.UpdateCheckError as e:
+        raise CliError(str(e), "offline")
+    if not found:
+        say("No release of DeltaPatcher is published yet.")
+        return {"current": __version__, "latest": "", "newer": False}
+    newer = selfupdate.is_newer(found["version"])
+    data = {"current": __version__, "latest": found["version"], "newer": newer, "url": found["url"],
+            "notes": found["notes"]}
+    if not newer:
+        say("DeltaPatcher %s is the newest." % __version__, "ok")
+        return data
+    say("DeltaPatcher %s is out (you have %s): %s" % (found["version"], __version__, paint(found["url"], "code")), "head")
+    if a.check:
+        data["exit"] = 2
+        return data
+    kind = a.app or "cli"
+    if kind == "cli" and not getattr(sys, "frozen", False):
+        raise CliError("this DeltaPatcher runs from source (Python): update it with git pull, or pip install -U",
+                       "from-source")
+    asset = selfupdate.pick(found["assets"], kind)
+    if not asset:
+        raise CliError("the release has no %s for this system: download it from %s"
+                       % ("app" if a.app else "command line", found["url"]), "no-asset")
+    try:
+        path = selfupdate.download(asset, progress=OUT.progress)
+        OUT.end()
+        data["file"] = path
+        if kind == "cli":
+            selfupdate.replace_running_program(selfupdate.cli_from(path))
+            say("Updated to %s: the next start runs it." % found["version"], "ok")
+        else:
+            say("Downloaded %s" % path, "ok")
+    except selfupdate.UpdateCheckError as e:
+        raise CliError(str(e), "download-failed")
+    return data
+
+
+def update_notice(cfg):
+    """A line when a newer DeltaPatcher is out: asked of GitHub at most once a day, only in a terminal."""
+    try:
+        if not sys.stdout.isatty():
+            return
+    except (AttributeError, ValueError):
+        return
+    newest = selfupdate.cached_check(os.path.dirname(config.path()), enabled=cfg["check_updates"])
+    if selfupdate.is_newer(newest):
+        say("DeltaPatcher %s is out (you have %s):  %s" % (newest, __version__, paint(prog_name() + " self-update", "code")),
+            "warn")
 
 
 def cmd_serve(a, cfg):
@@ -736,6 +791,11 @@ def build_parser():
 
     sub.add_parser("menu", help="plain questions instead of commands: release, set up where releases go, update a folder")
 
+    s = sub.add_parser("self-update", help="update DeltaPatcher itself to the newest release")
+    s.add_argument("--check", action="store_true", help="only say whether a newer version is out (exit 2 when it is)")
+    s.add_argument("--app", choices=("setup", "zip", "appimage", "dmg"),
+                   help="download the app's file for this system instead (the app's own updater uses it)")
+
     s = sub.add_parser("release", help="publish a folder and send it where players download it from (the saved "
                                        "server, a folder, or this computer)")
     s.add_argument("src", nargs="?", help="the folder to release (default: the saved one)")
@@ -824,7 +884,7 @@ def build_parser():
 
 HANDLERS = {"publish": cmd_publish, "release": cmd_release, "serve": cmd_serve, "update": cmd_update,
             "rollback": cmd_rollback, "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign, "config": cmd_config,
-            "version": cmd_version}
+            "version": cmd_version, "self-update": cmd_self_update}
 
 
 def split_line(line):
@@ -893,6 +953,8 @@ def main(argv=None, prompt=True):
     """The command line. prompt=False: a command typed at the prompt, whose window already stays open."""
     global OUT
     argv = sys.argv[1:] if argv is None else argv
+    if prompt and getattr(sys, "frozen", False):
+        selfupdate.remove_leftover()                            # the old program a Windows self-update left
     color_enable(not {"--no-color", "--json"} & set(argv))     # the help is printed while the arguments are read
     # in a window of its own the output would vanish with the window: it waits for Enter, unless --close
     stay = prompt and not {"--close", "--json"} & set(argv) and window_of_its_own()
@@ -951,6 +1013,8 @@ def main(argv=None, prompt=True):
         rc = 1
     logs.write("== exit %d" % rc)
     logs.close()
+    if not a.json and a.cmd != "self-update":
+        update_notice(cfg)
     if stay:
         wait_to_close()
     return rc

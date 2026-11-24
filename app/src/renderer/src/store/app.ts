@@ -50,6 +50,10 @@ interface State {
   results: Record<string, any>
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   setResult: (kind: string, data: any) => void
+  // a newer DeltaPatcher, when one is out (the sidebar offers it)
+  appUpdate: { current: string; latest: string; url: string } | null
+  checkAppUpdate: () => Promise<void>
+  installAppUpdate: () => Promise<void>
   // the release served on this computer (Release, "This computer"): it keeps running whichever page is shown
   serving: { jobId: string; url: string } | null
   startServe: (store?: string) => Promise<void>
@@ -114,6 +118,44 @@ export const useApp = create<State>((set, get) => ({
   consoleOpen: false,
   results: {},
   serving: null,
+  appUpdate: null,
+
+  // GitHub's newest release against this version, by number; quiet, and nothing when offline
+  checkAppUpdate: async () => {
+    const r = await get().run('', ['self-update', '--check'], { quiet: true })
+    if (r.ok && r.data.newer) {
+      set({ appUpdate: { current: String(r.data.current), latest: String(r.data.latest), url: String(r.data.url) } })
+    }
+  },
+
+  // download the new version's file for this system and hand it to the main process, which installs it and
+  // closes DeltaPatcher; a copy that cannot replace itself (the zip, from source) opens the release page
+  installAppUpdate: async () => {
+    const u = get().appUpdate
+    if (!u) return
+    const info = await window.api.info()
+    if (info.install === 'zip' || info.install === 'none') {
+      const go = await ask.confirm(
+        `DeltaPatcher ${u.latest} is out`,
+        `You have ${u.current}. This copy cannot replace itself (${info.install === 'zip' ? 'it runs from the zip' : 'it runs from source'}): ` +
+          'download the new one from the release page.',
+        'Open the release page'
+      )
+      if (go) window.open(u.url, '_blank')
+      return
+    }
+    const how =
+      info.install === 'setup'
+        ? 'It downloads the new setup, starts it, and closes DeltaPatcher so it can install.'
+        : info.install === 'appimage'
+          ? 'It downloads the new AppImage, puts it in place of this one, and starts it.'
+          : 'It downloads the new disk image and opens it: drag DeltaPatcher into Applications, replacing the old one.'
+    if (!(await ask.confirm(`Update to DeltaPatcher ${u.latest}?`, `You have ${u.current}. ${how}`, 'Update'))) return
+    const r = await get().run(`Download DeltaPatcher ${u.latest}`, ['self-update', `--app=${info.install}`])
+    if (!r.ok || !r.data.file) return
+    const done = await window.api.installUpdate(String(r.data.file), info.install)
+    if (done !== 'started') await ask.info('The update was not started', 'Download it from the release page instead.', u.url)
+  },
 
   // serve a release on this computer: the store a release just wrote, else the saved store, else the engine's
   // own store for the saved folder

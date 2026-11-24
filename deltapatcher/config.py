@@ -60,6 +60,8 @@ SCHEMA = [
     ("server", "public_url", "", "The address players update from: what the web server gives the remote folder or the "
                                  "folder (https://game.example.com/). Shown after each release."),
     ("window", "close_to_tray", False, "Closing the window keeps DeltaPatcher in the tray (yes/no)."),
+    ("window", "check_updates", True, "Look for a newer DeltaPatcher once a day and say so (yes/no). Nothing is "
+                                      "downloaded without asking."),
 ]
 DEFAULTS = {key: default for _s, key, default, _w in SCHEMA}
 SECTION = {key: section for section, key, _d, _w in SCHEMA}

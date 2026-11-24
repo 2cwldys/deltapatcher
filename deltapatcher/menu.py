@@ -6,8 +6,9 @@ menu is a way in, not a second program.
 """
 
 import os
+import sys
 
-from . import APP_NAME, __version__, config, ssh
+from . import APP_NAME, __version__, config, selfupdate, ssh
 from .color import paint
 
 
@@ -154,6 +155,12 @@ def update():
     pause()
 
 
+def update_self():
+    heading("Update DeltaPatcher")
+    run("self-update")
+    pause()
+
+
 def commands():
     from . import cli
     cli.prompt_loop(back="goes back to the menu")
@@ -163,15 +170,30 @@ CHOICES = [
     ("1", "Release a new version", "sends players only what changed", release),
     ("2", "Set up where releases go", "your server, a folder, or this computer", setup),
     ("3", "Update a folder", "gets the latest release", update),
-    ("4", "Type commands yourself", "every command, at a prompt", commands),
+    ("4", "Update DeltaPatcher", "itself, to the newest version", update_self),
+    ("5", "Type commands yourself", "every command, at a prompt", commands),
     ("0", "Exit", "", None),
 ]
+
+
+def newer_out(cfg):
+    """A newer DeltaPatcher's version, asked of GitHub at most once a day; '' when none (or not a terminal)."""
+    try:
+        if not sys.stdout.isatty():
+            return ""
+    except (AttributeError, ValueError):
+        return ""
+    newest = selfupdate.cached_check(os.path.dirname(config.path()), enabled=cfg["check_updates"])
+    return newest if selfupdate.is_newer(newest) else ""
 
 
 def run_menu():
     while True:
         cfg = config.load()
         heading("%s %s" % (APP_NAME, __version__))
+        newest = newer_out(cfg)
+        if newest:
+            print(paint("DeltaPatcher %s is out: choose 4 to update." % newest, "warn"))
         goes = where(cfg)
         if cfg["publish_src"] and goes:
             print("Your release: %s  ->  %s" % (cfg["publish_src"], goes))

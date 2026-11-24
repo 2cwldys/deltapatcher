@@ -78,6 +78,11 @@ Linux and macOS it comes in a `.tar.gz`: `tar -xzf <file>`, then `./deltapatcher
 command line opens a menu of plain questions: release a new version, set up where releases go, update a
 folder. `--close` makes it close by itself when it is done (for shortcuts and launchers).
 
+DeltaPatcher keeps itself up to date: once a day it looks for a newer release (Settings, *check_updates*,
+turns that off). The app then shows **Update DeltaPatcher** in its sidebar with both version numbers; it
+downloads the new setup (or AppImage, or disk image), checks it, and installs it. The command line says so
+too, and `deltapatcher self-update` updates it.
+
 ## Quick start
 
 In the app:
@@ -174,6 +179,9 @@ come only from there (or from a Mac).
    | Linux | `DeltaPatcher-0.3.0.AppImage`, `deltapatcher-cli-linux-x64.tar.gz` | `DeltaPatcher-0.3.0-linux-x64.tar.gz` (only for systems that cannot run an AppImage) |
 
 The app's files carry the version in their names; the command line's do not.
+
+6. **Everyone on an older version is offered it**: the app shows **Update DeltaPatcher**, and the command
+   line says `deltapatcher self-update`. They find the files by these names, so keep them as they are.
 
 **Working on the app**: build the engine once (`build.ps1 -EngineOnly`), then `cd app`, `npm ci`,
 `npm run dev`. Without a built engine the app runs the engine from source (`python -m deltapatcher`).

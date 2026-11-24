@@ -182,6 +182,21 @@ deltapatcher config [--show]
 Print where the settings file and the log are (the settings file is made, with every setting
 explained, if it is missing). `--show` prints the file too.
 
+## self-update
+
+```
+deltapatcher self-update [--check]
+```
+
+DeltaPatcher itself: is a newer release out on GitHub, and if so, put it in place of this command line
+(compared by version number: 0.2.0 < 0.3.0 < 0.10.0). The file is checked against the SHA-256 GitHub gives
+for it before it is used. `--check` only says (exit code 2 when a newer one is out). On Windows the old
+program is kept as `<name>.old` until the next start, because a running program cannot be replaced there.
+From source (Python), it says to use `git pull` instead.
+
+Once a day, a command run in a terminal also says when a newer DeltaPatcher is out. The setting
+`check_updates = no` turns that off; nothing is ever downloaded without asking.
+
 ## Machine mode (--json)
 
 With `--json` every command writes one JSON object a line, which is how the app drives the engine:

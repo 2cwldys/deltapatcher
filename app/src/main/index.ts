@@ -13,10 +13,49 @@ import {
   session,
   shell
 } from 'electron'
-import { existsSync, mkdirSync, statSync, writeFileSync } from 'fs'
-import { join, resolve } from 'path'
-import { RunRequest } from '../shared/types'
+import { spawn } from 'child_process'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, renameSync, statSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { basename, dirname, join, resolve } from 'path'
+import { InstallKind, RunRequest } from '../shared/types'
 import { cancelJob, engineCommand, runEngine, stopAll, stopJob } from './engine'
+
+// How this copy of DeltaPatcher was installed, which decides how it updates itself: the Windows setup
+// (its uninstaller sits beside the program), the Windows zip, an AppImage, macOS, or from source.
+function installKind(): InstallKind {
+  if (!app.isPackaged) return 'none'
+  if (process.platform === 'win32') {
+    return existsSync(join(dirname(process.execPath), 'Uninstall DeltaPatcher.exe')) ? 'setup' : 'zip'
+  }
+  if (process.platform === 'linux') return process.env.APPIMAGE ? 'appimage' : 'none'
+  if (process.platform === 'darwin') return 'dmg'
+  return 'none'
+}
+
+// Put a downloaded update in place. Only a file the engine downloaded into its own update folder, with a
+// DeltaPatcher release's name, is ever run: the window cannot make this start anything else.
+async function installUpdate(file: string, kind: string): Promise<string> {
+  const folder = resolve(join(tmpdir(), 'deltapatcher-update'))
+  const full = resolve(String(file))
+  const same = (a: string, b: string): boolean => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b)
+  if (!same(dirname(full), folder) || !existsSync(full)) return 'refused'
+  if (kind === 'setup' && installKind() === 'setup' && /^DeltaPatcher-[\d.]+-setup\.exe$/.test(basename(full))) {
+    spawn(full, [], { detached: true, stdio: 'ignore' }).unref()
+  } else if (kind === 'appimage' && installKind() === 'appimage' && /^DeltaPatcher-[\d.]+\.AppImage$/.test(basename(full))) {
+    const target = String(process.env.APPIMAGE)
+    copyFileSync(full, target + '.new')
+    chmodSync(target + '.new', 0o755)
+    renameSync(target + '.new', target)
+    spawn(target, [], { detached: true, stdio: 'ignore' }).unref()
+  } else if (kind === 'dmg' && installKind() === 'dmg' && /^DeltaPatcher-[\d.]+-\w+\.dmg$/.test(basename(full))) {
+    await shell.openPath(full)                // the disk image opens: the app is dragged over the old one
+  } else {
+    return 'refused'
+  }
+  quitting = true
+  app.quit()
+  return 'started'
+}
 
 // README screenshots (--capture=DIR): from source, or a packaged build only when DELTAPATCHER_CAPTURE=1
 const captureArg = process.argv.find((a) => a.startsWith('--capture='))
@@ -148,8 +187,10 @@ function registerIpc(): void {
     version: app.getVersion(),
     platform: process.platform,
     engine: engineCommand().describe,
-    capture: Boolean(captureDir)
+    capture: Boolean(captureDir),
+    install: installKind()
   }))
+  handle('update:install', (_e, file: string, kind: string) => installUpdate(String(file), String(kind)))
   handle('app:close-to-tray', (_e, on: boolean) => {
     closeToTray = Boolean(on)
   })

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
+import { ArrowUpCircle, Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
 import { Page, useApp } from '../store/app'
 import { REPO_URL } from '@shared/project'
 
@@ -12,6 +12,9 @@ const LINKS: { page: Page; label: string; hint: string; Icon: LucideIcon }[] = [
 export default function Sidebar(): JSX.Element {
   const page = useApp((s) => s.page)
   const setPage = useApp((s) => s.setPage)
+  const appUpdate = useApp((s) => s.appUpdate)
+  const installAppUpdate = useApp((s) => s.installAppUpdate)
+  const busy = useApp((s) => s.busy)
   const [version, setVersion] = useState('')
   useEffect(() => {
     window.api.info().then((i) => setVersion(i.version))
@@ -47,6 +50,23 @@ export default function Sidebar(): JSX.Element {
           )
         })}
       </nav>
+      {appUpdate && (
+        <button
+          type="button"
+          disabled={Boolean(busy)}
+          onClick={installAppUpdate}
+          title={`DeltaPatcher ${appUpdate.latest} is out`}
+          className="mx-3 mt-4 flex items-center gap-3 rounded-lg border border-blob/40 bg-blob/10 px-3 py-2.5 text-left text-blob-light transition-colors hover:bg-blob/20 disabled:opacity-50"
+        >
+          <ArrowUpCircle size={17} className="shrink-0" />
+          <span>
+            <span className="block text-sm font-medium">Update DeltaPatcher</span>
+            <span className="block font-mono text-[11px] text-ink-300">
+              {appUpdate.current} {'→'} {appUpdate.latest}
+            </span>
+          </span>
+        </button>
+      )}
       <div className="mt-auto px-5 pb-5">
         <div className="rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 text-[11px] leading-relaxed text-ink-400">
           Every file is checked against its <span className="text-blob">SHA-256</span> before it is used.

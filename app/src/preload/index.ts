@@ -17,6 +17,7 @@ const api = {
   copy: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
   setCloseToTray: (on: boolean): Promise<void> => ipcRenderer.invoke('app:close-to-tray', on),
+  installUpdate: (file: string, kind: string): Promise<string> => ipcRenderer.invoke('update:install', file, kind),
   capture: {
     ready: (name: string): void => ipcRenderer.send('capture:ready', name),
     done: (): void => ipcRenderer.send('capture:done'),

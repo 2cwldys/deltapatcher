@@ -53,6 +53,7 @@ export default function App(): JSX.Element {
     load().then(async () => {
       const info = await window.api.info()
       if (info.capture) captureTour()
+      else if (useApp.getState().settings.check_updates !== false) useApp.getState().checkAppUpdate()
     })
   }, [load])
 

@@ -13,6 +13,7 @@ declare global {
       copy: (text: string) => Promise<void>
       info: () => Promise<AppInfo>
       setCloseToTray: (on: boolean) => Promise<void>
+      installUpdate: (file: string, kind: string) => Promise<string>
       capture: {
         ready: (name: string) => void
         done: () => void

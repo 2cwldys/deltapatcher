@@ -37,12 +37,16 @@ export interface RunRequest {
   passphrase?: string
 }
 
+// how this copy was installed, which decides how it updates itself (none: from source, or no way to)
+export type InstallKind = 'setup' | 'zip' | 'appimage' | 'dmg' | 'none'
+
 export interface AppInfo {
   version: string
   platform: string
   engine: string
   capture: boolean
+  install: InstallKind
 }
 
 // the engine commands the window may run; anything else is refused by the main process
-export const ENGINE_COMMANDS = ['update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve'] as const
+export const ENGINE_COMMANDS = ['update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve', 'self-update'] as const

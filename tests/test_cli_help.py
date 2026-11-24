@@ -15,6 +15,7 @@ import helpers  # noqa: E402,F401  (first: settings and logs go to a sandbox)
 from deltapatcher import cli, color  # noqa: E402
 
 VERSION_LINE = "%s %s\n" % (cli.APP_NAME, cli.__version__)
+CODE = "\x1b[" + color.STYLES["code"] + "m%s\x1b[0m"          # painted as something to copy
 
 
 def run(argv):
@@ -42,15 +43,15 @@ class Help(unittest.TestCase):
         options = next(line for p, line in lines.items() if p == "options:")
         self.assertTrue(options.startswith("\x1b[1;97m"))           # a heading: bold white
         publish = next(line for p, line in lines.items() if p.lstrip().startswith("publish "))
-        self.assertIn("\x1b[38;5;141mpublish\x1b[0m", publish)      # a command: purple
+        self.assertIn(CODE % "publish", publish)                    # a command: the app's blue
         example = next(line for p, line in lines.items() if p.lstrip().startswith(cli.prog_name() + " serve"))
-        self.assertIn("\x1b[38;5;141m%s serve ./store\x1b[0m" % cli.prog_name(), example)
+        self.assertIn(CODE % (cli.prog_name() + " serve ./store"), example)
 
     def test_subcommand_help_too(self):
         with mock.patch.dict(color._on, {"out": True}):
             painted = cli.build_parser()._subparsers._group_actions[0].choices["update"].format_help()
-        self.assertIn("\x1b[38;5;141m--source SOURCE\x1b[0m", painted)
-        self.assertIn("\x1b[38;5;141minstall\x1b[0m", painted)
+        self.assertIn(CODE % "--source SOURCE", painted)
+        self.assertIn(CODE % "install", painted)
 
     def test_no_colour_when_asked(self):
         rc, text, _ = run(["--no-color"])

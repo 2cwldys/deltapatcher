@@ -5,26 +5,40 @@ macOS, and on Windows 10 and later once virtual-terminal processing is switched 
 Output that goes to a file, a pipe or a log is plain text. NO_COLOR (https://no-color.org),
 TERM=dumb or --no-color turn it off.
 
-Three colours: white, orange and purple.
-    head  bold white    a title
-    ok    white         done, up to date, signed, checked
-    warn  orange        needs your attention
-    err   bold orange   stopped by an error
-    code  purple        something to copy, type or compare: a key, a fingerprint, a command
-    bar   orange        the progress meter
+The app's colours (app/tailwind.config.js, the icon's): white, its blue (the teal delta) and its
+beige-yellow (the amber blob).
+    head  bold white                 a title
+    ok    white                      done, up to date, signed, checked
+    warn  beige-yellow  #f7c06f      needs your attention
+    err   bold amber    #f2a33a      stopped by an error
+    code  blue          #3fd1bd      something to copy, type or compare: a key, a fingerprint, a command
+    bar   teal          #19b3a0      the progress meter
+A terminal that shows any colour exactly (Windows 10 and later, or one that sets COLORTERM=truecolor)
+gets these; others get the nearest of the 256 standard ones.
 """
 
 import os
 import re
 import sys
 
+
+def _truecolor():
+    return os.name == "nt" or os.environ.get("COLORTERM", "").lower() in ("truecolor", "24bit")
+
+
+def _fg(rgb, nearest_256):
+    if _truecolor():
+        return "38;2;%d;%d;%d" % (int(rgb[0:2], 16), int(rgb[2:4], 16), int(rgb[4:6], 16))
+    return "38;5;%d" % nearest_256
+
+
 STYLES = {
     "head": "1;97",
     "ok": "97",
-    "warn": "38;5;208",
-    "err": "1;38;5;208",
-    "code": "38;5;141",
-    "bar": "38;5;208",
+    "warn": _fg("f7c06f", 222),
+    "err": "1;" + _fg("f2a33a", 215),
+    "code": _fg("3fd1bd", 79),
+    "bar": _fg("19b3a0", 37),
 }
 ANSI = re.compile(r"\x1b\[[0-9;]*m")
 ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004

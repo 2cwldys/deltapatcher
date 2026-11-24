@@ -7,6 +7,7 @@ import subprocess
 import sys
 import unittest
 import urllib.error
+from unittest import mock
 import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -220,7 +221,20 @@ class Colour(unittest.TestCase):
         color.enable(False)
         self.assertEqual(color.paint("x", "ok"), "x")
         color._on["out"] = True
-        self.assertEqual(color.paint("x", "code"), "\x1b[38;5;141mx\x1b[0m")
+        self.assertEqual(color.paint("x", "code"), "\x1b[%smx\x1b[0m" % color.STYLES["code"])
+
+    def test_the_apps_colours(self):
+        # the app's palette: beige-yellow #f7c06f, amber #f2a33a, blue #3fd1bd, teal #19b3a0, and white
+        with mock.patch.object(color, "_truecolor", return_value=True):
+            self.assertEqual(color._fg("f7c06f", 222), "38;2;247;192;111")
+            self.assertEqual(color._fg("3fd1bd", 79), "38;2;63;209;189")
+        with mock.patch.object(color, "_truecolor", return_value=False):
+            self.assertEqual(color._fg("f7c06f", 222), "38;5;222")
+        self.assertIn(color.STYLES["warn"], ("38;2;247;192;111", "38;5;222"))
+        self.assertIn(color.STYLES["err"], ("1;38;2;242;163;58", "1;38;5;215"))
+        self.assertIn(color.STYLES["code"], ("38;2;63;209;189", "38;5;79"))
+        self.assertIn(color.STYLES["bar"], ("38;2;25;179;160", "38;5;37"))
+        self.assertEqual((color.STYLES["head"], color.STYLES["ok"]), ("1;97", "97"))
         self.assertEqual(color.plain(color.paint("x", "warn")), "x")
         color._on.clear()
 

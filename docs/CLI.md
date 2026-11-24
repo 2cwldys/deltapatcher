@@ -38,8 +38,9 @@ The settings file (`deltapatcher.ini`, see [Settings and logs](#settings-and-log
 | `--no-color` | Plain text. Colour is used only in a terminal that shows it, never in files or pipes; `NO_COLOR=1` works too. |
 | `--close` | Close as soon as the command is done: no prompt, no waiting for Enter in a window of its own (see above) |
 
-In a terminal the output uses three colours: white for what was done, orange for what needs your
-attention (and for errors, in bold), purple for things to copy or compare (keys, fingerprints, commands).
+In a terminal the output uses the app's colours: white for what was done, beige-yellow for what needs
+your attention (and amber, in bold, for errors), the app's blue for things to copy or compare (keys,
+fingerprints, commands), and its teal for the progress bar.
 
 ## Exit codes
 

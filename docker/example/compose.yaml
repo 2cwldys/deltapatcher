@@ -7,8 +7,13 @@ services:
       DP_SOURCE: https://game.example.com/
       DP_TRUST_KEY: ""          # ed25519:... when your releases are signed
       DP_REQUIRED: "0"          # 1: do not start when the update fails
+      # Or the publisher's project file instead of DP_SOURCE and DP_TRUST_KEY, mounted below; a newer file
+      # handed to the container is used at the next start:
+      # DP_PROJECT_FILE: /config/game.deltapatch
+      # DP_PROJECT_NAME: ""     # the project to keep, when the file holds several
     volumes:
       - game-data:/data
+      # - ./game.deltapatch:/config/game.deltapatch:ro
     ports:
       - "27015:27015/udp"
 

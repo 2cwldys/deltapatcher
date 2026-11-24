@@ -1,9 +1,9 @@
-// The Release page: what to release, where players download it from, the one-time setup of the server (folded
-// once it is all done), and one button that publishes the folder and sends only what changed there (or serves it
-// on this computer, to try it first); then the statistics of the release players have. Publishing the same
-// version again with changed files is fine: players get the changed files (a shadow patch). A project with no
-// folder to release yet opens on a short start; the rest is one click away. The backups of the live release are
-// on the Settings page.
+// The Release page: what to release (with what is new in it for players, and whether they see the file names),
+// where players download it from, the one-time setup of the server (folded once it is all done), and one button
+// that publishes the folder and sends only what changed there (or serves it on this computer, to try it first);
+// then the statistics of the release players have. Publishing the same version again with changed files is fine:
+// players get the changed files (a shadow patch). A project with no folder to release yet opens on a short start;
+// the rest is one click away. The backups of the live release are on the Settings page.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChartColumn, ChevronsDown, Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw,
@@ -14,9 +14,10 @@ import { useApp } from '../store/app'
 import { sentences } from '../store/projectActions'
 import { BarRow, players, statsCounter, StatsState, statsSummary, when } from '../store/stats'
 import { serverSetup, signingSetup, SignStatus, SshStatus } from '../store/setup'
+import { NOTES_MAX, notesProblem } from '../store/publisher'
 import { REPO_URL } from '@shared/project'
 import { ask, HostKey } from '../store/modal'
-import { Banner, Button, Card, Chip, Field, Segmented, SettingToggle, Stat, Toggle, human } from '../components/ui'
+import { Banner, Button, Card, Chip, Field, InfoTip, Segmented, SettingToggle, Stat, Toggle, human } from '../components/ui'
 import { PathList, listOf } from '../components/PathList'
 
 type Mode = 'sftp' | 'folder' | 'local'
@@ -106,6 +107,12 @@ export async function publishRelease(): Promise<Data | null> {
     args.push(...(items.length ? items.map((p) => `${option}=${p}`) : [`${option}=`]))
   }
   if (!s.htaccess) args.push('--no-htaccess')
+  const notes = (st.notes[st.project] ?? '').trim()
+  if (notesProblem(notes)) {
+    await ask.info('The release notes are too long', notesProblem(notes))
+    return null
+  }
+  if (notes) args.push(`--notes=${notes}`)
   let passphrase: string | undefined
   if (s.sign) {
     const key = String(st.effective('signing_key'))
@@ -139,11 +146,13 @@ export async function runRelease(dry = false): Promise<void> {
     await ask.info('Which folder?', 'Choose the folder to copy the release to.')
     return
   }
+  const project = st.project
   const pub = await publishRelease()
   if (!pub) return
   const store = String(pub.store)
   if (mode === 'local') {
     st.setResult('release', { publish: pub, players_url: `http://localhost:${String(st.effective('serve_port') || 8000)}/`, mode })
+    if (pub.notes) st.setNotes(project, '')
     if (!st.serving) void st.startServe(store)
     return
   }
@@ -153,7 +162,28 @@ export async function runRelease(dry = false): Promise<void> {
   if (dry) args.push('--dry-run')
   const d = await withHostTrust(dry ? 'Send (dry run)' : 'Send', args)
   if (!d) return
+  // the notes went out with this release: the box is ready for the next one
+  if (!dry && pub.notes) st.setNotes(project, '')
   st.setResult('release', { publish: pub, deploy: d, players_url: String(s.public_url || ''), mode })
+}
+
+// What is new in the release, for players: kept in the window, per project, until its release is sent
+function NotesBox(): JSX.Element {
+  const project = useApp((s) => s.project)
+  const text = useApp((s) => s.notes[s.project] ?? '')
+  const problem = notesProblem(text)
+  return (
+    <div className="md:col-span-2">
+      <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+        <label className="label !mb-0">What is new, for players (optional)</label>
+        <InfoTip text={'Plain text, shown to players with the files that changed: on their Update page, under What changed, and by their command line.\n' +
+          `At most ${NOTES_MAX} characters.\nIt goes out with the next release, and the box empties once that release is sent.`} />
+      </div>
+      <textarea className="input min-h-[5.5rem] resize-y" value={text} maxLength={NOTES_MAX} spellCheck
+        placeholder="Two new maps. The old harbour map is gone." onChange={(e) => useApp.getState().setNotes(project, e.target.value)} />
+      {problem ? <p className="hint text-rose-300">{problem}</p> : <p className="hint">{'Sent with the next release, then cleared.'}</p>}
+    </div>
+  )
 }
 
 // the last state of each project's key, host and signing key, kept while another page or project is shown, so
@@ -662,6 +692,9 @@ export default function ReleasePage(): JSX.Element {
             hint={'Players never get these. A folder leaves out everything in it.\nAlways left out: .git, .svn, .hg, __pycache__, Thumbs.db, desktop.ini, .DS_Store, *.tmp.'} />
           <PathList setting="protect" label="Players keep their own copy" empty="Nothing picked: every file follows the release."
             hint={'Sent once, then never overwritten: players keep their changes (settings, saves).\nA folder covers everything in it.'} />
+          <NotesBox />
+          <SettingToggle setting="show_files" label="Show players the file names"
+            hint={'Players see which files a release adds, changes and removes, and its whole list.\nThe release is public either way: off, DeltaPatcher shows them only how many.'} />
         </div>
       </Card>
 

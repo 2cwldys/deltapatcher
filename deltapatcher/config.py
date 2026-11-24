@@ -47,6 +47,14 @@ SCHEMA = [
     ("project", "install_folder", "", "The folder this project goes into inside the folder a player picks, for example "
                                       "Mods: one name, by the rules of a project's name. Empty: the folder the player "
                                       "picks."),
+    ("project", "follow_publisher", True, "Ask me when the publisher changes this project: its description, website, "
+                                          "where it goes, its address or its publisher key, as its releases give them. "
+                                          "Nothing changes until you apply it, and your folder, its name here and your "
+                                          "own settings never do (yes/no). no: never asked."),
+    ("project", "publisher_accepted", "", "Kept by DeltaPatcher: the publisher's details of this project as you last "
+                                          "accepted them, so a check sees what the publisher changed since."),
+    ("project", "publisher_not_now", "", "Kept by DeltaPatcher: the publisher's change you answered Not now, by its "
+                                         "hash. It is asked again once the publisher changes the project again."),
     ("update", "source_url", DEFAULT_URL, "Where releases come from: an http(s) address or a folder."),
     ("update", "install_dir", "", "The folder to keep up to date (a game folder, for instance)."),
     ("update", "trust_key", "", "The publisher's public key (ed25519:...). Empty: unsigned releases are fine, and the key "
@@ -65,6 +73,14 @@ SCHEMA = [
     ("publish", "signing_key", default_signing_key(), "The signing key's file (the file's path, never the key)."),
     ("publish", "htaccess", True, "Write a .htaccess for Apache into the store (yes/no)."),
     ("publish", "serve_port", 8000, "The port of 'Serve locally'."),
+    ("publish", "share_updates", True, "Each release carries this project's details (its name, description, website, "
+                                       "where it goes, the address players update from and its publisher key), and "
+                                       "players who follow it are asked when you change them; project files are update "
+                                       "capable unless you choose otherwise (yes/no). no: releases carry none, and each "
+                                       "project file sets up a project of its own."),
+    ("publish", "show_files", True, "Players see the names of the files a release adds, changes and removes, and its "
+                                    "whole list (yes/no). The manifest is public either way: this decides what "
+                                    "DeltaPatcher shows them. no: only how many."),
     ("server", "deploy_mode", "sftp", "Where Release sends the release: sftp (a server over SSH), folder, or local "
                                       "(served from this computer, for testing)."),
     ("server", "ssh_host", "", "The server's address."),

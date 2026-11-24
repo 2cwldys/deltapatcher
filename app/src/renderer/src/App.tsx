@@ -6,6 +6,7 @@ import Modals from './components/Modals'
 import Welcome from './components/Welcome'
 import { StoppedNotice } from './components/ForceStop'
 import { ExportDialog, ImportDialog } from './components/ProjectFileDialogs'
+import ChangesDialog from './components/ChangesDialog'
 import { Button, InfoTip } from './components/ui'
 import UpdatePage, { runUpdate } from './pages/UpdatePage'
 import ReleasePage, { publishRelease } from './pages/ReleasePage'
@@ -183,6 +184,7 @@ export default function App(): JSX.Element {
       </main>
       <ImportDialog />
       <ExportDialog />
+      <ChangesDialog />
       <Modals />
     </div>
   )

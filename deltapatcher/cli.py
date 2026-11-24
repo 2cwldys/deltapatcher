@@ -35,8 +35,8 @@ import threading
 import time
 import traceback
 
-from . import (APP_NAME, __version__, backup, client, config, deploy, logs, presets, projects, publish, selfupdate,
-               serve, signing, ssh, stats)
+from . import (APP_NAME, __version__, backup, client, config, deploy, logs, presets, projects, publish, publisher,
+               selfupdate, serve, signing, ssh, stats)
 from .color import enable as color_enable
 from .color import paint, plain
 from .manifest import MANIFEST_NAME, Manifest, ManifestError
@@ -55,6 +55,7 @@ put releases on your VPS (the first lines once; then one line for every version)
 
 players update from it:
   %%(prog)s update ./MyGame --source https://game.example.com/
+  %%(prog)s update ./MyGame --project-file MyGame.deltapatch     (a container: the address and key from a project file)
 
 try a release on this computer first:
   %%(prog)s release --to local          (publishes, then serves it at http://localhost:8000/)
@@ -76,6 +77,7 @@ several games or mods: a project each, with settings of its own (commands use De
   %%(prog)s update --all                (every project's folder, several at the same time)
   %%(prog)s project export "My Mod" --out MyMod.deltapatch     (a project file to give players; --sign)
   %%(prog)s project import MyMod.deltapatch                    (the projects of a project file, added here)
+  %%(prog)s project accept "My Mod"                            (its publisher changed it: apply that, after one question)
 
 the guides, on the wiki in your browser:
   %%(prog)s wiki                        (where to start)
@@ -426,20 +428,44 @@ def cmd_publish(a, cfg):
         for r in rules[kind]:
             if r.startswith("/") and not os.path.exists(os.path.join(src, *r.strip("/").split("/"))):
                 say("%s: %s is not in %s (yet)" % (kind, r.strip("/"), os.path.abspath(src)), "warn")
+    notes = release_notes(a)
     signer = None
     if a.sign is not None:
         signer = load_signer(a, a.sign or cfg["signing_key"] or signing.default_key_path())
     name = a.name if a.name is not None else cfg["name"]
     version = a.version if a.version is not None else cfg["version"]
+    details = publisher.release_object(project_of(a), cfg, signing.public_key_text(signer) if signer else "", notes, say)
     res = publish.publish(src, store, name, version, rules["protect"], prune=not a.no_prune,
                           progress=OUT.progress, log=say, signer=signer, htaccess=not a.no_htaccess,
-                          leave_out=rules["leave out"], cancel=USER_CANCEL)
+                          leave_out=rules["leave out"], cancel=USER_CANCEL, project=details)
     OUT.end()
     if signer is None:
         say("Not signed. Players can check who made a release when you publish with --sign.", "warn")
     return {"files": res.files, "bytes": res.bytes, "blobs": res.blobs, "new_blobs": res.new_blobs,
             "new_bytes": res.new_bytes, "pruned": res.pruned, "signed": signer is not None,
-            "left_out": res.left_out, "store": os.path.abspath(store), "summary": res.summary()}
+            "left_out": res.left_out, "store": os.path.abspath(store), "summary": res.summary(),
+            "details": publisher.has_details(details), "show_files": details["show_files"], "notes": notes}
+
+
+def release_notes(a):
+    """--notes TEXT or --notes-file FILE: the release notes as the release keeps them; '' for none."""
+    text, path = getattr(a, "notes", None), getattr(a, "notes_file", None)
+    if text is not None and path:
+        raise CliError("give the release notes with --notes or with --notes-file, not both", "bad-arguments")
+    if path:
+        most = publisher.NOTES_MAX * 4
+        try:
+            with open(os.path.abspath(os.path.expanduser(path)), "r", encoding="utf-8-sig") as f:
+                text = f.read(most + 1)
+        except (OSError, UnicodeDecodeError) as e:
+            raise CliError("cannot read the release notes in %s: %s" % (path, e), "unreadable")
+        if len(text) > most:
+            raise CliError("the release notes: at most %d characters (%s holds more)" % (publisher.NOTES_MAX, path),
+                           "bad-notes")
+    try:
+        return publisher.clean_notes(text or "")
+    except ValueError as e:
+        raise CliError(str(e), "bad-notes")
 
 
 def cmd_release(a, cfg):
@@ -567,12 +593,24 @@ def cmd_check(a, cfg):
 
 def update_one(a, cfg, out, cancel):
     """Update (or check) one folder: the one given, else the project's. Its messages go to `out`; `cancel`
-    stops its downloads. cfg is the project's settings: nothing here reads any other."""
+    stops its downloads. cfg is the project's settings: nothing here reads any other. With --project-file the
+    address and the publisher key come from that file, and no setting is read for them or written."""
     install = a.install or cfg["install_dir"]
     if not install:
         raise CliError("give the folder to update, or save it once:  deltapatcher config set install_dir=FOLDER",
                        "no-folder")
-    url = a.source or cfg["source_url"] or DEFAULT_URL
+    entry = None
+    if getattr(a, "project_file", None):
+        if a.source or a.trust_key:
+            raise CliError("--project-file gives the address and the publisher key: leave out --source and "
+                           "--trust-key", "bad-arguments")
+        entry = project_file_entry(a, out)
+        url, trust = entry["source_url"], entry.get("trust_key") or None
+    else:
+        if getattr(a, "only", None):
+            raise CliError("--only picks one project of the file --project-file names", "bad-arguments")
+        url = a.source or cfg["source_url"] or DEFAULT_URL
+        trust = a.trust_key or cfg.get("trust_key") or None
     if insecure_remote(url):
         out.say("Warning: %s is plain http to another machine. Every file is checked against the manifest's SHA-256, "
                 "but the manifest itself could be changed on the way. Use https, or a signed release, for anything but "
@@ -580,9 +618,9 @@ def update_one(a, cfg, out, cancel):
     headers = dict(h.split(":", 1) for h in (a.header or []) if ":" in h)
     headers = {k.strip(): v.strip() for k, v in headers.items()}
     workers = a.workers or int(cfg.get("workers") or 4)
+    trusted = publisher.trusted_key(trust, install)          # before the update: a first signed release is pinned by it
     plan = client.update(url, install, check_only=a.check, workers=max(1, workers), headers=headers,
-                         progress=out.progress, log=out.say, cancel=cancel,
-                         trust_key=a.trust_key or cfg.get("trust_key") or None)
+                         progress=out.progress, log=out.say, cancel=cancel, trust_key=trust)
     out.end()
     need = plan.download()
     data = {"empty": plan.empty(), "summary": plan.summary(), "add": len(plan.add), "replace": len(plan.replace),
@@ -591,13 +629,134 @@ def update_one(a, cfg, out, cancel):
             "publisher_key": client.State(os.path.abspath(install)).publisher_key}
     if a.check and not plan.empty():
         data["exit"] = 2
+    data.update(release_report(a, cfg, plan, out, entry, trusted, url))
     return data
+
+
+def project_file_entry(a, out):
+    """update --project-file FILE [--only NAME]: the project of a project file a container updates from, the file
+    read and its signature checked as project import checks them. Nothing is added and no setting is written:
+    the file is read again at every run, so a newer one is used as soon as it is there."""
+    path = os.path.abspath(os.path.expanduser(a.project_file))
+    found = presets.read(path)
+    name = os.path.basename(path)
+    titles = [e["title"] for e in found["projects"]]
+    if a.only:
+        picked = [e for e in found["projects"] if e["title"].lower() == a.only.strip().lower()]
+        if not picked:
+            raise CliError("%s holds no project named %s: it holds %s" % (name, a.only, ", ".join(titles)),
+                           "no-such-project")
+        entry = picked[0]
+    elif len(titles) == 1:
+        entry = found["projects"][0]
+    else:
+        raise CliError("%s holds %d projects: pick one with --only NAME (%s)" % (name, len(titles), ", ".join(titles)),
+                       "bad-arguments")
+    if found["signer"]:
+        out.say("%s: %s, signed by %s" % (name, entry["title"], signing.fingerprint(signing.parse_key(found["signer"]))))
+    else:
+        out.say("%s is not signed: anyone could have made or changed it." % name, "warn")
+    return entry
+
+
+def follows(cfg, url):
+    """A check or an update of the project's own source, in a project that asks about its publisher's changes."""
+    return bool(cfg.get("follow_publisher")) and publisher.same_address(url, cfg["source_url"])
+
+
+def say_change(change, say_line, title="this project"):
+    """A publisher's change in a terminal: what changed, from what to what, and the warning it comes with."""
+    say_line("The publisher changed %s: %s." % (title, change["words"]), "warn")
+    width = max(len(i["label"]) for i in change["changes"])
+    for i in change["changes"]:
+        say_line("  %-*s  %s  ->  %s" % (width, i["label"], publisher.shown(i["from"]), publisher.shown(i["to"])))
+    for line in change["warning"].splitlines():
+        say_line("  " + line, "warn")
+
+
+def release_report(a, cfg, plan, out, entry, trusted, url):
+    """What a check or an update says of the release beyond its counts: its name and version; the publisher's
+    release notes; when the publisher shows file names, the files by name (new, changed, removed, and kept: the
+    player's own copies), and with --files the release's whole list; and for a project that follows its
+    publisher, the change that waits for the person (--project-file: a warning when the publisher moved)."""
+    man = plan.manifest
+    if man is None:
+        return {}
+    data = {"release": {"name": man.name, "version": man.version, "published": man.published}}
+    try:
+        obj = publisher.read_object(man.project)
+    except ValueError as e:
+        out.say("Warning: the release's project details cannot be read (%s): they are passed over" % e)
+        obj = {}
+    data["show_files"] = bool(obj.get("show_files"))
+    if obj.get("notes"):
+        data["notes"] = obj["notes"]
+    if data["show_files"]:
+        data["changes"] = {"new": [e.path for e in plan.add], "changed": [e.path for e in plan.replace],
+                           "removed": [r[0] for r in plan.remove], "kept": plan.kept_changed + plan.protected}
+        if getattr(a, "files", False):
+            data["files"] = [{"path": p, "size": man.files[p].size} for p in sorted(man.files)]
+    if not OUT.json:
+        say_release(data, out)
+    if entry is not None:
+        moved = moved_since(entry, obj, trusted, plan.signer)
+        for line in moved:
+            out.say("Warning: %s: hand this container the new project file" % line)
+        if moved:
+            data["publisher_moved"] = moved
+        return data
+    if follows(cfg, url):
+        change = publisher.change_of(cfg, obj, plan.signer, trusted, when=man.published)
+        if change and not publisher.held(cfg, change):
+            project = getattr(out, "project", None) or project_of(a)
+            data["publisher_change"] = dict(change, **project.tag())
+            if OUT.json:
+                out.say("The publisher changed this project: %s." % change["words"], "warn")
+            else:
+                say_change(change, out.say)
+                out.say("Apply it:  %s" % paint('%s project accept "%s"' % (prog_name(), project.title), "code"))
+    return data
+
+
+def say_release(data, out, most=50):
+    """The names under the counts (at most `most` of each kind; --json gives them all), the whole list with
+    --files, and the release notes."""
+    changes = data.get("changes")
+    if changes:
+        for kind, word in (("new", "new"), ("changed", "changed"), ("removed", "removed"), ("kept", "kept (yours)")):
+            names = changes[kind]
+            for name in names[:most]:
+                out.say("  %-13s %s" % (word, name))
+            if len(names) > most:
+                out.say("  %-13s ... and %d more" % (word, len(names) - most))
+    for f in data.get("files") or []:
+        out.say("  %12s  %s" % (publish.human(f["size"]), f["path"]))
+    if data.get("notes"):
+        out.say("Release notes:", "head")
+        for line in data["notes"].splitlines():
+            out.say("  " + line)
+
+
+def moved_since(entry, obj, trusted, signer):
+    """A container's project file against what its publisher's releases say now: the address or the publisher
+    key they name instead, in words; [] when neither moved."""
+    if not publisher.has_details(obj):
+        return []
+    lines = []
+    if obj.get("source_url") and not publisher.same_address(obj["source_url"], entry["source_url"]):
+        lines.append("the publisher moved this project to %s" % obj["source_url"])
+    known = set(k for k in (entry.get("trust_key"), trusted, signer) if k)
+    if obj.get("trust_key") and obj["trust_key"] not in known:
+        lines.append("the publisher names another publisher key now (%s)"
+                     % signing.fingerprint(signing.parse_key(obj["trust_key"])))
+    return lines
 
 
 def project_args(a):
     """update --all: the arguments of one project's update, its folder and source left to its own settings."""
     pa = argparse.Namespace(**vars(a))
     pa.install, pa.source, pa.trust_key, pa.header, pa.all = None, None, None, None, False
+    pa.project_file, pa.only = None, None
     return pa
 
 
@@ -618,9 +777,9 @@ def update_all(a, cfg):
     """update --all and check --all: every project with a folder to update, up to --jobs of them at the same
     time, each in a thread of its own with its own settings, output and stop, so one failing leaves the
     others running. One failed project makes the whole run fail, after every other one has finished."""
-    if a.install or a.source or a.trust_key or a.header:
+    if a.install or a.source or a.trust_key or a.header or getattr(a, "project_file", None):
         raise CliError("--all updates each project from its own settings: leave out the folder, --source, "
-                       "--trust-key and --header", "all-with-folder")
+                       "--trust-key, --header and --project-file", "all-with-folder")
     run, skipped = [], []
     for p in projects.all_projects():
         if p.missing:
@@ -1215,7 +1374,11 @@ def cmd_project(a, cfg):
         return project_export(a)
     if c == "import":
         return project_import(a)
-    raise CliError("project what? new, add, import, export, rename or remove")
+    if c == "changes":
+        return project_changes(a)
+    if c == "accept":
+        return project_accept(a)
+    raise CliError("project what? new, add, import, export, rename, remove, changes or accept")
 
 
 def ask_sure(question):
@@ -1292,7 +1455,8 @@ def project_export(a):
         signer = load_signer(a, key_path)
     signer_text = signing.public_key_text(signer) if signer is not None else ""
     entries = [presets.entry(p, config.load(p), signer_text, key_path) for p in chosen]
-    presets.write(out, presets.build(entries, signer))
+    updates = a.updates if a.updates is not None else all(config.load(p)["share_updates"] for p in chosen)
+    presets.write(out, presets.build(entries, signer, updates=updates))
     titles = ", ".join(e["title"] for e in entries)
     if signer is not None:
         say("Wrote %s: %s, signed by %s." % (paint(out, "code"), titles,
@@ -1300,15 +1464,57 @@ def project_export(a):
     else:
         say("Wrote %s: %s, not signed." % (paint(out, "code"), titles), "ok")
         say("Whoever adds it is told it is not signed: --sign signs it with your signing key.", "warn")
+    if updates:
+        say("Update capable: players are asked when you change %s later. DeltaPatchers before this one ask to be "
+            "updated first (--no-updates makes a file every DeltaPatcher reads)." % ("it" if len(entries) == 1 else "them"))
+    else:
+        say("A new project for every file: players are not asked about later changes.")
     for e in entries:
         if loopback(e["source_url"]):
             say("%s updates from this computer (%s): the file works on this computer only." % (e["title"], e["source_url"]),
                 "warn")
-    return {"file": out, "projects": [e["title"] for e in entries], "signed": signer is not None, "signer": signer_text}
+    return {"file": out, "projects": [e["title"] for e in entries], "signed": signer is not None, "signer": signer_text,
+            "updates": updates}
+
+
+def import_rows(entries, found, a):
+    """What project import says of each project of a file: what it holds, whether its name is taken here, and for
+    an update capable file (unless --as-new) the project of this computer it updates and what that changes."""
+    every = [p for p in projects.all_projects() if not p.missing]
+    taken = {p.title.lower() for p in every}
+    in_place = found["updates"] and not a.as_new
+    candidates = [(p, config.load(p)) for p in every] if in_place else []
+    rows = []
+    for e in entries:
+        row = dict(e, taken=(a.name or e["title"]).lower() in taken)
+        hit = publisher.match(e, candidates) if in_place else None
+        if hit:
+            p, pcfg = hit
+            trusted = publisher.trusted_key(pcfg.get("trust_key"), pcfg["install_dir"])
+            row["updates"] = p.tag()
+            row["older"] = publisher.older(found["made"], publisher.accepted_at(pcfg))
+            row["change"] = None if row["older"] else publisher.assess(
+                publisher.current_of(pcfg, trusted), publisher.offered(e), publisher.accepted_of(pcfg), found["signer"],
+                trusted, "file")
+        rows.append(row)
+    return rows
+
+
+def import_question(rows):
+    """The one question project import asks: Add it, Update it, Add 1 and update 1, ..."""
+    new = len([r for r in rows if "updates" not in r])
+    upd = len(rows) - new
+    if not upd:
+        return "Add %s" % ("it" if new == 1 else "them")
+    if not new:
+        return "Update %s" % ("it" if upd == 1 else "them")
+    return "Add %d and update %d" % (new, upd)
 
 
 def project_import(a):
-    """project import FILE: the projects of a project file become projects here, after one question."""
+    """project import FILE: the projects of a project file become projects here, after one question. A project of
+    an update capable file that this computer has already (publisher.match) is updated instead, unless --as-new:
+    only what its publisher changed, never its folder, its name here or a setting of the player's own."""
     path = os.path.abspath(os.path.expanduser(a.file))
     if path.lower().endswith(".ini"):
         raise CliError("%s is a settings file: add it with  deltapatcher project add FILE" % path, "settings-file")
@@ -1324,11 +1530,13 @@ def project_import(a):
         raise CliError("--name names one project: pick it with --only", "bad-arguments")
     if a.as_is and (len(entries) != 1 or not a.folder):
         raise CliError("--as-is takes --folder and one project: pick it with --only", "bad-arguments")
-    taken = {p.title.lower() for p in projects.all_projects()}
     signer = found["signer"]
-    info = {"file": path, "signed": bool(signer), "signer": signer, "made": found["made"],
-            "fingerprint": signing.fingerprint(signing.parse_key(signer)) if signer else "",
-            "projects": [dict(e, taken=(a.name or e["title"]).lower() in taken) for e in entries]}
+    rows = import_rows(entries, found, a)
+    if a.name and "updates" in rows[0]:
+        raise CliError("%s updates the project %s here, which keeps its name: add --as-new to add it as a new project "
+                       "named %s" % (rows[0]["title"], rows[0]["updates"]["project"], a.name), "bad-arguments")
+    info = {"file": path, "signed": bool(signer), "signer": signer, "made": found["made"], "updates": found["updates"],
+            "fingerprint": signing.fingerprint(signing.parse_key(signer)) if signer else "", "projects": rows}
     if not OUT.json:
         if signer:
             say("%s holds %d project%s, signed by %s." % (os.path.basename(path), len(entries),
@@ -1336,11 +1544,20 @@ def project_import(a):
         else:
             say("%s holds %d project%s. It is not signed: anyone could have made or changed it." %
                 (os.path.basename(path), len(entries), "" if len(entries) == 1 else "s"), "warn")
-        for e in info["projects"]:
+        if found["updates"]:
+            say("It is update capable: its publisher can change these projects later, and you are asked first.")
+        for e in rows:
+            if "updates" in e:
+                note = "  (updates the project %s: %s)" % (
+                    e["updates"]["project"], e["change"]["words"] if e["change"] else
+                    "it has details newer than this file, nothing changes" if e["older"] else "nothing changes")
+            else:
+                note = "  (a project has this name already)" if e["taken"] else ""
             say("  %s  %s  %s%s" % (e["title"], paint(e["source_url"], "code"),
                                    ("publisher key " + signing.fingerprint(signing.parse_key(e["trust_key"])))
-                                   if e.get("trust_key") else "no publisher key",
-                                   "  (a project has this name already)" if e["taken"] else ""))
+                                   if e.get("trust_key") else "no publisher key", note))
+            if e.get("change"):
+                say_change(e["change"], say, e["updates"]["project"])
     elif not signer:
         say("The project file is not signed: anyone could have made or changed it.", "warn")
     if a.dry_run:
@@ -1348,10 +1565,27 @@ def project_import(a):
     if not a.yes:
         if not interactive():
             raise CliError("adding projects asks first: add --yes to add them without asking", "confirm-needed", info)
-        if not ask_sure("Add %s" % ("it" if len(entries) == 1 else "them")):
+        if not ask_sure(import_question(rows)):
             raise CliError("nothing was added", "cancelled")
-    added, skipped = [], []
-    for e in entries:
+    added, skipped, updated = [], [], []
+    for e, row in zip(entries, rows):
+        if "updates" in row:
+            p = projects.resolve(row["updates"]["file"])
+            if row["older"]:
+                updated.append(dict(p.tag(), applied={}, refused=[], older=True))
+                say("Nothing changed in the project %s: it has details newer than this file." % p.title, "ok")
+                continue
+            pcfg = config.load(p)
+            change = row["change"]
+            applied = publisher.apply(p, pcfg, e, change, publisher.trusted_key(pcfg.get("trust_key"), pcfg["install_dir"]),
+                                      found["made"])
+            refused = [i["label"] for i in (change or {}).get("changes", []) if i["field"] not in change["applicable"]]
+            updated.append(dict(p.tag(), applied=applied, refused=refused, older=False))
+            words = ", ".join(publisher.LABELS[k] for k in applied)
+            say("Updated the project %s: %s" % (p.title, words or "nothing changed"), "ok")
+            if refused:
+                say("Not applied: %s (not signed with the publisher key it trusts)" % ", ".join(refused), "warn")
+            continue
         name = a.name or e["title"]
         if a.folder:
             folder = a.folder if a.as_is else presets.folder_for(e, a.folder, name, len(entries) > 1)
@@ -1367,7 +1601,7 @@ def project_import(a):
         else:
             folder = ""
         try:
-            p = presets.add(e, name, folder)
+            p = presets.add(e, name, folder, updates=found["updates"], made=found["made"])
         except projects.ProjectError as x:
             skipped.append({"title": e["title"], "reason": str(x), "code": x.code})
             say("Not added: %s: %s" % (e["title"], x), "warn")
@@ -1376,13 +1610,90 @@ def project_import(a):
         added.append(dict(p.tag(), install_dir=own))
         say("Added the project %s%s" % (name, (": it keeps %s up to date" % own) if own else "; choose its folder later"),
             "ok")
-    result = dict(info, added=added, skipped=skipped)
+    result = dict(info, added=added, skipped=skipped, updated=updated)
     if skipped:
         raise CliError("%d of %d projects were not added: %s" % (len(skipped), len(entries),
                                                                  ", ".join(s["title"] for s in skipped)), "not-added", result)
     if added and not OUT.json:
         say("Update them:  %s" % paint(prog_name() + " update --all", "code"))
     return result
+
+
+def publisher_offer(p, cfg):
+    """What the release of project p says of its project now, read from its source (the signature checked as an
+    update checks it; nothing is pinned or written): (its project object, the change waiting or None, the key it
+    trusts, the Manifest)."""
+    install = cfg["install_dir"]
+    trusted = publisher.trusted_key(cfg.get("trust_key"), install)
+    man, signer = client.read_release(cfg["source_url"], install or None, cfg.get("trust_key") or None, log=say)
+    try:
+        obj = publisher.read_object(man.project)
+    except ValueError as e:
+        raise CliError("the release's project details cannot be read: %s" % e, "unreadable")
+    return obj, publisher.change_of(cfg, obj, signer, trusted, when=man.published), trusted, man
+
+
+def nothing_waiting(p, obj):
+    if publisher.has_details(obj):
+        say("Nothing is waiting: %s has its publisher's details as they are." % p.title, "ok")
+    else:
+        say("Nothing is waiting: the releases of %s give no project details." % p.title, "ok")
+
+
+def project_changes(a):
+    """project changes NAME: what the publisher changed in a project since it last accepted their details, read
+    from its release now, whether or not it is answered Not now."""
+    p = projects.resolve(a.target)
+    cfg = config.load(p)
+    obj, change, _t, man = publisher_offer(p, cfg)
+    held = publisher.held(cfg, change)
+    data = dict(p.tag(), change=change, held=held, follow_publisher=bool(cfg["follow_publisher"]),
+                release={"name": man.name, "version": man.version, "published": man.published},
+                show_files=bool(obj.get("show_files")), notes=obj.get("notes", ""))
+    if not OUT.json:
+        if change is None:
+            nothing_waiting(p, obj)
+        else:
+            say_change(change, say, p.title)
+            if held:
+                say("You answered Not now: it is asked again once the publisher changes the project again.")
+            if not cfg["follow_publisher"]:
+                say("follow_publisher is off for %s: its checks do not ask about this." % p.title)
+            say("Apply it:  %s" % paint('%s project accept "%s"' % (prog_name(), p.title), "code"))
+    return data
+
+
+def project_accept(a):
+    """project accept NAME: apply the publisher's change to a project, after one question (--yes: without it), or
+    --not-now: hold it until the publisher changes the project again. --expect HASH: only the change shown before,
+    by its hash, so a change made since is looked at first."""
+    p = projects.resolve(a.target)
+    cfg = config.load(p)
+    obj, change, trusted, man = publisher_offer(p, cfg)
+    if change is None:
+        nothing_waiting(p, obj)
+        return dict(p.tag(), change=None, applied={}, not_now=False)
+    if a.expect and a.expect.strip() != change["hash"]:
+        raise CliError("the publisher changed %s again since it was shown: look at it again" % p.title, "changed-since",
+                       dict(p.tag(), change=change))
+    if a.not_now:
+        publisher.not_now(p, change)
+        say("Not now: %s is asked about again once its publisher changes it again." % p.title, "ok")
+        return dict(p.tag(), change=change, applied={}, not_now=True)
+    if not a.yes:
+        if not interactive():
+            raise CliError("applying the publisher's change asks first: add --yes to apply it without asking",
+                           "confirm-needed", dict(p.tag(), change=change))
+        say_change(change, say, p.title)
+        say("Its folder, its name here and your own settings stay as they are.")
+        if not ask_sure("Apply it"):
+            raise CliError("nothing was changed", "cancelled")
+    applied = publisher.apply(p, cfg, obj, change, trusted, man.published)
+    refused = [i["label"] for i in change["changes"] if i["field"] not in change["applicable"]]
+    say("Applied to %s: %s." % (p.title, ", ".join(publisher.LABELS[k] for k in applied) or "nothing"), "ok")
+    if refused:
+        say("Not applied: %s (not signed with the publisher key it trusts)" % ", ".join(refused), "warn")
+    return dict(p.tag(), change=change, applied=applied, refused=refused, not_now=False)
 
 
 def cmd_reset(a, cfg):
@@ -1586,6 +1897,10 @@ def build_parser():
                              % signing.default_key_path())
         sp.add_argument("--no-htaccess", action="store_true", help="do not write the .htaccess for Apache")
         sp.add_argument("--no-prune", action="store_true", help="keep blobs no release names")
+        sp.add_argument("--notes", metavar="TEXT", help="what is new in this release, for players: plain text, at most "
+                                                        "%d characters, shown with the files that changed"
+                                                        % publisher.NOTES_MAX)
+        sp.add_argument("--notes-file", metavar="FILE", help="the release notes from a text file (UTF-8)")
         pass_stdin(sp)
 
     sub.add_parser("menu", help="plain questions instead of commands: release, set up where releases go, update a folder")
@@ -1634,6 +1949,14 @@ def build_parser():
                                                            "time, each from its own settings")
         sp.add_argument("--jobs", type=int, metavar="N", help="with --all: how many projects at the same time (default: "
                                                               "the setting parallel_updates, else 3)")
+        sp.add_argument("--project-file", metavar="FILE", help="the address and the publisher key from this project file "
+                                                               "(its signature checked), for containers: no project is "
+                                                               "added and nothing is saved, and a newer file is used at "
+                                                               "the next run")
+        sp.add_argument("--only", metavar="NAME", help="with --project-file: the project of the file, when it holds "
+                                                       "several")
+        sp.add_argument("--files", action="store_true", help="list every file of the release too, when its publisher "
+                                                             "shows file names")
 
     s = sub.add_parser("update", help="bring a folder up to the source's release")
     update_args(s, True)
@@ -1723,7 +2046,7 @@ def build_parser():
     sub.add_parser("projects", help="every project: the folder it updates and where from, the folder it releases and "
                                     "where to")
     s = sub.add_parser("project", help="make, add, import, export, rename or remove a project (a settings file of its "
-                                       "own)")
+                                       "own); see or apply what its publisher changed")
     ss = s.add_subparsers(dest="project_cmd")
     k = ss.add_parser("new", help="a new project, its settings file in the projects folder beside the main one")
     k.add_argument("name", help="its name: letters, digits, spaces and - _ . ( ), up to %d characters"
@@ -1741,6 +2064,8 @@ def build_parser():
                                                         "the file names for it")
     k.add_argument("--only", action="append", metavar="NAME", help="add only this project of the file (repeatable)")
     k.add_argument("--name", help="with one project: give it this name here")
+    k.add_argument("--as-new", action="store_true", help="add each project as a new one, even one this computer has "
+                                                         "(an update capable file otherwise updates that one)")
     k.add_argument("--dry-run", action="store_true", help="read the file and say what it holds; add nothing")
     k.add_argument("--yes", action="store_true", help="do not ask first")
     k = ss.add_parser("export", help="write a project file with these projects, to give to players: NAME.deltapatch "
@@ -1749,7 +2074,25 @@ def build_parser():
     k.add_argument("--out", required=True, metavar="FILE", help="the file to write: .deltapatch or .html")
     k.add_argument("--sign", nargs="?", const="", metavar="KEYFILE",
                    help="sign it (default key: the first project's signing key, else %s)" % signing.default_key_path())
+    g = k.add_mutually_exclusive_group()
+    g.add_argument("--updates", dest="updates", action="store_true", default=None,
+                   help="update capable: players are asked when you change these projects later (default: when each "
+                        "of them has share_updates on)")
+    g.add_argument("--no-updates", dest="updates", action="store_false", default=None,
+                   help="a new project for every file: players are not asked about later changes, and every "
+                        "DeltaPatcher reads it")
     pass_stdin(k)
+    k = ss.add_parser("changes", help="what the publisher changed in a project (its description, website, where it "
+                                      "goes, its address or key), read from its release now")
+    k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
+    k = ss.add_parser("accept", help="apply the publisher's change to a project, after one question; its folder, its "
+                                     "name and your own settings never change")
+    k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
+    k.add_argument("--yes", action="store_true", help="do not ask first")
+    k.add_argument("--not-now", action="store_true", help="do not apply it: it is asked again once the publisher "
+                                                          "changes the project again")
+    k.add_argument("--expect", metavar="HASH", help="only the change shown before (its hash, from check or project "
+                                                    "changes): one made since is refused, to be looked at first")
     k = ss.add_parser("rename", help="give a project another name (its file stays where it is)")
     k.add_argument("target", metavar="NAME", help="the project: its name or its settings file")
     k.add_argument("new", metavar="NEW")

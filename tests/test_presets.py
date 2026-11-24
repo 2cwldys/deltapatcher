@@ -368,8 +368,14 @@ class Hostile(Base):
             return self.refused(self.page(json.dumps(data)), code)
         good = self.good()
         self.assertEqual(presets.parse(self.page(json.dumps(good)))["projects"], good["projects"])
-        bad(self.good(version=2), "newer")
+        bad(self.good(version=presets.VERSION + 1), "newer")
         bad(self.good(version=0))
+        bad(self.good(version=2))                                                       # version 2 says updates
+        bad(self.good(version=2, updates="yes"))
+        bad(self.good(version=1, updates=True))                                         # version 1 never does
+        capable = presets.parse(self.page(json.dumps(self.good(version=2, updates=True))))
+        self.assertEqual((capable["version"], capable["updates"]), (2, True))
+        self.assertEqual(presets.parse(self.page(json.dumps(good)))["updates"], False)
         bad(self.good(format="something-else"))
         bad(dict(self.good(), extra="field"))
         bad(self.good(made="yesterday"))

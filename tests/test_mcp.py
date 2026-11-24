@@ -15,7 +15,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from helpers import TempCase, read, write  # noqa: E402  (first: settings and logs go to a sandbox)
-from deltapatcher import __version__, mcp_server  # noqa: E402
+from deltapatcher import __version__, mcp_server, signing  # noqa: E402
 
 
 class Client(object):
@@ -302,6 +302,81 @@ class Mcp(TempCase):
         self.assertTrue(r["structuredContent"]["dry_run"])
         self.assertFalse(c.tool("backup_restore", name=listed[0]["name"])["isError"])
         self.assertTrue(c.tool("backup_restore", name="--all")["isError"])
+
+    def test_file_names_notes_and_the_publishers_changes(self):
+        from deltapatcher import config, projects, publish, serve
+        from test_publisher import run_json
+        write(self.p("src", "a.pak"), b"a" * 100)
+        stores = {}
+        for name in ("store", "store2"):
+            publish.publish(self.p("src"), self.p(name), "Game", "0")
+            srv = serve.make_server(self.p(name), "127.0.0.1", 0, quiet=True)
+            threading.Thread(target=srv.serve_forever, daemon=True).start()
+            self.addCleanup(srv.server_close)
+            self.addCleanup(srv.shutdown)
+            stores[name] = "http://127.0.0.1:%d/" % srv.server_address[1]
+        publisher_settings = os.environ["DELTAPATCHER_CONFIG"]
+
+        def release(**values):
+            os.environ["DELTAPATCHER_CONFIG"] = publisher_settings
+            config.save(dict({"publish_src": self.p("src"), "store_dir": self.p("store"), "public_url": stores["store"],
+                              "description": "Maps"}, **values), projects.resolve("Map Pack"))
+            rc, ev = run_json(["--project", "Map Pack", "publish"])
+            self.assertEqual(rc, 0, ev[-1])
+
+        projects.new("Map Pack")
+        release()
+        rc, ev = run_json(["project", "export", "Map Pack", "--out", self.p("maps.deltapatch")])
+        self.assertEqual(rc, 0, ev[-1])
+        os.environ["DELTAPATCHER_CONFIG"] = self.p("player", "deltapatcher.ini")
+        c = Client(self)
+        c.start()
+        self.assertFalse(c.tool("project_import", file=self.p("maps.deltapatch"), folder=self.p("game"))["isError"])
+        write(self.p("src", "b.pak"), b"b" * 100)
+        r = c.tool("publish", folder=self.p("src"), store=self.p("other"), notes="Through the tool.")
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        self.assertEqual(json.loads(read(self.p("other", "manifest.json")))["project"]["notes"], "Through the tool.")
+        os.environ["DELTAPATCHER_CONFIG"] = publisher_settings
+        rc, ev = run_json(["--project", "Map Pack", "publish", "--notes", "b.pak is new."])
+        self.assertEqual(rc, 0, ev[-1])
+        r = c.tool("check", project="Map Pack", list_files=True)
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        data = r["structuredContent"]
+        self.assertEqual((data["changes"]["new"], data["notes"]), (["a.pak", "b.pak"], "b.pak is new."))
+        self.assertEqual([f["path"] for f in data["files"]], ["a.pak", "b.pak"])
+        release(show_files=False)
+        data = c.tool("check", project="Map Pack", list_files=True)["structuredContent"]
+        self.assertEqual((data["show_files"], data["add"]), (False, 2))
+        self.assertNotIn("changes", data)                                              # the publisher shows none
+        self.assertNotIn("files", data)
+        self.assertNotIn("b.pak", json.dumps(data))
+
+        release(description="Twelve maps")
+        change = c.tool("check", project="Map Pack")["structuredContent"]["publisher_change"]
+        self.assertEqual(change["words"], "description")
+        r = c.tool("project_accept", project="Map Pack")
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        self.assertEqual(r["structuredContent"]["applied"], {"description": "Twelve maps"})
+        key = signing.key_text(bytes(range(32)))
+        release(description="Twelve maps", trust_key=key)                              # a publisher key from now on
+        r = c.tool("project_accept", project="Map Pack")
+        self.assertTrue(r["structuredContent"]["left_to_the_person"], r["content"][0]["text"])
+        self.assertIn("the publisher key", r["content"][0]["text"])
+        rc, ev = run_json(["project", "export", "Map Pack", "--out", self.p("keyed.deltapatch")])
+        self.assertEqual(rc, 0, ev[-1])
+        r = c.tool("project_import", file=self.p("keyed.deltapatch"))                  # the same, from a file
+        self.assertTrue(r["isError"])
+        self.assertIn("Nothing was added or changed", r["content"][0]["text"])
+        release(description="Twelve maps", public_url=stores["store2"])                # the publisher moves it
+        r = c.tool("project_accept", project="Map Pack")
+        self.assertTrue(r["structuredContent"]["left_to_the_person"], r["content"][0]["text"])
+        self.assertIn("the address", r["content"][0]["text"])
+        settings = c.tool("get_settings", project="Map Pack")["structuredContent"]["settings"]
+        self.assertEqual((settings["source_url"], settings["trust_key"]), (stores["store"], ""))   # not by an assistant
+        self.assertEqual([p["title"] for p in c.tool("list_projects")["structuredContent"]["projects"]],
+                         ["Default", "Map Pack"])
+        tools = {t["name"]: t for t in c.request("tools/list")["result"]["tools"]}
+        self.assertFalse(tools["project_accept"]["annotations"]["readOnlyHint"])
 
     def test_a_cancelled_request_gets_no_answer(self):
         silent = socket.socket()                                       # accepts, never answers: a check would hang

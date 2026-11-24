@@ -10,6 +10,7 @@ A manifest is JSON:
       "count": 2,
       "bytes": 1234,
       "protect": ["/config/user.cfg", "*.ini"],
+      "project": {"title": "My Game", "source_url": "https://game.example.com/", "show_files": true},
       "files": [
         {"path": "data/pak0.pk3", "sha256": "<64 hex>", "size": 1000},
         {"path": "readme.txt",    "sha256": "<64 hex>", "size": 234}
@@ -19,6 +20,9 @@ A manifest is JSON:
 Blobs live beside it as blobs/<sha256>. A client treats every manifest as untrusted input: a path
 that could leave the install folder, or name a device on Windows, is refused before anything is
 written.
+
+"project" is optional: what the release says about its project for players (publisher.py), kept here as
+it was read. Updating never needs it, and a manifest whose "project" is not an object reads as one without.
 """
 
 import fnmatch
@@ -141,12 +145,13 @@ class Entry(object):
 
 
 class Manifest(object):
-    def __init__(self, name="", version="", published=None, files=None, protect=None):
+    def __init__(self, name="", version="", published=None, files=None, protect=None, project=None):
         self.name = str(name or "")
         self.version = str(version or "")
         self.published = published or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         self.files = {}
         self.protect = [str(p) for p in (protect or []) if str(p).strip()]
+        self.project = project if isinstance(project, dict) else None
         lowered = {}
         for e in files or []:
             key = e.path.lower()
@@ -184,8 +189,10 @@ class Manifest(object):
             "count": len(self.files),
             "bytes": self.bytes,
             "protect": list(self.protect),
-            "files": [self.files[p].to_json() for p in sorted(self.files)],
         }
+        if self.project is not None:
+            doc["project"] = self.project
+        doc["files"] = [self.files[p].to_json() for p in sorted(self.files)]
         return (json.dumps(doc, indent=1, sort_keys=False) + "\n").encode("utf-8")
 
     @classmethod
@@ -209,4 +216,4 @@ class Manifest(object):
         protect = doc.get("protect") or []
         if not isinstance(protect, list) or not all(isinstance(p, str) for p in protect):
             raise ManifestError("'protect' must be a list of patterns")
-        return cls(doc.get("name", ""), doc.get("version", ""), doc.get("published"), files, protect)
+        return cls(doc.get("name", ""), doc.get("version", ""), doc.get("published"), files, protect, doc.get("project"))

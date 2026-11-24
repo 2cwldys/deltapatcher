@@ -130,7 +130,8 @@ def write(text, project=None):
 
 
 def redact_argv(argv):
-    """The command line as text, with the values of --header options hidden."""
+    """The command line as text on one line (a line break in an argument, as release notes have, written as \\n),
+    with the values of --header options hidden."""
     out, hide = [], False
     for a in argv:
         if hide:
@@ -143,7 +144,7 @@ def redact_argv(argv):
         elif a.startswith("--header="):
             out.append("--header=***")
         else:
-            out.append(a)
+            out.append(a.replace("\r", "\\r").replace("\n", "\\n"))
     return " ".join(('"%s"' % a) if " " in a else a for a in out)
 
 

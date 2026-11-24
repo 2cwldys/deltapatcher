@@ -2,7 +2,8 @@
 
 The store is what a web server serves and what `deploy` sends to a host. Publishing again only
 copies files whose content is new; the previous manifest is kept as manifest.previous.json so
-clients that are halfway through an update can still fetch the blobs they started with. Each new
+clients that are halfway through an update can still fetch the blobs they started with. The same
+files with the same name, version, rules and project details keep the manifest as it was. Each new
 release also adds a line to the store's history.jsonl, for statistics (stats.py); that file stays on
 this computer.
 """
@@ -218,7 +219,7 @@ def _write_sig(store, data, signer, log):
 
 
 def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None,
-            signer=None, htaccess=True, leave_out=None, cancel=None):
+            signer=None, htaccess=True, leave_out=None, cancel=None, project=None):
     """Publish the folder `src` into `store`. Returns a PublishResult.
 
     progress(done, total, label) and log(text) are optional callbacks. `cancel`: an optional threading.Event;
@@ -227,6 +228,8 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     (signing.load_key) to sign the manifest with; `htaccess` writes the store's .htaccess for Apache.
     `protect` and `leave_out` are rules (manifest.rule_matches): files players keep once they have
     them, and files the release leaves out (with DEFAULT_IGNORE and the folder's .deltaignore).
+    `project`: what the release says about its project (publisher.release_object()); a change to it alone
+    makes a new manifest, as a change to a file does.
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -279,10 +282,11 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     progress(total, total, "")
     cache.save()
 
-    man = Manifest(name, version, files=entries, protect=protect)
+    man = Manifest(name, version, files=entries, protect=protect, project=project)
     mpath = os.path.join(store, MANIFEST_NAME)
     old = load_manifest_file(mpath)
-    if old is not None and (old.files, old.protect, old.name, old.version) == (man.files, man.protect, man.name, man.version):
+    if old is not None and (old.files, old.protect, old.name, old.version, old.project) == \
+            (man.files, man.protect, man.name, man.version, man.project):
         # the same release again: the manifest (and its date) stay, so the previous release is not rotated out
         man = old
         with open(mpath, "rb") as f:

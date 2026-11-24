@@ -110,6 +110,8 @@ class Plan(object):
         self.kept_changed = []   # paths no longer listed but edited here: left alone
         self.protected = []      # paths that differ but are protected: left alone
         self.same = 0
+        self.manifest = None     # the release it was made for
+        self.signer = ""         # the publisher key that signed it ("ed25519:..."), '' when not signed or not checked
 
     def empty(self):
         return not (self.add or self.replace or self.remove)
@@ -438,6 +440,7 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         signer = check_signature(src, raw, state, trust_key, check_only, log)
         cache = hashing.HashCache(os.path.join(state_dir, "hashes.json"))
         plan = make_plan(man, install, state, cache)
+        plan.manifest, plan.signer = man, signer or ""
         cache.save()
         log(plan.summary())
         for p in plan.kept_changed:
@@ -604,3 +607,26 @@ def verify(url, install, headers=None, log=None):
     """Compare the folder with the source's manifest. Nothing in the folder changes (only this
     program's own hash cache may be refreshed). Returns the Plan."""
     return update(url, install, check_only=True, headers=headers, log=log)
+
+
+class _NoFolder(object):
+    """The state of a release read for no folder: nothing pinned."""
+    publisher_key = ""
+    version = ""
+
+
+def read_release(url, install=None, trust_key=None, headers=None, log=None):
+    """The release at `url` without looking at any folder: (its Manifest, the key text that signed it or ''). Its
+    signature is checked as an update checks it, against `trust_key`, else the key `install` pinned; nothing is
+    pinned or written. UpdateError or SourceError when it cannot be read or is refused."""
+    log = log or (lambda s: None)
+    src = Source(url, headers=headers)
+    state = State(os.path.abspath(install)) if install else _NoFolder()
+    src.for_release(state.version)
+    raw = src.get_manifest()
+    try:
+        man = Manifest.from_json(raw)
+    except ManifestError as e:
+        raise UpdateError("the source's manifest is refused: %s" % e)
+    signer = check_signature(src, raw, state, trust_key, True, log)
+    return man, signer or ""

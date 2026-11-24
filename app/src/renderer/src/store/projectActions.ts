@@ -1,9 +1,11 @@
 // What the project picker, the Projects page and the Settings page do with projects, with the same questions
-// everywhere: make, rename and remove them; add a project file (imported) or a settings file (listed); export a
-// project file; remove every project; reset DeltaPatcher.
-import { ImportEntry, ProjectInfo, useApp } from './app'
+// everywhere: make, rename and remove them; add a project file (imported, or updating the project it is for) or a
+// settings file (listed); export a project file; apply a publisher's change or answer it Not now; show what a
+// release changed; remove every project; reset DeltaPatcher.
+import { ImportEntry, ProjectInfo, UpdateResult, useApp } from './app'
 import { ask } from './modal'
 import { nameRules } from './folders'
+import { acceptArgs, applyQuestion, inPlace, PublisherChange, updatesDefault } from './publisher'
 
 const PROJECT_FILE = /\.(deltapatch|html?)$/i
 
@@ -170,7 +172,8 @@ export async function startImport(path: string): Promise<void> {
     ...e,
     pick: true,
     name: e.taken ? freeName(e.title, taken) : e.title,
-    folder: ''
+    folder: '',
+    asNew: false
   }))
   useApp.setState({
     importing: {
@@ -178,6 +181,7 @@ export async function startImport(path: string): Promise<void> {
       signed: Boolean(r.data.signed),
       signer: String(r.data.signer ?? ''),
       fingerprint: String(r.data.fingerprint ?? ''),
+      updates: Boolean(r.data.updates),
       entries,
       updateNow: true,
       working: false
@@ -185,22 +189,28 @@ export async function startImport(path: string): Promise<void> {
   })
 }
 
-// Add in the import dialog: each ticked project with its name and folder, then the updates asked for
+// Add (or Update) in the import dialog: each ticked project with its name and folder, or the project here it
+// updates, then the updates asked for
 export async function finishImport(): Promise<void> {
   const st = useApp.getState()
   const im = st.importing
   if (!im) return
   useApp.setState({ importing: { ...im, working: true } })
   const added: { file: string; folder: string }[] = []
+  const updated: string[] = []
   const problems: string[] = []
   for (const e of im.entries.filter((x) => x.pick)) {
     const args = ['project', 'import', im.file, `--only=${e.title}`, '--yes']
-    if (e.name.trim() !== e.title) args.push(`--name=${e.name.trim()}`)
-    // the folder as the dialog shows it: the engine adds no install_folder to it
-    if (e.folder.trim()) args.push(`--folder=${e.folder.trim()}`, '--as-is')
+    if (!inPlace(e)) {
+      if (e.updates) args.push('--as-new')
+      if (e.name.trim() !== e.title) args.push(`--name=${e.name.trim()}`)
+      // the folder as the dialog shows it: the engine adds no install_folder to it
+      if (e.folder.trim()) args.push(`--folder=${e.folder.trim()}`, '--as-is')
+    }
     const r = await st.side(args)
     if (r.ok) {
       for (const a of r.data.added ?? []) added.push({ file: String(a.file), folder: String(a.install_dir ?? '') })
+      for (const u of r.data.updated ?? []) updated.push(String(u.file))
     } else {
       problems.push(`${e.title}: ${r.message}`)
     }
@@ -208,6 +218,8 @@ export async function finishImport(): Promise<void> {
   useApp.setState({ importing: null })
   await st.loadProjects()
   if (added.length) await useApp.getState().selectProject(added[0].file)
+  else if (updated.length) await useApp.getState().selectProject(updated[0])
+  for (const file of updated) useApp.getState().settlePrompt(file)
   if (problems.length) await ask.info('Not every project was added', problems.join('\n'))
   const toUpdate = im.updateNow && !useApp.getState().stopped ? added.filter((a) => a.folder) : []
   if (toUpdate.length) {
@@ -223,10 +235,12 @@ export async function startExport(file?: string): Promise<void> {
   const status = await st.side(['sign', 'status', `--path=${key}`])
   const exists = Boolean(status.ok && status.data.exists && status.data.can_sign)
   if (useApp.getState().stopped) return
+  const picked = file ?? st.project
   useApp.setState({
     exporting: {
-      picks: { [file ?? st.project]: true },
+      picks: { [picked]: true },
       kind: 'deltapatch',
+      updates: updatesDefault(st.projects.filter((p) => p.file === picked)),
       sign: exists,
       key,
       keyExists: exists,
@@ -253,19 +267,62 @@ export async function finishExport(): Promise<void> {
   }
   const out = await window.api.saveProjectFile(chosen.length === 1 ? chosen[0].title : 'Projects', ex.kind)
   if (!out) return
-  const args = ['project', 'export', ...chosen.map((p) => p.file), `--out=${out}`]
+  const args = ['project', 'export', ...chosen.map((p) => p.file), `--out=${out}`, ex.updates ? '--updates' : '--no-updates']
   if (signing) args.push(`--sign=${ex.key}`)
   if (passphrase !== undefined) args.push('--passphrase-stdin')
   const r = await st.side(args, passphrase)
   if (!r.ok) return failed('The project file was not saved', sentences(String(r.message ?? '')))
   const signed = r.data.signed ? 'It is signed with your signing key.' : 'It is not signed: whoever adds it is told so.'
+  const kind = r.data.updates
+    ? 'It is update capable: players are asked when you change these projects later.'
+    : 'Each player who opens it gets a project of their own.'
   const show = await ask.confirm(
     'Project file saved',
     `${out}\n\n${chosen.length === 1 ? 'One project' : `${chosen.length} projects`}: ${chosen.map((p) => p.title).join(', ')}.\n` +
-      `${signed}\nPlayers drag it onto DeltaPatcher's window, or double-click a .deltapatch file.`,
+      `${signed}\n${kind}\nPlayers drag it onto DeltaPatcher's window, or double-click a .deltapatch file.`,
     'Show the file'
   )
   if (show) await window.api.show(out)
+}
+
+// Apply on a publisher's change: what changes and the warning a new address or key comes with, then only the
+// change that was shown is applied (the engine refuses one the publisher made since)
+export async function applyPublisher(file: string, change: PublisherChange): Promise<void> {
+  const st = useApp.getState()
+  const title = st.projects.find((p) => p.file === file)?.title ?? 'this project'
+  const q = applyQuestion(title, change)
+  if (!(await ask.confirm(q.title, q.body, 'Apply', q.danger))) return
+  const r = await st.side(acceptArgs(file, change, false))
+  if (!r.ok) {
+    if (r.code === 'changed-since') {
+      useApp.getState().settlePrompt(file)
+      return ask.info('The publisher changed it again', `${title} changed again since this was shown.\nCheck it again to see what is waiting.`)
+    }
+    return failed('Not applied', sentences(String(r.message ?? '')))
+  }
+  const words = Object.keys(r.data.applied ?? {}).length ? change.words : 'nothing'
+  st.log(`[${title}] Applied the publisher's change: ${words}.`, 'ok')
+  useApp.getState().settlePrompt(file)
+  await useApp.getState().loadProjects()
+  // the shown project's settings are what was applied
+  if (useApp.getState().project === file) {
+    const cfg = await st.side(['config', 'get', `--project=${file}`])
+    if (cfg.ok && useApp.getState().project === file) useApp.setState({ settings: cfg.data.settings ?? {} })
+  }
+}
+
+// Not now: the change is not asked again until the publisher changes the project again
+export async function notNowPublisher(file: string, change: PublisherChange): Promise<void> {
+  const st = useApp.getState()
+  const r = await st.side(acceptArgs(file, change, true))
+  if (!r.ok && r.code !== 'changed-since') return failed('Not saved', sentences(String(r.message ?? '')))
+  useApp.getState().settlePrompt(file)
+}
+
+// What changed: the dialog with the release's notes, its files by name and its whole list
+export function showChanges(title: string, result: UpdateResult): void {
+  if (useApp.getState().stopped) return
+  useApp.setState({ changesView: { title, result } })
 }
 
 // Reset DeltaPatcher: the engine says what it does, the person agrees, then the window starts afresh

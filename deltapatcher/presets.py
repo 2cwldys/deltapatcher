@@ -18,6 +18,12 @@ each project's folder.
 Signed with the publisher's signing key (Ed25519, the key that signs releases), the signature is a second
 element, <script type="application/json" id="deltapatcher-signature">. It covers the whole page but that
 element (line endings aside), so a file changed anywhere after it was signed is refused.
+
+Version 1 sets up a new project for each of its projects. Version 2 adds "updates": true, an update capable
+file: the projects it sets up follow their publisher (publisher.py), and opening a newer one for a project
+this computer has updates that project, after asking. A file that is not update capable is written as
+version 1, so the DeltaPatchers before version 2 still read it; they say a version 2 file was made by a
+newer DeltaPatcher.
 """
 
 import base64
@@ -33,7 +39,7 @@ from . import REPO, __version__, config, projects, signing
 from .source import DEFAULT_URL
 
 FORMAT = "deltapatcher-preset"
-VERSION = 1
+VERSION = 2                     # the newest version read and written; a file without anything new is version 1
 EXTENSIONS = (".deltapatch", ".html", ".htm")
 LIMIT = 1 << 20
 MAX_PROJECTS = 100
@@ -99,10 +105,12 @@ def check_data(data):
         bad("no version")
     if version > VERSION:
         raise PresetError("this project file was made by a newer DeltaPatcher: update DeltaPatcher first", "newer")
-    if version != VERSION:
+    if version < 1:
         bad("version %d" % version)
-    if set(data) != {"format", "version", "made", "projects"}:
+    if set(data) != {"format", "version", "made", "projects"} | ({"updates"} if version >= 2 else set()):
         bad("fields missing or unknown")
+    if version >= 2 and not isinstance(data["updates"], bool):
+        bad("whether it is update capable")
     if not isinstance(data["made"], str) or not _MADE.match(data["made"]):
         bad("when it was made")
     entries = data["projects"]
@@ -216,6 +224,9 @@ def _page(data, signer_text):
     else:
         signed = ('<p class="warn">Not signed: anyone could have made or changed this file.<br>'
                   'Add it only if you trust where it came from.</p>')
+    if data.get("updates"):
+        signed = ('<p class="ok">Update capable: the publisher can change %s later; DeltaPatcher asks you before '
+                  'anything changes.</p>\n' % ("this project" if len(entries) == 1 else "these projects")) + signed
     head = """<!doctype html>
 <html lang="en">
 <head>
@@ -264,11 +275,15 @@ li{margin:6px 0}
     return head, "</body>\n</html>\n"
 
 
-def build(entries, signer=None, made=None):
+def build(entries, signer=None, made=None, updates=False):
     """The text of a project file holding these projects (entry() makes each), signed with `signer` (a private
-    signing key) when one is given."""
-    data = {"format": FORMAT, "version": VERSION, "made": made or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-            "projects": list(entries)}
+    signing key) when one is given. updates=True: an update capable file (version 2); otherwise version 1, which
+    every DeltaPatcher reads."""
+    data = {"format": FORMAT, "version": 2 if updates else 1,
+            "made": made or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    if updates:
+        data["updates"] = True
+    data["projects"] = list(entries)
     try:
         check_data(data)
     except PresetError as e:
@@ -316,8 +331,9 @@ def _json(text, name):
 
 
 def parse(raw, name="the file"):
-    """The projects of a project file's bytes, checked: {"projects", "made", "signer"} (signer: the key text,
-    '' when it is not signed). PresetError when it is not one, or was changed after it was signed."""
+    """The projects of a project file's bytes, checked: {"projects", "made", "signer", "updates", "version"}
+    (signer: the key text, '' when it is not signed; updates: True for an update capable file). PresetError when
+    it is not one, or was changed after it was signed."""
     if len(raw) > LIMIT:
         raise PresetError("%s is over 1 MB: not a project file" % name, "too-big")
     try:
@@ -351,7 +367,8 @@ def parse(raw, name="the file"):
         signer = signing.key_text(key)
     data = _json(text[data_at[0] + len(DATA_OPEN):data_at[1] - len(CLOSE)], name)
     check_data(data)
-    return {"projects": data["projects"], "made": data["made"], "signer": signer}
+    return {"projects": data["projects"], "made": data["made"], "signer": signer,
+            "updates": bool(data.get("updates")), "version": data["version"]}
 
 
 def read(path):
@@ -378,13 +395,17 @@ def folder_for(e, given, name, several):
     return given
 
 
-def add(e, name=None, install_dir=""):
+def add(e, name=None, install_dir="", updates=False, made=""):
     """A new project from one entry of a project file: its address and publisher key, its description, website
-    and where it goes, the folder the person picked (none: it is chosen later). Returns the Project."""
+    and where it goes, the folder the person picked (none: it is chosen later). From an update capable file
+    (updates=True) it follows its publisher; either way the details it starts with, made when the file was
+    (made), are the ones a later change is compared with. Returns the Project."""
+    from .publisher import accepted_text
     p = projects.new(name or e["title"])
     values = {"source_url": e["source_url"], "trust_key": e.get("trust_key", ""),
               "description": e.get("description", ""), "website": e.get("website", ""),
-              "install_hint": e.get("install_hint", ""), "install_folder": e.get("install_folder", "")}
+              "install_hint": e.get("install_hint", ""), "install_folder": e.get("install_folder", ""),
+              "follow_publisher": bool(updates), "publisher_accepted": accepted_text(e, made)}
     if install_dir:
         values["install_dir"] = os.path.abspath(os.path.expanduser(install_dir))
     config.save(values, p)

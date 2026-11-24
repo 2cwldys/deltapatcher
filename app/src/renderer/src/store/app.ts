@@ -8,6 +8,7 @@ import { anotherRun, restartSchedules } from './schedule'
 import { autoOutcome, madeAt, nextBackup } from './backups'
 import { windowStorage } from './folds'
 import { closeWelcome, welcomeAtStart } from './welcome'
+import { PublisherChange, ReleaseView, settled, withoutPrompt } from './publisher'
 
 export type Value = string | number | boolean
 export interface SchemaItem {
@@ -54,9 +55,15 @@ export interface ProjectInfo {
   address: string
   update_ready: boolean
   release_ready: boolean
+  // it asks when its publisher changes it; its releases share its details and show file names
+  follow_publisher?: boolean
+  share_updates?: boolean
+  show_files?: boolean
 }
 
-// a project of a project file being imported: what the file says, and what the person chose
+// a project of a project file being imported: what the file says, and what the person chose. From an update
+// capable file, `updates` is the project here it updates (unless the person adds it as a new one), with what
+// that changes, or older: the project has newer details than the file
 export interface ImportEntry {
   title: string
   source_url: string
@@ -69,6 +76,10 @@ export interface ImportEntry {
   pick: boolean
   name: string
   folder: string
+  updates?: { project: string; file: string }
+  change?: PublisherChange | null
+  older?: boolean
+  asNew: boolean
 }
 
 export interface Importing {
@@ -76,23 +87,27 @@ export interface Importing {
   signed: boolean
   signer: string
   fingerprint: string
+  // an update capable file: its projects follow their publisher
+  updates: boolean
   entries: ImportEntry[]
   updateNow: boolean
   working: boolean
 }
 
-// the export dialog: the projects ticked, the kind of file, and the signing key
+// the export dialog: the projects ticked, the kind of file, update capable or a new project for every file, and
+// the signing key
 export interface Exporting {
   picks: Record<string, boolean>
   kind: 'deltapatch' | 'html'
+  updates: boolean
   sign: boolean
   key: string
   keyExists: boolean
   keyLocked: boolean
 }
 
-// what an update (or a check) found and did
-export interface UpdateResult {
+// what an update (or a check) found and did; with it, what the release says for players (store/publisher.ts)
+export interface UpdateResult extends ReleaseView {
   empty: boolean
   add: number
   replace: number
@@ -102,6 +117,12 @@ export interface UpdateResult {
   download_blobs: number
   publisher_key: string
   kept: string[]
+}
+
+// the "What changed" dialog: the project it is about and the result it shows
+export interface ChangesView {
+  title: string
+  result: UpdateResult
 }
 
 // a project on the Projects page: its check or update (on its own, or in Update all) and the last result
@@ -184,6 +205,13 @@ interface State {
   // the import and export dialogs of project files
   importing: Importing | null
   exporting: Exporting | null
+  // the "What changed" dialog, while it is open
+  changesView: ChangesView | null
+  // the release notes typed on the Release page, by project file, until that project's release is sent
+  notes: Record<string, string>
+  setNotes: (file: string, text: string) => void
+  // Apply or Not now answered a project's prompt: it goes from its row and from the Update page
+  settlePrompt: (file: string) => void
   // the Projects page: each project's check or update, by its file, and Update all / Check all
   runs: Record<string, ProjectRun>
   allJob: AllJob | null
@@ -346,9 +374,19 @@ export const useApp = create<State>((set, get) => {
     autoChecked: false,
     importing: null,
     exporting: null,
+    changesView: null,
+    notes: {},
     stopped: false,
     stoppedSince: '',
     welcome: false,
+
+    setNotes: (file, text) => set({ notes: { ...get().notes, [file]: text } }),
+
+    settlePrompt: (file) => {
+      set(settled(get().runs, get().results, get().project, file))
+      const kept = resultsOf.get(file)
+      if (kept?.update) resultsOf.set(file, { ...kept, update: withoutPrompt(kept.update) })
+    },
 
     // GitHub's newest release against this version, by number; quiet, and nothing when offline
     checkAppUpdate: async () => {
@@ -567,7 +605,7 @@ export const useApp = create<State>((set, get) => {
       })
       let r: EngineOutcome
       try {
-        r = await window.api.run({ jobId, args: check ? ['update', `--project=${file}`, '--check'] : ['update', `--project=${file}`] })
+        r = await window.api.run({ jobId, args: check ? ['update', `--project=${file}`, '--check', '--files'] : ['update', `--project=${file}`, '--files'] })
       } catch (err) {
         r = failure(err)
       }
@@ -616,7 +654,7 @@ export const useApp = create<State>((set, get) => {
       })
       let r: EngineOutcome
       try {
-        r = await window.api.run({ jobId, args: check ? ['update', '--all', '--check'] : ['update', '--all'] })
+        r = await window.api.run({ jobId, args: check ? ['update', '--all', '--check', '--files'] : ['update', '--all', '--files'] })
       } catch (err) {
         r = failure(err)
       }
@@ -659,7 +697,7 @@ export const useApp = create<State>((set, get) => {
     // (each one then says it was stopped) and starts none until the stop is lifted.
     forceStop: async () => {
       useModal.getState().block(true)
-      set({ stopped: true, importing: null, exporting: null })
+      set({ stopped: true, importing: null, exporting: null, changesView: null })
       const r = await window.api.forceStop(true)
       set({ stoppedSince: r.since, status: STOPPED_STATUS, statusKind: 'err', progress: null })
       const what = r.stopped ? `${r.stopped} running ${r.stopped === 1 ? 'job' : 'jobs'} stopped` : 'nothing was running'

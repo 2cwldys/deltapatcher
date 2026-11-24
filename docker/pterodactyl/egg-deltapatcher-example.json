@@ -7,13 +7,13 @@
     "exported_at": "2026-11-24T00:00:00+00:00",
     "name": "Game server (files from DeltaPatcher)",
     "author": "deltapatcher@example.com",
-    "description": "A game server whose files come from a DeltaPatcher release. Every start updates them first: only what changed is downloaded, and files the server made itself (configs, saves) are kept.",
+    "description": "A game server whose files come from a DeltaPatcher release. Every start updates them first: only what changed is downloaded, and files the server made itself (configs, saves) are kept. The release's address and publisher key, or a project file from the publisher uploaded to the server folder.",
     "features": null,
     "docker_images": {
         "Debian": "ghcr.io/parkervcp/yolks:debian"
     },
     "file_denylist": [],
-    "startup": "./deltapatcher-cli --no-log --close update /home/container --source \"${DP_SOURCE}\" ${DP_TRUST_KEY:+--trust-key ${DP_TRUST_KEY}}; ./${SERVER_START}",
+    "startup": "if [ -n \"${DP_PROJECT_FILE}\" ]; then ./deltapatcher-cli --no-log --close update /home/container --project-file \"${DP_PROJECT_FILE}\" ${DP_PROJECT_NAME:+--only \"$DP_PROJECT_NAME\"}; else ./deltapatcher-cli --no-log --close update /home/container --source \"${DP_SOURCE}\" ${DP_TRUST_KEY:+--trust-key $DP_TRUST_KEY}; fi; ./${SERVER_START}",
     "config": {
         "files": "{}",
         "startup": "{\r\n    \"done\": \"Server started\"\r\n}",
@@ -22,7 +22,7 @@
     },
     "scripts": {
         "installation": {
-            "script": "#!/bin/bash\n# Runs once, when the server is installed: the DeltaPatcher command line, then the release's files.\nset -e\napt-get update\napt-get install -y --no-install-recommends ca-certificates curl\ncd /mnt/server\ncurl -fsSL https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-linux-x64.tar.gz | tar -xz\nchmod +x deltapatcher-cli\n./deltapatcher-cli --no-log --close update /mnt/server --source \"${DP_SOURCE}\" ${DP_TRUST_KEY:+--trust-key \"${DP_TRUST_KEY}\"}\necho \"Installed from ${DP_SOURCE}\"",
+            "script": "#!/bin/bash\n# Runs once, when the server is installed: the DeltaPatcher command line, then the release's files (from a\n# project file once it is in the server folder; else the first start brings them).\nset -e\napt-get update\napt-get install -y --no-install-recommends ca-certificates curl\ncd /mnt/server\ncurl -fsSL https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-linux-x64.tar.gz | tar -xz\nchmod +x deltapatcher-cli\nif [ -n \"${DP_PROJECT_FILE}\" ] && [ -f \"${DP_PROJECT_FILE}\" ]; then\n    ./deltapatcher-cli --no-log --close update /mnt/server --project-file \"${DP_PROJECT_FILE}\" ${DP_PROJECT_NAME:+--only \"${DP_PROJECT_NAME}\"}\n    echo \"Installed from the project file ${DP_PROJECT_FILE}\"\nelif [ -n \"${DP_PROJECT_FILE}\" ]; then\n    echo \"Installed: upload ${DP_PROJECT_FILE} to the server folder, and the first start brings the files\"\nelif [ -n \"${DP_SOURCE}\" ]; then\n    ./deltapatcher-cli --no-log --close update /mnt/server --source \"${DP_SOURCE}\" ${DP_TRUST_KEY:+--trust-key \"${DP_TRUST_KEY}\"}\n    echo \"Installed from ${DP_SOURCE}\"\nelse\n    echo \"Installed without files: set the release address, or a project file\"\nfi",
             "container": "ghcr.io/pterodactyl/installers:debian",
             "entrypoint": "bash"
         }
@@ -30,12 +30,12 @@
     "variables": [
         {
             "name": "Release address",
-            "description": "Where your DeltaPatcher release is: the address players use, for example https://game.example.com/",
+            "description": "Where your DeltaPatcher release is: the address players use, for example https://game.example.com/. Empty when the server uses a project file.",
             "env_variable": "DP_SOURCE",
             "default_value": "",
             "user_viewable": true,
             "user_editable": false,
-            "rules": "required|string|max:300",
+            "rules": "nullable|string|max:300",
             "field_type": "text"
         },
         {
@@ -46,6 +46,26 @@
             "user_viewable": true,
             "user_editable": false,
             "rules": "nullable|string|max:120",
+            "field_type": "text"
+        },
+        {
+            "name": "Project file",
+            "description": "Instead of the release address and publisher key: a project file from the publisher (.deltapatch or .html) uploaded to the server folder, for example game.deltapatch. Its address and publisher key are used, its signature checked. Upload a newer one, and the next start uses it.",
+            "env_variable": "DP_PROJECT_FILE",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "nullable|string|max:200",
+            "field_type": "text"
+        },
+        {
+            "name": "Project in the file",
+            "description": "With a project file that holds several projects: the name of the one this server keeps.",
+            "env_variable": "DP_PROJECT_NAME",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "nullable|string|max:60",
             "field_type": "text"
         },
         {

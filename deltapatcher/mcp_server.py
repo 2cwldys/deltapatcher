@@ -294,6 +294,8 @@ def release_options(argv, a):
         argv.append("--no-htaccess")
     if a.get("prune") is False:
         argv.append("--no-prune")
+    if a.get("notes"):
+        argv.append("--notes=" + a["notes"])
 
 
 def check_args(schema, args):
@@ -369,7 +371,9 @@ RELEASE = dict(name=s_str("The release's name, shown to players (left out: the s
                               "the folder, or patterns like *.ini. Left out: the saved list."),
                leave_out=s_list("Files or folders left out of the release: paths inside the folder, or patterns "
                                 "like *.log. Left out: the saved list."),
-               htaccess=s_bool("Write the .htaccess for Apache (default yes)."))
+               htaccess=s_bool("Write the .htaccess for Apache (default yes)."),
+               notes=s_str("What is new in this release, for players (optional): plain text, at most 4000 "
+                           "characters, shown with the files that changed."))
 
 RO = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 # reads the destination and writes only on this computer, where the limits it applies can remove old backups
@@ -409,6 +413,8 @@ def b_update(cmd):
         if a.get("all"):
             argv.append("--all")
         opt(argv, "--jobs", a.get("jobs"))
+        if a.get("list_files"):
+            argv.append("--files")
         return project_first(a, argv)
     return build
 
@@ -501,8 +507,30 @@ def b_project_import(a):
     for name in a.get("projects") or []:
         argv += ["--only", name]
     opt(argv, "--folder", a.get("folder"), path_of)
+    if a.get("as_new"):
+        argv.append("--as-new")
     argv.append("--dry-run" if a.get("dry_run") else "--yes")
     return argv
+
+
+def b_project_export(a):
+    argv = ["project", "export"] + [str(n) for n in a["projects"]] + ["--out", path_of(a["out"])]
+    if a.get("updates") is not None:
+        argv.append("--updates" if a["updates"] else "--no-updates")
+    return argv
+
+
+def for_the_person(change):
+    """A publisher's change an assistant must not apply: a new address or publisher key (one that is refused is
+    never applied, by anyone)."""
+    return bool(change) and bool(change.get("moves")) and change.get("trust") != "refused"
+
+
+def change_text(title, change):
+    lines = ["The publisher changed %s: %s." % (title, change["words"])]
+    for i in change["changes"]:
+        lines.append("  %s: %s -> %s" % (i["label"], i["from"] or "(none)", i["to"] or "(none)"))
+    return "\n".join(lines + ["  " + w for w in change.get("warning", "").splitlines()])
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -570,6 +598,43 @@ def t_selftest(server, a, key, progress):
     return SelfTest(server).run()
 
 
+def t_project_import(server, a, key, progress):
+    """A dry run first: a project this computer has that the file would move to another address or publisher key
+    is left to the person, and nothing is added."""
+    if a.get("dry_run"):
+        return engine_result(server.engine.run(b_project_import(a), key=key))
+    look = server.engine.run(b_project_import(dict(a, dry_run=True)), key=key)
+    if not look.ok:
+        return engine_result(look)
+    moving = [r for r in look.data.get("projects") or [] if r.get("updates") and for_the_person(r.get("change"))]
+    if moving:
+        text = "\n\n".join(change_text(r["updates"]["project"], r["change"]) for r in moving)
+        raise ToolProblem("%s\n\nNothing was added or changed: a new address or publisher key is for the person to "
+                          "accept, in the DeltaPatcher app or with  deltapatcher project import FILE. as_new=true adds "
+                          "the projects as new ones instead." % text)
+    return engine_result(server.engine.run(b_project_import(a), key=key))
+
+
+def t_project_accept(server, a, key, progress):
+    """The details the publisher changed (description, website, where it goes), applied; a new address or a new
+    publisher key is reported and left to the person."""
+    if str(a["project"]).strip().startswith("-"):
+        raise ToolProblem("give one project, by its name or its settings file")
+    look = server.engine.run(["project", "changes", a["project"]], key=key)
+    if not look.ok:
+        return engine_result(look)
+    change = look.data.get("change")
+    title = look.data.get("project") or a["project"]
+    if not change:
+        return text_result("Nothing is waiting: %s has its publisher's details as they are." % title,
+                           dict(look.data, applied={}))
+    if for_the_person(change):
+        return text_result("%s\n\nNothing was applied: a new address or publisher key is for the person to accept, in "
+                           "the DeltaPatcher app or with  deltapatcher project accept \"%s\"." % (change_text(title, change), title),
+                           dict(look.data, applied={}, left_to_the_person=True))
+    return engine_result(server.engine.run(["project", "accept", a["project"], "--yes", "--expect", change["hash"]], key=key))
+
+
 TOOLS_LIST = [
     Tool("version", "DeltaPatcher's version", "The version of DeltaPatcher this server runs, and whether it can sign.",
          schema(), RO, build=simple("version")),
@@ -589,11 +654,16 @@ TOOLS_LIST = [
          WRITES, build=b_settings_set),
     Tool("check", "Check for an update",
          "What an update would change, changing nothing: files new, replaced and removed, and how much would be "
-         "downloaded. all=true checks every project that has a folder and a source, several at once.",
+         "downloaded. all=true checks every project that has a folder and a source, several at once. When the "
+         "release's publisher shows file names (show_files), changes lists them (new, changed, removed, and kept: the "
+         "player's own copies); notes are the publisher's release notes. publisher_change is what the publisher "
+         "changed in the project itself (its description, website, where it goes, its address or key), waiting for "
+         "the person: project_accept applies the details, never a new address or key.",
          schema(folder=FOLDER, source=SOURCE,
                 trust_key=s_str("The publisher key (ed25519:...) the release must be signed with; off: do not check."),
                 all=s_bool("Every project with a folder and a source."),
                 jobs=s_int("With all: how many projects at once (left out: the setting, else 3).", 1, 16),
+                list_files=s_bool("List every file of the release too (files), when its publisher shows file names."),
                 project=PROJECT),
          RO_NET, build=b_update("check")),
     Tool("update", "Update a folder",
@@ -604,6 +674,7 @@ TOOLS_LIST = [
                 trust_key=s_str("The publisher key (ed25519:...) the release must be signed with; off: do not check."),
                 all=s_bool("Every project with a folder and a source."),
                 jobs=s_int("With all: how many projects at once (left out: the setting, else 3).", 1, 16),
+                list_files=s_bool("List every file of the release too (files), when its publisher shows file names."),
                 project=PROJECT),
          CHANGES_NET, build=b_update("update")),
     Tool("rollback", "Undo the last update",
@@ -700,25 +771,39 @@ TOOLS_LIST = [
          "the folder it goes into inside the one a player picks); never a folder path, a server login or a key file. "
          "out ending in .deltapatch opens DeltaPatcher with a double-click; .html is a page anyone can read in a "
          "browser. It is not signed: signing needs the passphrase, which this server never handles (export it from "
-         "the DeltaPatcher app or its command line to sign it).",
+         "the DeltaPatcher app or its command line to sign it). An update capable file (updates) lets players be "
+         "asked when the projects change later; the DeltaPatchers before it cannot read one.",
          schema(["projects", "out"], projects=s_list("The projects: their names or settings files."),
-                out=s_str("The file to write: NAME.deltapatch or NAME.html.")),
-         WRITES, build=lambda a: ["project", "export"] + [str(n) for n in a["projects"]] + ["--out", path_of(a["out"])]),
+                out=s_str("The file to write: NAME.deltapatch or NAME.html."),
+                updates=s_bool("Update capable (true) or a new project for every file (false). Left out: update capable "
+                               "when every project has share_updates on.")),
+         WRITES, build=b_project_export),
     Tool("project_import", "Import a project file",
          "Add the projects of a project file (.deltapatch or .html, from a publisher) as projects here. "
          "dry_run=true only reads it: what it holds and who signed it. A signed file changed after it was signed is "
          "refused; an unsigned one is added with a warning. Each project keeps the folder given (with several, a "
          "folder each inside it, named after the project), or one chosen later. A project whose file names a folder "
          "for it (install_folder) goes into that folder inside the one given, unless the one given already is it; its "
-         "install_hint says where it goes.",
+         "install_hint says where it goes. A project of an update capable file that is here already is updated "
+         "instead (only what its publisher changed; never its folder or name here), unless as_new; one the file "
+         "would move to another address or publisher key is left to the person, and then nothing is imported.",
          schema(["file"], file=s_str("The project file."),
                 folder=s_str("The folder to keep up to date (several projects: a folder each inside it, named by "
                              "install_folder or after the project). Left out: chosen later, with set_settings "
                              "install_dir."),
                 projects=s_list("Only these projects of the file, by name (left out: every one)."),
+                as_new=s_bool("Add each project as a new one, even one that is here already."),
                 dry_run=s_bool("Read the file and say what it holds; add nothing.")),
          {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
-         build=b_project_import),
+         run=t_project_import),
+    Tool("project_accept", "Apply a publisher's change",
+         "Apply what a project's publisher changed in it (its description, website, where it goes), as its release "
+         "gives it now: check reports such a change as publisher_change. Its folder, its name here and the person's "
+         "own settings never change. A new address or a new publisher key is never applied here: it is reported, "
+         "for the person to accept in the DeltaPatcher app or on its command line.",
+         schema(["project"], project=s_str("The project: its name or its settings file.")),
+         {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True},
+         run=t_project_accept),
     Tool("backup_now", "Back up the live release",
          "Back up a project's live release onto this computer: read from where it is deployed (the server over SFTP, "
          "with the checks a release makes, or the deploy folder), each blob checked against its SHA-256 as it arrives. "

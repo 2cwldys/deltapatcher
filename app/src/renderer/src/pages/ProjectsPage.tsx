@@ -1,16 +1,22 @@
 // The Projects page: every project at a glance with its state. Check or update one, or all of them at once
 // (several at the same time, each with its own progress); open one on the other pages; make, add, import,
 // export, rename and remove projects. Each project shows its main action (Update, or Open while it has no
-// folder to update) and a "..." menu with every other one. A long list gets compact rows; the filter finds one.
+// folder to update) and a "..." menu with every other one, What changed among them. A project its publisher
+// changed says so, with Apply and Not now. A long list gets compact rows; the filter finds one.
 import { ReactNode, useEffect, useState } from 'react'
 import {
-  ArrowRight, Boxes, CircleAlert, CircleCheck, Download, FilePlus, FileSearch, FolderKanban, Pencil, Plus, Search,
-  Share2, Square, Trash2
+  ArrowRight, BellRing, Boxes, Check, CircleAlert, CircleCheck, Clock, Download, FileDiff, FilePlus, FileSearch,
+  FolderKanban, Pencil, Plus, Search, Share2, Square, Trash2
 } from 'lucide-react'
 import { ProjectInfo, ProjectRun, Progress, UpdateResult, running, useApp } from '../store/app'
 import { ask } from '../store/modal'
-import { newProject, openProjectFile, removeAll, removeProject, renameProject, startExport } from '../store/projectActions'
+import {
+  applyPublisher, newProject, notNowPublisher, openProjectFile, removeAll, removeProject, renameProject, showChanges,
+  startExport
+} from '../store/projectActions'
+import { hasWhatChanged, promptLine, promptOf } from '../store/publisher'
 import { Banner, Button, Card, Chip, InfoTip, Menu, MenuItem, human } from '../components/ui'
+import PublisherPrompt from '../components/PublisherPrompt'
 import { insecure } from './UpdatePage'
 import { anotherRun } from '../store/schedule'
 
@@ -86,6 +92,9 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
   }
   const done = r?.state === 'done' && r.result && !r.check && !r.result.empty ? r.result : null
   const noFolder = 'It needs a folder to keep up to date and a source: open it to set them'
+  // what its publisher changed in it, found by its last check or update, until Apply or Not now answers it
+  const change = promptOf(r)
+  const result = r?.state === 'done' ? r.result : undefined
 
   // the main action: Update when it can update, else Open (where its folders are set up); the rest in the menu
   const items: MenuItem[] = [
@@ -94,10 +103,20 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
     p.update_ready
       ? { label: 'Open', icon: ArrowRight, title: 'Open it on the Update page', disabled: p.missing || Boolean(busy), onClick: () => void open() }
       : { label: 'Update', icon: Download, title: noFolder, disabled: true, onClick: () => void update() },
+    { label: 'What changed', icon: FileDiff, disabled: !hasWhatChanged(result),
+      title: hasWhatChanged(result) ? 'The files its release changes, and the notes from its publisher' : 'Check it first: then what its release changes shows here',
+      onClick: () => result && showChanges(p.title, result) },
     { label: 'Export...', icon: Share2, title: 'Export it to a project file', disabled: p.missing || !p.address, onClick: () => void startExport(p.file) },
     { label: 'Rename', icon: Pencil, title: 'Rename', disabled: p.missing, onClick: () => void renameProject(p) },
     { label: 'Show file', icon: FileSearch, title: 'Show its settings file', disabled: p.missing, onClick: () => void window.api.show(p.file) }
   ]
+  if (change && props.compact) {
+    items.splice(2, 0,
+      { label: "Apply the publisher's change...", icon: Check, title: promptLine(change), disabled: Boolean(busy),
+        onClick: () => void applyPublisher(p.file, change) },
+      { label: 'Not now', icon: Clock, title: 'Asked again once the publisher changes it again', disabled: Boolean(busy),
+        onClick: () => void notNowPublisher(p.file, change) })
+  }
   if (p.kind !== 'main') {
     items.push({ label: 'Remove', icon: Trash2, title: 'Remove this project', danger: true, disabled: active || (shown && Boolean(busy)),
       onClick: () => void removeProject(p) })
@@ -123,6 +142,7 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-400" title={p.install_dir || p.publish_src}>
           {p.install_dir || p.publish_src || 'not set up yet'}
         </span>
+        {change && <span className="flex min-w-0 shrink-0" title={promptLine(change)}><Chip kind="info" icon={BellRing}>Changed by its publisher</Chip></span>}
         <span className="flex min-w-0 shrink justify-end"><StateChip p={p} r={r} /></span>
         <div className="flex shrink-0 items-center gap-1">{actions}</div>
       </section>
@@ -139,6 +159,7 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
       }
       actions={<><span className="flex min-w-0 shrink"><StateChip p={p} r={r} /></span>{actions}</>}>
       <div className="space-y-1.5 text-sm">
+        {change && <div className="pb-1.5"><PublisherPrompt file={p.file} change={change} /></div>}
         {p.missing ? (
           <Banner kind="bad">
             Its settings file is gone: {p.file}.

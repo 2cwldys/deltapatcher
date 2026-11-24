@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { foldStore, isFolded, readFolds, withFold } from '../src/renderer/src/store/folds.ts'
 import { closeWelcome, isSetUp, welcomeAtStart, welcomeClosed } from '../src/renderer/src/store/welcome.ts'
-import { splitMore, WORDS, wordsOf } from '../src/renderer/src/store/settingWords.ts'
+import { HIDDEN, splitMore, WORDS, wordsOf } from '../src/renderer/src/store/settingWords.ts'
 import { serverSetup, signingSetup } from '../src/renderer/src/store/setup.ts'
 
 // a window storage in memory; `broken` throws as a storage that cannot be used does
@@ -83,7 +83,12 @@ function schema() {
   const text = readFileSync(new URL('../../deltapatcher/config.py', import.meta.url), 'utf8')
   return [...text.matchAll(/^\s*\("([a-z]+)", "([a-z_]+)",/gm)].map((m) => [m[1], m[2]])
 }
-const HIDDEN = ['title', 'project_files', 'current_project']
+
+test('the Settings page leaves out only what DeltaPatcher or the Projects page keeps', () => {
+  assert.deepEqual(HIDDEN, ['title', 'project_files', 'current_project', 'publisher_accepted', 'publisher_not_now'])
+  const keys = schema().map(([, k]) => k)
+  for (const key of HIDDEN) assert.ok(keys.includes(key), `${key} is a setting`)
+})
 
 test("every setting the Settings page shows has plain words: a label, one short line, in ASCII", () => {
   const keys = schema().filter(([, k]) => !HIDDEN.includes(k))

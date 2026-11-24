@@ -1,7 +1,13 @@
-import { Download, Search, Undo2, ShieldCheck, ShieldAlert, FolderSync } from 'lucide-react'
+// The Update page: the folder a project keeps up to date and where from; Update, Check and Roll back; and what the
+// last one found: the counts, the release notes and, when its publisher shows them, the files by name (What
+// changed). A change its publisher made to the project itself waits here with Apply and Not now.
+import { Download, FileDiff, Search, Undo2, ShieldCheck, ShieldAlert, FolderSync } from 'lucide-react'
 import { ProjectRun, running, UpdateResult, useApp } from '../store/app'
 import { ask } from '../store/modal'
+import { showChanges } from '../store/projectActions'
+import { hasWhatChanged, nameLines } from '../store/publisher'
 import { Banner, Button, Card, Chip, Field, Stat, human } from '../components/ui'
+import PublisherPrompt from '../components/PublisherPrompt'
 
 interface Result extends UpdateResult {
   check: boolean
@@ -34,7 +40,7 @@ export async function runUpdate(check: boolean): Promise<Result | null> {
     )
     if (!go) return null
   }
-  const args = ['update', folder, `--source=${source}`]
+  const args = ['update', folder, `--source=${source}`, '--files']
   const key = String(st.settings.trust_key || '').trim()
   if (key) args.push(`--trust-key=${key}`)
   if (check) args.push('--check')
@@ -51,6 +57,8 @@ export default function UpdatePage(): JSX.Element {
   const busy = useApp((s) => s.busy)
   const source = useApp((s) => String(s.settings.source_url || ''))
   const result = useApp((s) => s.results.update as Result | undefined)
+  const project = useApp((s) => s.project)
+  const title = useApp((s) => s.projects.find((p) => p.file === s.project)?.title ?? 'this project')
   // the Projects page is checking or updating this project (on its own, or in Update all)
   const elsewhere = useApp((s) => s.runs[s.project])
   const blocked = running(elsewhere)
@@ -88,9 +96,19 @@ export default function UpdatePage(): JSX.Element {
         </div>
       </Card>
 
+      {result?.publisher_change && !blocked && <PublisherPrompt file={project} change={result.publisher_change} />}
+
       {result && (
         <Card fold="update/result" title={result.empty ? 'Up to date' : result.check ? 'An update is available' : 'Updated'} icon={result.publisher_key ? ShieldCheck : ShieldAlert}
-          actions={result.publisher_key ? <Chip kind="ok" icon={ShieldCheck}>Signed release, publisher key pinned</Chip> : <Chip kind="muted">Not signed</Chip>}
+          actions={
+            <>
+              {result.publisher_key ? <Chip kind="ok" icon={ShieldCheck}>Signed release, publisher key pinned</Chip> : <Chip kind="muted">Not signed</Chip>}
+              <Button small variant="ghost" icon={FileDiff} disabled={!hasWhatChanged(result)} onClick={() => showChanges(title, result)}
+                title={hasWhatChanged(result) ? 'The files this release changes, and the notes from its publisher' : "This release's publisher shows no file names or notes"}>
+                What changed
+              </Button>
+            </>
+          }
           summary={`${result.add} new, ${result.replace} changed, ${result.remove} removed, ${result.same} unchanged; ${human(result.download_bytes)} ${result.check ? 'to download' : 'downloaded'}`}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <Stat label="New" value={result.add} accent={result.add > 0} />
@@ -101,6 +119,17 @@ export default function UpdatePage(): JSX.Element {
           </div>
           {result.kept.length > 0 && (
             <p className="hint">Kept because you changed them: {result.kept.slice(0, 5).join(', ')}{result.kept.length > 5 ? ` and ${result.kept.length - 5} more` : ''}</p>
+          )}
+          {nameLines(result).length > 0 && (
+            <p className="hint selectable break-all">{nameLines(result).join('\n')}</p>
+          )}
+          {result.notes && (
+            <div className="mt-4">
+              <p className="label">From the publisher</p>
+              <p className="selectable max-h-32 overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-ink-700 bg-ink-950/60 px-3 py-2 text-sm text-slate-200">
+                {result.notes}
+              </p>
+            </div>
           )}
           {result.publisher_key && <p className="selectable mt-3 break-all font-mono text-xs text-violet-300">{result.publisher_key}</p>}
         </Card>

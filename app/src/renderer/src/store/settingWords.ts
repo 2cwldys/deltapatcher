@@ -10,12 +10,18 @@ export interface SettingWords {
   more?: boolean
 }
 
+// the settings the Settings page leaves out: kept by the Projects page and the project picker (the name, the added
+// files, the one shown), or by DeltaPatcher itself (the publisher's details last accepted, the change answered Not
+// now)
+export const HIDDEN = ['title', 'project_files', 'current_project', 'publisher_accepted', 'publisher_not_now']
+
 export const WORDS: Record<string, SettingWords> = {
   // Project
   description: { label: 'Description', line: 'One line about this project, shown with it.' },
   website: { label: 'Website', line: 'Its web page, shown with it.' },
   install_hint: { label: 'Where it goes', line: 'Said to players as they pick its folder.' },
   install_folder: { label: 'Its folder name', line: 'The folder it goes into, inside the one a player picks.', more: true },
+  follow_publisher: { label: 'Ask me when the publisher changes this project', line: 'Nothing changes until you apply it.' },
   // Update
   source_url: { label: 'Source', line: 'Where releases come from: an address or a folder.' },
   install_dir: { label: 'Folder', line: 'The folder to keep up to date.' },
@@ -32,6 +38,8 @@ export const WORDS: Record<string, SettingWords> = {
   signing_key: { label: 'Signing key', line: "The key file's path, never the key.", more: true },
   htaccess: { label: '.htaccess for Apache', line: 'Serve only the release: no listings, the right cache headers.', more: true },
   serve_port: { label: 'Port on this computer', line: 'The port for This computer, to test.', more: true },
+  share_updates: { label: 'Players follow this project', line: 'Releases carry its details; players are asked before a change.' },
+  show_files: { label: 'Show players the file names', line: 'Which files a release adds, changes and removes.' },
   // Server
   deploy_mode: { label: 'Where players get it', line: 'sftp (your server), folder, or local (this computer).' },
   ssh_host: { label: 'Host', line: "The server's address." },

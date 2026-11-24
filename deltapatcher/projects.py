@@ -354,7 +354,8 @@ def describe(project, cfg=None):
     """A project for listings: its name and file, and what is set up: the folder it updates and its source,
     the folder it releases and where that goes; its description, website and where it goes for players; the
     http(s) address a project file would give for it ('' when it has none); how often the app backs it up and
-    when its newest backup was made."""
+    when its newest backup was made; whether it asks about its publisher's changes, and whether its releases
+    share its details and show file names."""
     from .backup import newest
     from .presets import address
     if cfg is None:
@@ -371,4 +372,6 @@ def describe(project, cfg=None):
             "backup_every_hours": cfg["backup_every_hours"], "backup_last": "" if project.missing else newest(project, cfg),
             "backup_ready": not project.missing and (
                 (cfg["deploy_mode"] == "folder" and bool(cfg["deploy_folder"])) or
-                (cfg["deploy_mode"] == "sftp" and bool(cfg["ssh_host"]) and bool(cfg["remote_root"])))}
+                (cfg["deploy_mode"] == "sftp" and bool(cfg["ssh_host"]) and bool(cfg["remote_root"]))),
+            "follow_publisher": bool(cfg["follow_publisher"]), "share_updates": bool(cfg["share_updates"]),
+            "show_files": bool(cfg["show_files"])}

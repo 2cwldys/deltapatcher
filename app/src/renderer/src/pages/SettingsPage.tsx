@@ -5,7 +5,7 @@ import { removeProject, resetAll, sentences } from '../store/projectActions'
 import { folderNameProblem } from '../store/folders'
 import { sizeProblem } from '../store/backups'
 import { useFold } from '../store/folds'
-import { splitMore, wordsOf } from '../store/settingWords'
+import { HIDDEN, splitMore, wordsOf } from '../store/settingWords'
 import BackupsSection from '../components/BackupsSection'
 import { Button, Card, Chip, Field, SettingToggle } from '../components/ui'
 import type { AppInfo } from '@shared/types'
@@ -21,8 +21,6 @@ const SECTIONS: Record<string, string> = {
 }
 // DeltaPatcher's own settings, in the main file whichever project is shown
 const APP_SECTIONS = ['window', 'general']
-// kept by the Projects page and the project picker, not typed here: the name, the added files, the one shown
-const HIDDEN = ['title', 'project_files', 'current_project']
 
 // A setting in plain words (store/settingWords.ts): its label, its own name small beside it, one short line
 // under it, and the engine's whole explanation behind the (i). blocked: a switch that cannot work in this copy,

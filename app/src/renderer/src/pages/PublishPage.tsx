@@ -3,6 +3,7 @@ import { UploadCloud, Radio, Square, PenLine, KeyRound, Copy, Package, Globe } f
 import { useApp } from '../store/app'
 import { ask } from '../store/modal'
 import { Button, Card, Chip, Field, SettingToggle, Stat, human } from '../components/ui'
+import { PathList, listOf } from '../components/PathList'
 
 interface SignStatus {
   path: string
@@ -26,7 +27,11 @@ export async function runPublish(): Promise<Record<string, number | boolean | st
     return null
   }
   const args = ['publish', src, store, `--name=${String(s.name || '')}`, `--version=${String(s.version || '')}`]
-  for (const p of String(s.protect || '').split(',').map((x) => x.trim()).filter(Boolean)) args.push(`--protect=${p}`)
+  // both lists every time: an empty one is sent as empty, so it means none (not the saved list)
+  for (const [option, setting] of [['--protect', 'protect'], ['--leave-out', 'leave_out']]) {
+    const items = listOf(s[setting])
+    args.push(...(items.length ? items.map((p) => `${option}=${p}`) : [`${option}=`]))
+  }
   if (!s.htaccess) args.push('--no-htaccess')
   let passphrase: string | undefined
   if (s.sign) {
@@ -111,9 +116,12 @@ export default function PublishPage(): JSX.Element {
           <Field className="md:col-span-2" label="Store" setting="store_dir" browse="folder" mono
             hint={'Where manifest.json, blobs/ and sigs/ are written.\nThis is what gets served and deployed.'} />
           <Field label="Name" setting="name" placeholder="My Game" />
-          <Field label="Version" setting="version" placeholder="1.0" />
-          <Field className="md:col-span-2" label="Protect" setting="protect" placeholder="config/*.cfg, settings.ini" mono
-            hint={'Files players keep once they have them (their settings).\nComma-separated patterns, like config/*.cfg.'} />
+          <Field label="Version" setting="version" placeholder="1.0"
+            hint="Raise it for every new release: publishing to the same Store adds only what changed." />
+          <PathList setting="leave_out" label="Leave out of the release" empty="Nothing picked: the whole folder is released."
+            hint={'Players never get these. A folder leaves out everything in it.\nAlways left out: .git, .svn, .hg, __pycache__, Thumbs.db, desktop.ini, .DS_Store, *.tmp.'} />
+          <PathList setting="protect" label="Players keep their own copy" empty="Nothing picked: every file follows the release."
+            hint={'Sent once, then never overwritten: players keep their changes (settings, saves).\nA folder covers everything in it.'} />
         </div>
         <div className="mt-5 grid gap-4 md:grid-cols-2">
           <SettingToggle setting="htaccess" label=".htaccess for Apache" hint="Serve only the release: no listings, the right cache headers." />
@@ -166,6 +174,12 @@ export default function PublishPage(): JSX.Element {
             <Stat label="New blobs" value={Number(result.new_blobs)} accent={Number(result.new_blobs) > 0} />
             <Stat label="New data" value={human(Number(result.new_bytes))} accent={Number(result.new_bytes) > 0} />
           </div>
+          {Array.isArray(result.left_out) && result.left_out.length > 0 && (
+            <p className="hint">
+              Left out: {(result.left_out as string[]).slice(0, 12).join(', ')}
+              {result.left_out.length > 12 ? ` and ${result.left_out.length - 12} more` : ''}
+            </p>
+          )}
         </Card>
       )}
     </div>

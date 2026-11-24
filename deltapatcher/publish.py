@@ -5,13 +5,12 @@ copies files whose content is new; the previous manifest is kept as manifest.pre
 clients that are halfway through an update can still fetch the blobs they started with.
 """
 
-import fnmatch
 import os
 import shutil
 
 from . import hashing, signing
 from .manifest import (BLOB_DIR, MANIFEST_NAME, PREVIOUS_NAME, Entry, Manifest, ManifestError,
-                       check_path)
+                       check_path, rule_matches)
 
 IGNORE_FILE = ".deltaignore"
 DEFAULT_IGNORE = [".git/", ".svn/", ".hg/", ".deltapatcher/", "__pycache__/", "Thumbs.db",
@@ -77,6 +76,7 @@ class PublishResult(object):
         self.new_bytes = 0
         self.pruned = 0
         self.skipped = []
+        self.left_out = []       # what the leave-out rules kept out of the release (a folder with a trailing /)
         self.manifest = None
 
     def summary(self):
@@ -93,8 +93,8 @@ def human(n):
 
 
 def read_ignore(src):
-    """Patterns from DEFAULT_IGNORE and the folder's .deltaignore (one glob a line, # comments,
-    a trailing / for a folder)."""
+    """Rules from DEFAULT_IGNORE and the folder's .deltaignore (one a line, # comments; the rules are
+    manifest.rule_matches': /a/b.txt that file, /cache/ that folder, *.log a pattern)."""
     pats = list(DEFAULT_IGNORE)
     try:
         with open(os.path.join(src, IGNORE_FILE), "r", encoding="utf-8") as f:
@@ -108,16 +108,7 @@ def read_ignore(src):
 
 
 def ignored(rel, is_dir, pats):
-    name = rel.rsplit("/", 1)[-1]
-    for p in pats:
-        if p.endswith("/"):
-            if not is_dir:
-                continue
-            p = p[:-1]
-        target = rel if "/" in p else name
-        if fnmatch.fnmatchcase(target, p) or fnmatch.fnmatchcase(target.lower(), p.lower()):
-            return True
-    return False
+    return any(rule_matches(rel, is_dir, p) for p in pats)
 
 
 _LINK_TAGS = (0xA0000003, 0xA000000C)   # IO_REPARSE_TAG_MOUNT_POINT (a junction), IO_REPARSE_TAG_SYMLINK
@@ -136,9 +127,10 @@ def is_link(path):
     return False
 
 
-def walk(src, pats=None, skipped=None):
+def walk(src, pats=None, skipped=None, left_out=None):
     """Sorted relative paths (forward slashes) of the regular files under src. Links and junctions
-    are not followed: one could point outside the folder, or back into it forever."""
+    are not followed: one could point outside the folder, or back into it forever. `left_out`, when
+    given, gets what the rules left out (a folder once, with a trailing /)."""
     pats = read_ignore(src) if pats is None else pats
     out = []
     root_len = len(os.path.abspath(src).rstrip("\\/")) + 1
@@ -153,11 +145,15 @@ def walk(src, pats=None, skipped=None):
                 continue
             if not ignored(rel, True, pats):
                 keep.append(d)
+            elif left_out is not None:
+                left_out.append(rel + "/")
         dirnames[:] = keep
         for fn in sorted(filenames):
             rel = (reldir + "/" + fn) if reldir else fn
             full = os.path.join(dirpath, fn)
             if ignored(rel, False, pats):
+                if left_out is not None:
+                    left_out.append(rel)
                 continue
             if is_link(full) or not os.path.isfile(full):
                 if skipped is not None:
@@ -205,11 +201,13 @@ def _write_sig(store, data, signer, log):
 
 
 def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None,
-            signer=None, htaccess=True):
+            signer=None, htaccess=True, leave_out=None):
     """Publish the folder `src` into `store`. Returns a PublishResult.
 
     progress(done, total, label) and log(text) are optional callbacks. `signer` is a signing key
     (signing.load_key) to sign the manifest with; `htaccess` writes the store's .htaccess for Apache.
+    `protect` and `leave_out` are rules (manifest.rule_matches): files players keep once they have
+    them, and files the release leaves out (with DEFAULT_IGNORE and the folder's .deltaignore).
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -223,7 +221,11 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     os.makedirs(blob_dir, exist_ok=True)
 
     res = PublishResult()
-    rels = walk(src, skipped=res.skipped)
+    rels = walk(src, read_ignore(src) + [r for r in (leave_out or []) if r and r.strip()],
+                skipped=res.skipped, left_out=res.left_out)
+    if res.left_out:
+        shown = ", ".join(res.left_out[:8]) + (" and %d more" % (len(res.left_out) - 8) if len(res.left_out) > 8 else "")
+        log("left out: %s" % shown)
     for rel, why in res.skipped:
         log("skipped %s (%s)" % (rel, why))
     for rel in rels:

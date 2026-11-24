@@ -24,7 +24,7 @@ const jobs = new Map<string, ChildProcessWithoutNullStreams>()
 
 // every option the window passes; the main process refuses anything else
 const ALLOWED_OPTIONS = new Set([
-  '--source', '--trust-key', '--check', '--name', '--version', '--protect', '--sign', '--no-htaccess',
+  '--source', '--trust-key', '--check', '--name', '--version', '--protect', '--leave-out', '--sign', '--no-htaccess',
   '--passphrase-stdin', '--port', '--to-folder', '--host', '--user', '--key', '--remote-root', '--dry-run',
   '--path', '--accept', '--forget'
 ])

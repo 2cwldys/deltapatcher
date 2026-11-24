@@ -30,7 +30,7 @@ so a small patch is a small download even when the game is large.
 
 - It never deletes files you added yourself, or files that were in the folder before DeltaPatcher
   first installed them.
-- Files the game's maker marked as *protected* (usually your settings, such as `config/*.cfg`) are
+- Files the game's maker marked as *protected* (usually your settings and saves) are
   created when missing and never overwritten after that.
 - It checks every downloaded file against its SHA-256 before using it. A damaged or incomplete download
   is never installed.

@@ -54,7 +54,7 @@ fingerprints, commands), and its teal for the progress bar.
 ## publish
 
 ```
-deltapatcher publish SRC STORE [--name NAME] [--version VERSION] [--protect GLOB]... [--sign [KEYFILE]] [--no-htaccess] [--no-prune]
+deltapatcher publish SRC STORE [--name NAME] [--version VERSION] [--leave-out PATH]... [--protect PATH]... [--sign [KEYFILE]] [--no-htaccess] [--no-prune]
 ```
 
 Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `sigs/`, `.htaccess`). See
@@ -64,7 +64,8 @@ Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `s
 | --- | --- |
 | `--name` | Shown to players and in the log |
 | `--version` | Shown to players and in the log |
-| `--protect GLOB` | Files clients create once and never overwrite. Repeat it for more patterns. |
+| `--leave-out PATH` | A file or folder inside SRC to leave out of the release (a folder: everything in it). Repeat it for more. A pattern such as `*.log` works too. Without it: the saved `leave_out` list. |
+| `--protect PATH` | A file or folder inside SRC that players keep once they have it, such as their settings. Repeat it for more; patterns work too. Without it: the saved `protect` list. |
 | `--sign [KEYFILE]` | Sign the release (optional). Without a file: the settings file's `signing_key`, else the default key. Asks the key's passphrase. |
 | `--no-htaccess` | Do not write the `.htaccess` for Apache |
 | `--no-prune` | Keep blobs and signatures no manifest names any more |

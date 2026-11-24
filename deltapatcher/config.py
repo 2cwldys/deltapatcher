@@ -39,7 +39,10 @@ SCHEMA = [
     ("publish", "store_dir", "", "Where the release is written (manifest.json, blobs/, sigs/): what gets served."),
     ("publish", "name", "", "The release's name, shown to players."),
     ("publish", "version", "", "The release's version, shown to players."),
-    ("publish", "protect", "", "Files players keep once they have them, comma-separated globs (config/*.cfg)."),
+    ("publish", "protect", "", "Files and folders players keep once they have them (their settings): paths inside the "
+                               "folder you release, separated by ; (config/user.cfg; saves/). Patterns like *.ini work too."),
+    ("publish", "leave_out", "", "Files and folders left out of the release: paths inside the folder you release, "
+                                 "separated by ; (screenshots/; notes.txt). Patterns like *.log work too."),
     ("publish", "sign", False, "Sign each release (yes/no)."),
     ("publish", "signing_key", default_signing_key(), "The signing key's file (the file's path, never the key)."),
     ("publish", "htaccess", True, "Write a .htaccess for Apache into the store (yes/no)."),

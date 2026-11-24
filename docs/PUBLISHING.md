@@ -8,17 +8,19 @@ update from.
 Put the files exactly as they should appear in the player's folder. Subfolders are kept. Any file type
 works.
 
-Leave out what players should not get with a `.deltaignore` file in the release folder:
+Leave out what players should not get:
 
-```
-# one pattern per line; a trailing / means a folder
-*.log
-screenshots/
-dev-notes.txt
-```
+- App: on the **Publish** page, *Leave out of the release*: **Add folder** or **Add file**, picked from
+  inside the release folder. A folder leaves out everything in it; a file is that one file only.
+- Command line: `--leave-out screenshots --leave-out notes.txt` (a path inside the release folder:
+  typed, pasted or dragged into the window). Without it, the list saved by the app is used.
 
 Always left out: `.git/`, `.svn/`, `.hg/`, `__pycache__/`, `Thumbs.db`, `desktop.ini`, `.DS_Store`,
-`*.tmp`. Links and junctions are never followed.
+`*.tmp`. Links and junctions are never followed. Publishing lists what it left out.
+
+For patterns, a `.deltaignore` file in the release folder works too, one a line (`# comments`):
+`*.log` is every .log in every folder, `docs/*.pdf` a path from the top, `cache/` every folder named
+cache, and `/notes.txt` (a leading `/`) that one file only.
 
 Do not put DeltaPatcher itself, or player data (saves, settings the game writes), in the release
 folder.
@@ -30,8 +32,11 @@ App: the **Publish** page: choose *Folder to release* and *Store*, fill in *Name
 Command line:
 
 ```
-deltapatcher publish ./release ./store --name "My Game" --version 1.4 --protect "config/*.cfg"
+deltapatcher publish ./release ./store --name "My Game" --version 1.4 --protect config/user.cfg
 ```
+
+Publish into the **same store** for every new version (1.4, 1.5, ...): only the files that changed are
+added, and players download only those.
 
 What happens:
 
@@ -48,11 +53,13 @@ What happens:
 A *protected* file is created when a player does not have it, and never overwritten after that.
 Use it for default settings the game later changes:
 
-- Window: *Protect* field, comma-separated: `config/*.cfg, settings.ini`
-- Command line: `--protect "config/*.cfg" --protect settings.ini`
+- App: on the **Publish** page, *Players keep their own copy*: **Add folder** or **Add file**. A folder
+  covers everything in it (a `saves` folder, say); a file is that one file only.
+- Command line: `--protect config/user.cfg --protect saves` (paths inside the release folder).
+  Without it, the list saved by the app is used.
 
-Patterns are matched against the whole path with `/` separators (`*` matches within a name and across
-folders).
+Patterns work too, for whoever wants them: `*.ini` is every .ini in every folder, and `config/*.cfg`
+every .cfg under config. Upper and lower case are the same.
 
 ## 3b. Sign your releases (optional)
 

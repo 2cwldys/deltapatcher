@@ -236,19 +236,53 @@ def load_signer(a, path):
 
 # ---- commands: each returns the data of its result ------------------------------------------------
 
+def rule_for(src, value):
+    """A --protect or --leave-out as a rule (manifest.rule_matches). A path inside the folder being
+    published (typed, pasted or dragged in; relative to that folder, or absolute) is that exact file
+    or folder; text with * ? or [ in it is a pattern, kept as it is."""
+    v = value.strip().strip('"').strip()
+    if not v:
+        return None
+    if any(c in v for c in "*?["):
+        return v.replace("\\", "/")
+    root = os.path.abspath(src)
+    full = os.path.abspath(v if os.path.isabs(v) else os.path.join(root, v))
+    try:
+        rel = os.path.relpath(full, root)
+    except ValueError:                                   # another drive
+        rel = ".."
+    if rel == "." or rel == ".." or rel.startswith(".." + os.sep):
+        raise CliError("%s is not inside the folder you publish (%s): give a file or folder in it" % (value, root),
+                       "outside")
+    folder = os.path.isdir(full) or v.endswith(("/", "\\"))
+    return "/" + rel.replace("\\", "/") + ("/" if folder else "")
+
+
+def path_list(given, saved):
+    """The paths given on the command line, else the saved ones (separated by ;)."""
+    items = given if given is not None else str(saved or "").split(";")
+    return [x for x in (i.strip() for i in items) if x]
+
+
 def cmd_publish(a, cfg):
-    protect = [p for p in (a.protect or []) if p]
+    rules = {}
+    for kind, given, saved in (("protect", a.protect, cfg["protect"]), ("leave out", a.leave_out, cfg["leave_out"])):
+        rules[kind] = [r for r in (rule_for(a.src, p) for p in path_list(given, saved)) if r]
+        for r in rules[kind]:
+            if r.startswith("/") and not os.path.exists(os.path.join(a.src, *r.strip("/").split("/"))):
+                say("%s: %s is not in %s (yet)" % (kind, r.strip("/"), os.path.abspath(a.src)), "warn")
     signer = None
     if a.sign is not None:
         signer = load_signer(a, a.sign or cfg["signing_key"] or signing.default_key_path())
-    res = publish.publish(a.src, a.store, a.name, a.version, protect, prune=not a.no_prune, progress=OUT.progress,
-                          log=say, signer=signer, htaccess=not a.no_htaccess)
+    res = publish.publish(a.src, a.store, a.name, a.version, rules["protect"], prune=not a.no_prune,
+                          progress=OUT.progress, log=say, signer=signer, htaccess=not a.no_htaccess,
+                          leave_out=rules["leave out"])
     OUT.end()
     if signer is None:
         say("Not signed. Players can check who made a release when you publish with --sign.", "warn")
     return {"files": res.files, "bytes": res.bytes, "blobs": res.blobs, "new_blobs": res.new_blobs,
             "new_bytes": res.new_bytes, "pruned": res.pruned, "signed": signer is not None,
-            "summary": res.summary()}
+            "left_out": res.left_out, "summary": res.summary()}
 
 
 def cmd_serve(a, cfg):
@@ -620,7 +654,12 @@ def build_parser():
     s.add_argument("store")
     s.add_argument("--name", default="")
     s.add_argument("--version", dest="version", default="")
-    s.add_argument("--protect", action="append", help="a glob of files clients keep once they have them (repeatable)")
+    s.add_argument("--protect", action="append", metavar="PATH",
+                   help="a file or folder players keep once they have it, such as their settings: a path inside SRC, "
+                        "or a pattern like *.ini (repeatable; default: the saved list)")
+    s.add_argument("--leave-out", action="append", metavar="PATH",
+                   help="a file or folder to leave out of the release: a path inside SRC, or a pattern like *.log "
+                        "(repeatable; default: the saved list)")
     s.add_argument("--sign", nargs="?", const="", metavar="KEYFILE",
                    help="sign the release (optional; default key: the saved one, else %s)" % signing.default_key_path())
     s.add_argument("--no-htaccess", action="store_true", help="do not write the .htaccess for Apache")

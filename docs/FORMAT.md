@@ -53,7 +53,7 @@ A publisher key is written `ed25519:` followed by the base64 of its 32 bytes.
  "published": "2026-11-23T20:00:00Z",
  "count": 2,
  "bytes": 1234,
- "protect": ["config/*.cfg"],
+ "protect": ["/config/user.cfg", "*.ini"],
  "files": [
   {"path": "data/pak0.pk3", "sha256": "3a7bd3e2...", "size": 1000},
   {"path": "readme.txt", "sha256": "9f86d081...", "size": 234}
@@ -67,7 +67,7 @@ A publisher key is written `ed25519:` followed by the base64 of its 32 bytes.
 | `name`, `version` | Free text, for people |
 | `published` | UTC time of publishing (ISO 8601) |
 | `count`, `bytes` | Number of files and their total size |
-| `protect` | Glob patterns (`fnmatch`, case-sensitive, against the whole path): files a client creates once and never overwrites |
+| `protect` | Rules for files a client creates once and never overwrites. `/config/user.cfg` is that file and `/saves/` that folder and everything in it (a leading `/`: an exact path from the top). Anything else is a pattern: without a `/` it matches a name in any folder (`*.ini`), with one the whole path (`config/*.cfg`); a trailing `/` means folders. Case is ignored. |
 | `files` | Every file: `path` (relative, `/` separators), `sha256`, `size` in bytes |
 
 ### Path rules

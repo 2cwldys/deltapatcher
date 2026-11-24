@@ -9,7 +9,7 @@ A manifest is JSON:
       "published": "2026-11-23T20:00:00Z",
       "count": 2,
       "bytes": 1234,
-      "protect": ["config/*.cfg"],
+      "protect": ["/config/user.cfg", "*.ini"],
       "files": [
         {"path": "data/pak0.pk3", "sha256": "<64 hex>", "size": 1000},
         {"path": "readme.txt",    "sha256": "<64 hex>", "size": 234}
@@ -38,6 +38,43 @@ for _d in "123456789\u00b9\u00b2\u00b3":
     _WINDOWS_DEVICES.update(("com" + _d, "lpt" + _d))
 _BAD_CHARS = set('<>:"\\|?*')
 STATE_DIR_NAMES = re.compile(r"^(\.deltapatcher|deltap~\d+)$", re.I)   # the client's own folder, and its 8.3 name
+
+
+# ---- rules: which files a list names ("leave out" when publishing, "protect" when updating) -----------
+#
+#   /config/user.cfg    that one file: a leading / is a path from the top of the release, picked exactly
+#   /screenshots/       that one folder, and everything in it (the trailing / is optional)
+#   *.log               a pattern: without a / it matches a name in every folder
+#   config/*.cfg        with a / it matches the whole path from the top (* also crosses folders)
+#   cache/              a trailing / on a pattern: folders only
+# Upper and lower case are the same, as they are on Windows and macOS.
+
+def rule_matches(path, is_dir, rule):
+    """Does `rule` name `path` (relative, forward slashes) itself?"""
+    r = rule.strip().replace("\\", "/")
+    if not r:
+        return False
+    low = path.lower()
+    if r.startswith("/"):
+        return low == r.strip("/").lower()            # picked: exactly this path, no wildcards in it
+    folders_only = r.endswith("/")
+    r = r.rstrip("/").lower()
+    if folders_only and not is_dir:
+        return False
+    return fnmatch.fnmatchcase(low if "/" in r else low.rsplit("/", 1)[-1], r)
+
+
+def covered(path, rules, is_dir=False):
+    """True when one of `rules` names `path`, or a folder it is in."""
+    rules = [r for r in rules if r and r.strip()]
+    if not rules:
+        return False
+    parts = path.split("/")
+    for i in range(1, len(parts)):
+        folder = "/".join(parts[:i])
+        if any(rule_matches(folder, True, r) for r in rules):
+            return True
+    return any(rule_matches(path, is_dir, r) for r in rules)
 
 
 class ManifestError(ValueError):
@@ -136,7 +173,7 @@ class Manifest(object):
         return {e.sha256: e.size for e in self.files.values()}
 
     def is_protected(self, path):
-        return any(fnmatch.fnmatchcase(path, pat) for pat in self.protect)
+        return covered(path, self.protect)
 
     def to_json(self):
         doc = {

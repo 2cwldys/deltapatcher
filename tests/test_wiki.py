@@ -26,13 +26,14 @@ class Wiki(TempCase):
         for name in names:
             text = read(self.p("wiki", name)).decode("utf-8")
             outside = re.sub(r"```.*?```", "", text, flags=re.S)       # links in code examples are text
-            for _bang, _label, link in wiki.LINK.findall(outside):
+            for link in re.findall(r"\]\(([^)\s]+)\)", outside):        # every link, a picture's included
                 if link.startswith(("https://", "http://", "mailto:", "#")):
                     continue
                 self.assertIn(link.split("#")[0], pages, "%s: %s leads nowhere" % (name, link))
         home = read(self.p("wiki", "Home.md")).decode("utf-8")
         self.assertIn("(Quick-start)", home)
-        self.assertIn("https://github.com/%s/raw/main/docs/images/app-update.png" % wiki.REPO, home)
+        picture = "https://github.com/%s/raw/main/docs/images/app-update.png" % wiki.REPO
+        self.assertIn("[![The Update page](%s)](%s)" % (picture, picture), home)   # a click opens it full size
         self.assertFalse(home.startswith("# "))                         # the wiki shows the title itself
         self.assertIn("(Setting-up-a-VPS)", read(self.p("wiki", "_Sidebar.md")).decode("utf-8"))
 

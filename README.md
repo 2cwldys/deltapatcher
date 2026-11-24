@@ -13,6 +13,9 @@ Publish a folder, host it anywhere, and players download only what changed.</p>
   <img alt="Windows, Linux, macOS" src="https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-f2a33a">
 </p>
 
+<p align="center"><b>New here?</b> Start with the <a href="https://github.com/2cwldys/deltapatcher/wiki">wiki</a>: a five-minute quick start,
+updating a game as a player, releasing to your own server, the command line, Docker and Pterodactyl.</p>
+
 <p align="center">
   <img src="docs/images/app-update.png" alt="The DeltaPatcher app: Update" width="860">
 </p>

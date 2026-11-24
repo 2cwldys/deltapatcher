@@ -23,15 +23,21 @@ shared folder. Clients **update** by comparing their folder with the manifest an
 the blobs they do not have. The file type does not matter: a `.pk3`, a `.zip`, a texture or a `.dll`
 is just bytes with a hash.
 
-## The window at a glance
+## The window
 
-| Update | Release | Settings |
-| --- | --- | --- |
-| ![Update](images/app-update.png) | ![Release](images/app-release.png) | ![Settings](images/app-settings.png) |
+Click a picture to see it full size.
 
-- **Update**: bring a folder up to date from the address players use.
-- **Release**: what to release, where players download it from (your server over SSH, a folder, or this
-  computer to test), and one button that sends only what changed.
-- **Settings**: every setting of `deltapatcher.ini`, and the log.
+**Update**: bring a folder up to date from the address players use.
+
+[![The Update page](images/app-update.png)](images/app-update.png)
+
+**Release**: what to release, where players download it from (your server over SSH, a folder, or this
+computer to test), and one button that sends only what changed.
+
+[![The Release page](images/app-release.png)](images/app-release.png)
+
+**Settings**: every setting of `deltapatcher.ini`, and the log.
+
+[![The Settings page](images/app-settings.png)](images/app-settings.png)
 
 The log at the bottom shows exactly what each step did. **Stop** cancels a running download.

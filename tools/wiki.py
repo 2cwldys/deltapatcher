@@ -37,6 +37,7 @@ PAGES = [
 ]
 PAGE_OF = {src: name for src, name, _title in PAGES}
 LINK = re.compile(r"(!?)\[([^\]]*)\]\(([^)\s]+)\)")
+LINKED_PICTURE = re.compile(r"\[!\[([^\]]*)\]\(([^)\s]+)\)\]\(([^)\s]+)\)")    # [![text](picture)](where a click goes)
 PICTURE = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp")
 
 
@@ -65,8 +66,15 @@ def page(src):
     for line in lines:
         if line.lstrip().startswith("```"):
             fenced = not fenced
-        out.append(line if fenced else LINK.sub(lambda m: "%s[%s](%s)" % (m.group(1), m.group(2), target(src, m.group(3))), line))
+        out.append(line if fenced else links(src, line))
     return "\n".join(out) + "\n"
+
+
+def links(src, line):
+    """The line's links and pictures as the wiki needs them. A picture inside a link is done first, both
+    addresses at once; target() leaves a full address alone, so the second pass changes nothing there."""
+    line = LINKED_PICTURE.sub(lambda m: "[![%s](%s)](%s)" % (m.group(1), target(src, m.group(2)), target(src, m.group(3))), line)
+    return LINK.sub(lambda m: "%s[%s](%s)" % (m.group(1), m.group(2), target(src, m.group(3))), line)
 
 
 def write_wiki(folder):

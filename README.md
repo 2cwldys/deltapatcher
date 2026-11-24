@@ -182,13 +182,13 @@ come only from there (or from a Mac).
 4. **Download its artifacts**: on the run's **Summary** page, at the bottom under **Artifacts**:
    `deltapatcher-Windows`, `deltapatcher-Linux` and `deltapatcher-macOS`, one zip each.
 5. **Make the release**: **Releases** > **Draft a new release**, tag `v0.3.0` (the tag must name the same
-   version: a tag that does not stops the build), and attach the files from the three zips:
+   version: a tag that does not stops the build), and attach every file from the three zips:
 
-   | System | Attach | Leave out |
-   | --- | --- | --- |
-   | Windows | `DeltaPatcher-0.3.0-setup.exe`, `DeltaPatcher-0.3.0-windows-x64.zip`, `deltapatcher-cli-windows-x64.exe` | |
-   | macOS | `DeltaPatcher-0.3.0-arm64.dmg`, `deltapatcher-cli-macos-arm64.tar.gz` | `DeltaPatcher-0.3.0-arm64-mac.zip` (the same app as the .dmg) |
-   | Linux | `DeltaPatcher-0.3.0.AppImage`, `deltapatcher-cli-linux-x64.tar.gz` | `DeltaPatcher-0.3.0-linux-x64.tar.gz` (only for systems that cannot run an AppImage) |
+   | System | Files |
+   | --- | --- |
+   | Windows | `DeltaPatcher-0.3.0-setup.exe`, `DeltaPatcher-0.3.0-windows-x64.zip`, `deltapatcher-cli-windows-x64.exe` |
+   | macOS | `DeltaPatcher-0.3.0-arm64.dmg`, `DeltaPatcher-0.3.0-arm64-mac.zip`, `deltapatcher-cli-macos-arm64.tar.gz` |
+   | Linux | `DeltaPatcher-0.3.0.AppImage`, `DeltaPatcher-0.3.0-linux-x64.tar.gz`, `deltapatcher-cli-linux-x64.tar.gz` |
 
 The app's files carry the version in their names; the command line's do not.
 

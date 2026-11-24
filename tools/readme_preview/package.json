@@ -1,0 +1,12 @@
+{
+  "name": "deltapatcher-readme-preview",
+  "private": true,
+  "description": "README.md, or any guide, previewed the way GitHub shows it: tools/readme_preview/render.mjs",
+  "type": "module",
+  "dependencies": {
+    "github-markdown-css": "5.5.1",
+    "marked": "12.0.2",
+    "mermaid": "10.9.1",
+    "puppeteer-core": "22.15.0"
+  }
+}

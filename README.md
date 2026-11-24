@@ -178,7 +178,7 @@ app/              the app (Electron, React, Tailwind): the window, which runs th
 cli/              deltapatcher.bat / deltapatcher.sh: the command line straight from the repository
 packaging/        the PyInstaller spec: the engine as one self-contained file, and as a folder for the app
 tests/            the engine's tests
-tools/            the icon, the screenshots, the social preview, the secret scan, the release files, CI annotations, the version, the wiki
+tools/            the icon, the screenshots, the social preview, the secret scan, the release files, CI annotations, the version, the wiki, a README preview
 docs/             the guides
 ```
 
@@ -197,6 +197,10 @@ JSON mode the way the app does.
 **The guides** live in `docs/` (and `docker/README.md`, `SECURITY.md`); the wiki is made from them with
 `python tools/wiki.py <a clone of the wiki>`, then a commit and push there. Edit the files here, not the
 wiki.
+
+**Preview a guide** the way GitHub shows it: `npm ci` once in `tools/readme_preview`, then
+`node tools/readme_preview/render.mjs [FILE.md] [--light]` writes `dist/preview/preview.html` and a
+full-page `preview.png`, taken with the Edge, Chrome or Chromium already on your computer.
 
 </details>
 

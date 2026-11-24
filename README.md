@@ -45,7 +45,7 @@ identical files are stored once.
   <tr>
     <td valign="top"><b>Pick, do not type</b><br>Leave folders out, or let players keep their own settings and saves, by picking them.</td>
     <td valign="top"><b>Shadow patches</b><br>Release the same version again with fixes: only the changed files travel.</td>
-    <td valign="top"><b>In your containers</b><br>Docker images and Pterodactyl eggs are brought up to date at every start.</td>
+    <td valign="top"><b>In your containers</b><br>Docker images and Pterodactyl eggs can be brought up to date at every start.</td>
   </tr>
   <tr>
     <td valign="top"><b>Several projects</b><br>Every game, mod or server you keep up to date or release, each with its own settings. <i>Update all</i> runs three at once.</td>

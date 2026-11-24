@@ -3,6 +3,7 @@ import { ArrowUpCircle, BookOpen, Boxes, Bug, RefreshCw, Rocket, SlidersHorizont
 import { Page, useApp, waitingCount } from '../store/app'
 import { REPO_URL } from '@shared/project'
 import ProjectPicker from './ProjectPicker'
+import { ForceStopBox } from './ForceStop'
 
 const LINKS: { page: Page; label: string; hint: string; Icon: LucideIcon }[] = [
   { page: 'projects', label: 'Projects', hint: 'Every game, mod or server', Icon: Boxes },
@@ -17,6 +18,7 @@ export default function Sidebar(): JSX.Element {
   const appUpdate = useApp((s) => s.appUpdate)
   const installAppUpdate = useApp((s) => s.installAppUpdate)
   const busy = useApp((s) => s.busy)
+  const stopped = useApp((s) => s.stopped)
   // the projects the last check found an update for
   const waiting = useApp(waitingCount)
   const [version, setVersion] = useState('')
@@ -50,37 +52,41 @@ export default function Sidebar(): JSX.Element {
     )
   }
 
-  // Projects (every project), then the picker (which one), then the pages for the picked project
+  // Projects (every project), then the picker (which one), then the pages for the picked project. The top
+  // scrolls only in a window too short for everything; the bottom, with Force stop, is always on screen.
   return (
     <aside className="flex w-60 shrink-0 flex-col border-r border-ink-700/80 bg-ink-900/95">
-      <div className="flex items-center gap-3 px-5 pb-6 pt-6">
-        <img src="./logo.png" alt="" className="h-10 w-10 drop-shadow-lg" draggable={false} />
-        <div>
-          <div className="text-[15px] font-semibold leading-tight tracking-tight">Delta Patcher</div>
-          <div className="text-[11px] text-ink-400">SHA-256 delta patching</div>
+      <div className="min-h-0 flex-1 overflow-y-auto pb-3">
+        <div className="flex items-center gap-3 px-5 pb-6 pt-6">
+          <img src="./logo.png" alt="" className="h-10 w-10 drop-shadow-lg" draggable={false} />
+          <div>
+            <div className="text-[15px] font-semibold leading-tight tracking-tight">Delta Patcher</div>
+            <div className="text-[11px] text-ink-400">SHA-256 delta patching</div>
+          </div>
         </div>
-      </div>
-      <nav className="flex flex-col gap-1 px-3 pb-3">{LINKS.filter((l) => l.page === 'projects').map(link)}</nav>
-      <ProjectPicker />
-      <nav className="flex flex-col gap-1 px-3">{LINKS.filter((l) => l.page !== 'projects').map(link)}</nav>
-      {appUpdate && (
-        <button
-          type="button"
-          disabled={Boolean(busy)}
-          onClick={installAppUpdate}
-          title={`DeltaPatcher ${appUpdate.latest} is out`}
-          className="mx-3 mt-4 flex items-center gap-3 rounded-lg border border-blob/40 bg-blob/10 px-3 py-2.5 text-left text-blob-light transition-colors hover:bg-blob/20 disabled:opacity-50"
-        >
-          <ArrowUpCircle size={17} className="shrink-0" />
-          <span>
-            <span className="block text-sm font-medium">Update DeltaPatcher</span>
-            <span className="block font-mono text-[11px] text-ink-300">
-              {appUpdate.current} {'\u2192'} {appUpdate.latest}
+        <nav className="flex flex-col gap-1 px-3 pb-3">{LINKS.filter((l) => l.page === 'projects').map(link)}</nav>
+        <ProjectPicker />
+        <nav className="flex flex-col gap-1 px-3">{LINKS.filter((l) => l.page !== 'projects').map(link)}</nav>
+        {appUpdate && (
+          <button
+            type="button"
+            disabled={Boolean(busy) || stopped}
+            onClick={installAppUpdate}
+            title={stopped ? 'Lift the force stop first' : `DeltaPatcher ${appUpdate.latest} is out`}
+            className="mx-3 mt-4 flex items-center gap-3 rounded-lg border border-blob/40 bg-blob/10 px-3 py-2.5 text-left text-blob-light transition-colors hover:bg-blob/20 disabled:opacity-50"
+          >
+            <ArrowUpCircle size={17} className="shrink-0" />
+            <span>
+              <span className="block text-sm font-medium">Update DeltaPatcher</span>
+              <span className="block font-mono text-[11px] text-ink-300">
+                {appUpdate.current} {'\u2192'} {appUpdate.latest}
+              </span>
             </span>
-          </span>
-        </button>
-      )}
-      <div className="mt-auto px-5 pb-5">
+          </button>
+        )}
+      </div>
+      <div className="shrink-0 px-5 pb-5">
+        <ForceStopBox />
         <div className="rounded-lg border border-ink-700 bg-ink-850 px-3 py-2.5 text-[11px] leading-relaxed text-ink-400">
           Every file is checked against its <span className="text-blob">SHA-256</span> before it is used.
         </div>

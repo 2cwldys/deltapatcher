@@ -53,6 +53,9 @@ identical files are stored once.
     <td valign="top"><b>Project presets</b><br>Share projects as one <code>.deltapatch</code> or <code>.html</code> file: players open it and are set up, signed so they know it is yours.</td>
     <td valign="top"><b>Updates while you play</b><br>It checks every hour from the tray, says what is waiting, and can update by itself.</td>
   </tr>
+  <tr>
+    <td valign="top"><b>Force stop</b><br>One red button ends every update, check, release and download at once, and nothing starts until you lift it.</td>
+  </tr>
 </table>
 
 ## The app

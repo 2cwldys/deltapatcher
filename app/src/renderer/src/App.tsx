@@ -1,7 +1,8 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import ActivityBar from './components/ActivityBar'
 import Modals from './components/Modals'
+import { StoppedNotice } from './components/ForceStop'
 import { ExportDialog, ImportDialog } from './components/ProjectFileDialogs'
 import UpdatePage, { runUpdate } from './pages/UpdatePage'
 import ReleasePage, { publishRelease } from './pages/ReleasePage'
@@ -69,6 +70,12 @@ export default function App(): JSX.Element {
   const loaded = useApp((s) => s.loaded)
   const load = useApp((s) => s.load)
   const projectTitle = useApp((s) => (s.projects.length > 1 ? s.projects.find((p) => p.file === s.project)?.title ?? '' : ''))
+  const stopped = useApp((s) => s.stopped)
+  // Force stop: the pages take no clicks, keys or focus until it is lifted
+  const pages = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    if (pages.current) pages.current.inert = stopped
+  }, [stopped])
 
   useEffect(() => {
     let timer: ReturnType<typeof setInterval> | undefined
@@ -126,23 +133,31 @@ export default function App(): JSX.Element {
     <div className="flex h-full bg-ink-950 bg-[radial-gradient(ellipse_at_top_right,rgba(25,179,160,0.10),transparent_55%)]">
       <Sidebar />
       <main className="flex min-w-0 flex-1 flex-col">
-        <header className="px-8 pb-4 pt-7">
-          <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
-          <p className="mt-1 whitespace-pre-line text-sm text-ink-300">{subtitle}</p>
-        </header>
-        {/* keyed by page: each page opens at its top, not where the last one was scrolled to */}
-        <div key={page} className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
-          {!loaded ? (
-            <div className="text-sm text-ink-400">Starting the engine...</div>
-          ) : page === 'projects' ? (
-            <ProjectsPage />
-          ) : page === 'update' ? (
-            <UpdatePage />
-          ) : page === 'release' ? (
-            <ReleasePage />
-          ) : (
-            <SettingsPage />
-          )}
+        <div className="relative flex min-h-0 flex-1 flex-col">
+          <div
+            ref={pages}
+            className={`flex min-h-0 flex-1 flex-col transition-opacity ${stopped ? 'pointer-events-none select-none opacity-30 grayscale' : ''}`}
+          >
+            <header className="px-8 pb-4 pt-7">
+              <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
+              <p className="mt-1 whitespace-pre-line text-sm text-ink-300">{subtitle}</p>
+            </header>
+            {/* keyed by page: each page opens at its top, not where the last one was scrolled to */}
+            <div key={page} className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
+              {!loaded ? (
+                <div className="text-sm text-ink-400">Starting the engine...</div>
+              ) : page === 'projects' ? (
+                <ProjectsPage />
+              ) : page === 'update' ? (
+                <UpdatePage />
+              ) : page === 'release' ? (
+                <ReleasePage />
+              ) : (
+                <SettingsPage />
+              )}
+            </div>
+          </div>
+          {stopped && <StoppedNotice />}
         </div>
         <ActivityBar />
       </main>

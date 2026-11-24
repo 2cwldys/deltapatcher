@@ -70,11 +70,16 @@ Releasing a new version of DeltaPatcher is in the README, under For developers.
 - **Text in the window**: a hint or a page's subtitle puts each sentence on its own line (`\n` between
   sentences; the `hint` class keeps line breaks), so a second sentence never wraps at a random word. Keep
   sentences short.
+- **Everything the app runs goes through `runEngine`** (`app/src/main/engine.ts`), so Force stop can end it
+  and refuse it. Anything that starts by itself (a timer) also checks the store's `stopped`, and counts from
+  `restartSchedules()` once the stop is lifted.
 
 ## Traps
 
 - VS Code sets `ELECTRON_RUN_AS_NODE=1` in its terminals: unset it before starting Electron, or the app runs
   as plain Node.
+- On Windows, Electron finds its data folder through the system, not `APPDATA`: a test that starts the app
+  passes `--user-data-dir=<a folder of its own>`, or it uses (and may change) the real app's data folder.
 - A packaged app takes screenshots (`--capture`) only when `DELTAPATCHER_CAPTURE=1` is set.
 - On Windows, a test or leftover process can hold `dist/deltapatcher-cli.exe` open and the build then fails
   with a permission error: find that process and stop it.

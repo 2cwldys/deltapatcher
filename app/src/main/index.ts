@@ -11,6 +11,7 @@ import {
   dialog,
   ipcMain,
   nativeImage,
+  screen,
   session,
   shell
 } from 'electron'
@@ -18,8 +19,8 @@ import { spawn } from 'child_process'
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { basename, dirname, join, resolve } from 'path'
-import { InstallKind, RunRequest } from '../shared/types'
-import { cancelJob, engineCommand, runEngine, stopAll, stopJob } from './engine'
+import { ForceStop, ForceStopResult, InstallKind, RunRequest } from '../shared/types'
+import { cancelJob, engineCommand, forceStop, isForceStopped, liftForceStop, runEngine, stopAll, stopJob } from './engine'
 import { apply as applyStartWithSystem, HIDDEN_ARG, LOGIN_ITEM_NAME, startedHidden, System, unavailable } from './startWithSystem'
 
 // How this copy of DeltaPatcher was installed, which decides how it updates itself: the Windows setup
@@ -39,6 +40,7 @@ function installKind(): InstallKind {
 // Put a downloaded update in place. Only a file the engine downloaded into its own update folder, with a
 // DeltaPatcher release's name, is ever run: the window cannot make this start anything else.
 async function installUpdate(file: string, kind: string): Promise<string> {
+  if (isForceStopped()) return 'force-stopped'
   const folder = resolve(join(tmpdir(), 'deltapatcher-update'))
   const full = resolve(String(file))
   const same = (a: string, b: string): boolean => (process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b)
@@ -77,6 +79,42 @@ let minimizeToTray = false
 let hideFirstWindow = false
 // start_with_system as this run last put it in place (null: not yet)
 let startWithSystem: boolean | null = null
+// Force stop, as the window last set it or the last run left it
+let forceStopState: ForceStop = { on: false, since: '' }
+
+// Force stop holds until it is lifted, also through a restart: force-stop.json in the app's data folder says
+// since when. A file that is there but cannot be read still means stopped.
+function forceStopFile(): string {
+  return join(app.getPath('userData'), 'force-stop.json')
+}
+
+function readForceStop(): ForceStop {
+  const file = forceStopFile()
+  if (!existsSync(file)) return { on: false, since: '' }
+  try {
+    const since = JSON.parse(readFileSync(file, 'utf8')).since
+    return { on: true, since: typeof since === 'string' ? since : '' }
+  } catch {
+    return { on: true, since: '' }
+  }
+}
+
+// '' when the state is kept for the next start, else why not
+function keepForceStop(state: ForceStop): string {
+  const file = forceStopFile()
+  try {
+    if (!state.on) {
+      rmSync(file, { force: true })
+    } else {
+      mkdirSync(dirname(file), { recursive: true })
+      writeFileSync(file + '.tmp', JSON.stringify({ since: state.since }) + '\n')
+      renameSync(file + '.tmp', file)
+    }
+    return ''
+  } catch (err) {
+    return err instanceof Error ? err.message : String(err)
+  }
+}
 
 // what starting with the computer works through: this copy and Electron's login items
 function system(): System {
@@ -148,9 +186,11 @@ function windowIcon(): string {
 }
 
 function createWindow(): void {
+  // tall enough for the whole sidebar (a newer DeltaPatcher's box and Force stop's together), as the screen allows
+  const area = screen.getPrimaryDisplay().workAreaSize
   win = new BrowserWindow({
-    width: captureDir ? 1200 : 1120,
-    height: captureDir ? 900 : 760,
+    width: captureDir ? 1200 : Math.min(1120, area.width),
+    height: captureDir ? 900 : Math.min(820, area.height),
     minWidth: 920,
     minHeight: 640,
     show: false,
@@ -342,8 +382,21 @@ function registerIpc(): void {
     engine: engineCommand().describe,
     capture: Boolean(captureDir),
     install: installKind(),
-    startWithSystem: unavailable(system())
+    startWithSystem: unavailable(system()),
+    forceStop: forceStopState
   }))
+  // Force stop: on ends every run and starts none until it is turned off, also after a restart
+  handle('app:force-stop', (_e, on: boolean): ForceStopResult => {
+    let stopped = 0
+    if (on) {
+      stopped = forceStop()
+      if (!forceStopState.on) forceStopState = { on: true, since: new Date().toISOString() }
+    } else {
+      liftForceStop()
+      forceStopState = { on: false, since: '' }
+    }
+    return { ...forceStopState, stopped, problem: keepForceStop(forceStopState) }
+  })
   handle('update:install', (_e, file: string, kind: string) => installUpdate(String(file), String(kind)))
   handle('app:close-to-tray', (_e, on: boolean) => {
     closeToTray = Boolean(on)
@@ -387,6 +440,10 @@ if (!single) {
     app.setAppUserModelId('io.github.deltapatcher')
     // the window needs no camera, microphone, notifications or anything else a page can ask for
     session.defaultSession.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    // a Force stop the last run left on still holds: nothing starts before it is lifted (the README
+    // screenshots are never taken stopped)
+    forceStopState = captureDir ? { on: false, since: '' } : readForceStop()
+    if (forceStopState.on) forceStop()
     registerIpc()
     hideFirstWindow = !captureDir &&
       startedHidden(process.platform, process.argv, process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin)

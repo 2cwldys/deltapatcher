@@ -1,4 +1,4 @@
-import type { AppInfo, EngineEvent, EngineOutcome, RunRequest } from '../shared/types'
+import type { AppInfo, EngineEvent, EngineOutcome, ForceStopResult, RunRequest } from '../shared/types'
 
 declare global {
   interface Window {
@@ -25,6 +25,7 @@ declare global {
       info: () => Promise<AppInfo>
       setCloseToTray: (on: boolean) => Promise<void>
       installUpdate: (file: string, kind: string) => Promise<string>
+      forceStop: (on: boolean) => Promise<ForceStopResult>
       capture: {
         ready: (name: string) => void
         done: () => void

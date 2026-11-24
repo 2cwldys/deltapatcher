@@ -48,3 +48,8 @@ computer to test), and one button that sends only what changed.
 [![The Settings page](images/app-settings.png)](https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-settings.png)
 
 The log at the bottom shows exactly what each step did. **Stop** cancels a running download.
+
+**Force stop**, the red box at the bottom left, ends everything at once: updates, checks, releases,
+downloads and the local server. The pages stay greyed out, and nothing starts (no automatic check, no
+update by itself) until you click **Lift the stop**, even after DeltaPatcher restarts. Lifting it starts
+nothing that was stopped.

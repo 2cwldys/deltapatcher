@@ -17,27 +17,49 @@ export type ModalSpec =
 interface ModalState {
   spec: ModalSpec | null
   resolve: ((v: unknown) => void) | null
+  // Force stop: no dialog opens, each answers as cancelled at once
+  blocked: boolean
   open: (spec: ModalSpec) => Promise<unknown>
   close: (value: unknown) => void
+  // on: the dialog that is open closes as cancelled, and none opens until it is called with off
+  block: (on: boolean) => void
+}
+
+// what a dialog answers when it is closed without an answer
+function cancelled(spec: ModalSpec): unknown {
+  return spec.kind === 'passphrase' || spec.kind === 'prompt' ? null : spec.kind === 'info' ? undefined : false
 }
 
 export const useModal = create<ModalState>((set, get) => ({
   spec: null,
   resolve: null,
+  blocked: false,
   // a new dialog closes one that is still open as cancelled, so no caller waits forever
   open: (spec) =>
     new Promise((resolve) => {
+      if (get().blocked) {
+        resolve(cancelled(spec))
+        return
+      }
       const prev = get().resolve
       const prevSpec = get().spec
-      if (prev && prevSpec) {
-        prev(prevSpec.kind === 'passphrase' || prevSpec.kind === 'prompt' ? null : prevSpec.kind === 'info' ? undefined : false)
-      }
+      if (prev && prevSpec) prev(cancelled(prevSpec))
       set({ spec, resolve })
     }),
   close: (value) => {
     const r = get().resolve
     set({ spec: null, resolve: null })
     if (r) r(value)
+  },
+  block: (on) => {
+    const r = get().resolve
+    const spec = get().spec
+    if (!on) {
+      set({ blocked: false })
+      return
+    }
+    set({ blocked: true, spec: null, resolve: null })
+    if (r && spec) r(cancelled(spec))
   }
 }))
 

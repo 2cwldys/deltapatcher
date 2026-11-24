@@ -72,6 +72,19 @@ export interface RunRequest {
 // how this copy was installed, which decides how it updates itself (none: from source, or no way to)
 export type InstallKind = 'setup' | 'zip' | 'portable' | 'appimage' | 'dmg' | 'none'
 
+// Force stop: on since `since` (an ISO time; '' when that is not known), until it is lifted
+export interface ForceStop {
+  on: boolean
+  since: string
+}
+
+// what turning Force stop on or off did: how many runs it ended, and '' or why the state could not be kept
+// for the next start
+export interface ForceStopResult extends ForceStop {
+  stopped: number
+  problem: string
+}
+
 export interface AppInfo {
   version: string
   platform: string
@@ -80,6 +93,7 @@ export interface AppInfo {
   install: InstallKind
   // '' when this copy can start with the computer, else why not
   startWithSystem: string
+  forceStop: ForceStop
 }
 
 // the engine commands the window may run; anything else is refused by the main process

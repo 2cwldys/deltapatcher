@@ -10,6 +10,7 @@ import { existsSync } from 'fs'
 import { dirname, join } from 'path'
 import { app } from 'electron'
 import { ENGINE_COMMANDS, EngineEvent, EngineOutcome } from '../shared/types'
+import { allowedWhileStopped, FORCE_STOPPED } from '../shared/forceStop'
 
 interface EngineCommand {
   cmd: string
@@ -21,6 +22,10 @@ interface EngineCommand {
 
 const EXE = process.platform === 'win32' ? 'deltapatcher-engine.exe' : 'deltapatcher-engine'
 const jobs = new Map<string, ChildProcessWithoutNullStreams>()
+// Force stop: while it is on, only what allowedWhileStopped() allows starts; the runs it ended answer
+// FORCE_STOPPED
+let forceStopped = false
+const forcedJobs = new Set<string>()
 
 // every option the window passes; the main process refuses anything else
 const ALLOWED_OPTIONS = new Set([
@@ -91,6 +96,9 @@ export function runEngine(
   if (bad) {
     return Promise.resolve({ ok: false, data: {}, message: `the engine option ${bad.split('=')[0]} is not allowed`, code: 'refused' })
   }
+  if (forceStopped && !allowedWhileStopped(args)) {
+    return Promise.resolve({ ok: false, data: {}, message: 'Force stop is on: nothing runs until it is lifted.', code: FORCE_STOPPED })
+  }
   const e = engineCommand()
   const env = {
     ...e.env,
@@ -156,6 +164,11 @@ export function runEngine(
     })
     child.on('close', (code) => {
       jobs.delete(jobId)
+      // ended by Force stop: it says so, unless it had finished
+      if (forcedJobs.delete(jobId) && !outcome?.ok) {
+        resolve({ ok: false, data: outcome?.data ?? {}, message: 'Stopped by Force stop.', code: FORCE_STOPPED })
+        return
+      }
       resolve(
         outcome ?? {
           ok: false,
@@ -195,6 +208,31 @@ export function stopJob(jobId: string): void {
   if (!child) return
   child.stdin.end()
   setTimeout(() => killTree(child), 2000).unref()
+}
+
+// Force stop: every run is asked to stop at once (a download is cancelled and its folder stays as it was, a
+// local server shuts down), and its whole process tree is ended two seconds later if it still runs. Until
+// liftForceStop(), runEngine starts nothing but what allowedWhileStopped() allows. Returns how many runs were
+// going.
+export function forceStop(): number {
+  forceStopped = true
+  for (const [jobId, child] of jobs) {
+    forcedJobs.add(jobId)
+    if (child.stdin.writable) {
+      child.stdin.write('cancel\n')
+      child.stdin.end()
+    }
+    setTimeout(() => killTree(child), 2000).unref()
+  }
+  return jobs.size
+}
+
+export function liftForceStop(): void {
+  forceStopped = false
+}
+
+export function isForceStopped(): boolean {
+  return forceStopped
 }
 
 // the app is quitting: a download is cancelled (the folder stays as it was) and every engine sees its

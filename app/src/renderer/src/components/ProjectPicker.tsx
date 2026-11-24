@@ -1,7 +1,8 @@
 // The project picker in the sidebar, under Projects: the project Update, Release and Settings show, and a list to
 // pick another (it scrolls, and a search box finds one in a long list), rename or remove one, make a new one,
-// or add a project file.
-import { useEffect, useState } from 'react'
+// or add a project file. The list floats over the window, so the sidebar scrolling never cuts it off.
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, ChevronsUpDown, FilePlus, FolderKanban, Pencil, Plus, Search, Trash2 } from 'lucide-react'
 import { ProjectInfo, useApp } from '../store/app'
 import { newProject, openProjectFile, removeProject, renameProject } from '../store/projectActions'
@@ -18,8 +19,13 @@ export default function ProjectPicker(): JSX.Element {
   const projects = useApp((s) => s.projects)
   const shown = useApp((s) => s.project)
   const busy = useApp((s) => s.busy)
+  const stopped = useApp((s) => s.stopped)
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
+  // where the list opens: under the picker, as high as the window leaves room for
+  const [at, setAt] = useState({ left: 0, top: 0, maxHeight: 0 })
+  const button = useRef<HTMLButtonElement>(null)
+  const list = useRef<HTMLDivElement>(null)
   const current = projects.find((p) => p.file === shown)
   const words = search.trim().toLowerCase()
   const listed = words ? projects.filter((p) => p.title.toLowerCase().includes(words)) : projects
@@ -35,6 +41,36 @@ export default function ProjectPicker(): JSX.Element {
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)
   }, [open])
+
+  // the sidebar scrolling or the window changing size closes the list; scrolling the list itself does not
+  useEffect(() => {
+    if (!open) return
+    const scrolled = (e: Event): void => {
+      if (!(e.target instanceof Node) || !list.current?.contains(e.target)) setOpen(false)
+    }
+    const resized = (): void => setOpen(false)
+    window.addEventListener('scroll', scrolled, true)
+    window.addEventListener('resize', resized)
+    return () => {
+      window.removeEventListener('scroll', scrolled, true)
+      window.removeEventListener('resize', resized)
+    }
+  }, [open])
+
+  // Force stop closes the list: no other project is picked until it is lifted
+  useEffect(() => {
+    if (stopped) setOpen(false)
+  }, [stopped])
+
+  const toggle = (): void => {
+    const r = button.current?.getBoundingClientRect()
+    if (open || !r) {
+      setOpen(false)
+      return
+    }
+    setAt({ left: r.left, top: r.bottom + 4, maxHeight: window.innerHeight - r.bottom - 12 })
+    setOpen(true)
+  }
 
   const pick = (file: string): void => {
     setOpen(false)
@@ -54,10 +90,17 @@ export default function ProjectPicker(): JSX.Element {
     <div className="px-3 pb-4">
       <div className="relative">
         <button
+          ref={button}
           type="button"
-          disabled={Boolean(busy)}
-          onClick={() => setOpen(!open)}
-          title={busy ? 'Another project can be picked when the running job is done' : current?.file}
+          disabled={Boolean(busy) || stopped}
+          onClick={toggle}
+          title={
+            stopped
+              ? 'Another project can be picked when the force stop is lifted'
+              : busy
+                ? 'Another project can be picked when the running job is done'
+                : current?.file
+          }
           className="flex w-full items-center gap-2.5 rounded-lg border border-ink-700 bg-ink-850 px-3 py-2 text-left transition-colors hover:border-ink-600 hover:bg-ink-800 disabled:cursor-not-allowed disabled:opacity-60"
         >
           <FolderKanban size={16} className="shrink-0 text-blob-light" />
@@ -67,19 +110,23 @@ export default function ProjectPicker(): JSX.Element {
           </span>
           <ChevronsUpDown size={15} className="shrink-0 text-ink-400" />
         </button>
-        {open && (
+        {open && createPortal(
           <>
             <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-            <div className="absolute left-0 top-full z-40 mt-1 w-72 overflow-hidden rounded-lg border border-ink-600 bg-ink-850 shadow-xl shadow-black/50">
+            <div
+              ref={list}
+              className="fixed z-40 flex w-72 flex-col overflow-hidden rounded-lg border border-ink-600 bg-ink-850 shadow-xl shadow-black/50"
+              style={{ left: at.left, top: at.top, maxHeight: Math.max(160, at.maxHeight) }}
+            >
               {projects.length > SEARCH && (
-                <div className="relative border-b border-ink-700 p-2">
+                <div className="relative shrink-0 border-b border-ink-700 p-2">
                   <Search size={14} className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-ink-400" />
                   <input autoFocus className="input py-1.5 pl-8 text-[13px]" placeholder="Search projects" value={search}
                     spellCheck={false} onChange={(e) => setSearch(e.target.value)}
                     onKeyDown={(e) => e.key === 'Enter' && listed[0] && !listed[0].missing && pick(listed[0].file)} />
                 </div>
               )}
-              <ul className="max-h-80 overflow-y-auto py-1">
+              <ul className="max-h-80 min-h-0 flex-1 overflow-y-auto py-1">
                 {listed.map((p) => {
                   const on = p.file === shown
                   return (
@@ -118,7 +165,7 @@ export default function ProjectPicker(): JSX.Element {
                 })}
                 {words && !listed.length && <li className="px-3 py-2 text-xs text-ink-400">No project matches.</li>}
               </ul>
-              <div className="border-t border-ink-700 py-1">
+              <div className="shrink-0 border-t border-ink-700 py-1">
                 <button type="button" onClick={then(newProject)}
                   className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-ink-300 transition-colors hover:bg-ink-700/60 hover:text-slate-100">
                   <Plus size={14} className="shrink-0 text-delta-light" />
@@ -131,7 +178,8 @@ export default function ProjectPicker(): JSX.Element {
                 </button>
               </div>
             </div>
-          </>
+          </>,
+          document.body
         )}
       </div>
     </div>

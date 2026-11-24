@@ -80,6 +80,11 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
 - **AI assistants get tools, never secrets.** The MCP server runs the engine the way the app does, and no
   tool takes a passphrase or a password: signing, unlocking a key and putting a key on a server stay with a
   person. Tools that change files or servers are marked so a client asks first.
+- **Force stop holds until it is lifted.** One click ends every engine run the app started ("cancel" on its
+  input, then its process tree two seconds later), and the main process refuses every run but the version,
+  the project list and settings until the stop is lifted, also after a restart (`force-stop.json` in the
+  app's data folder). Lifting it starts nothing that was stopped; the automatic schedules count from then.
+  It covers what the app runs, not the command line or the MCP server.
 
 ## State
 

@@ -1,6 +1,6 @@
 // The only bridge between the window and the rest: a small, fixed API. The window never gets Node.
 import { contextBridge, ipcRenderer, IpcRendererEvent, webUtils } from 'electron'
-import { AppInfo, EngineEvent, EngineOutcome, RunRequest } from '../shared/types'
+import { AppInfo, EngineEvent, EngineOutcome, ForceStopResult, RunRequest } from '../shared/types'
 
 const api = {
   run: (req: RunRequest): Promise<EngineOutcome> => ipcRenderer.invoke('engine:run', req),
@@ -36,6 +36,8 @@ const api = {
   info: (): Promise<AppInfo> => ipcRenderer.invoke('app:info'),
   setCloseToTray: (on: boolean): Promise<void> => ipcRenderer.invoke('app:close-to-tray', on),
   installUpdate: (file: string, kind: string): Promise<string> => ipcRenderer.invoke('update:install', file, kind),
+  // Force stop: on ends every run and starts none until it is turned off, also after a restart
+  forceStop: (on: boolean): Promise<ForceStopResult> => ipcRenderer.invoke('app:force-stop', on),
   capture: {
     ready: (name: string): void => ipcRenderer.send('capture:ready', name),
     done: (): void => ipcRenderer.send('capture:done'),

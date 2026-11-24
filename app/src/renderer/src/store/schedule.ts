@@ -1,6 +1,7 @@
 // When DeltaPatcher checks every project by itself: once when it starts, then every check_every_hours hours
 // while it runs (0, or anything that is not a number of hours: only when it starts). A check that comes due
-// while another run goes waits until that run has ended.
+// while another run goes waits until that run has ended. While Force stop is on none starts, and once it is
+// lifted every schedule starts over: the next check comes check_every_hours hours later.
 
 // how often the window looks whether a check is due
 export const TICK = 60 * 1000
@@ -20,12 +21,21 @@ export function anotherRun(s: { busy: string | null; allJob: unknown; runs: Reco
     Object.values(s.runs).some((r) => ['waiting', 'checking', 'updating'].includes(r.state))
 }
 
+// when Force stop was last lifted (null: not since DeltaPatcher started)
+let restartedAt: number | null = null
+
+// Force stop lifted: every schedule counts from now, so nothing it stopped starts again the moment it is lifted
+export function restartSchedules(now: number): void {
+  restartedAt = now
+}
+
 // The automatic checks: the function it returns is called every TICK with the time and check_every_hours,
-// and starts a check when one is due. start() says 'busy' when another run goes: the check then waits for a
-// later tick. 'nothing' (no project to check) counts as done.
+// and starts a check when one is due. start() says 'busy' when another run goes (or Force stop is on): the
+// check then waits for a later tick. 'nothing' (no project to check) counts as done.
 export function scheduler(start: () => 'started' | 'busy' | 'nothing'): (now: number, hours: unknown) => void {
   let last: number | null = null
   return (now, hours) => {
+    if (restartedAt !== null && (last === null || last < restartedAt)) last = restartedAt
     if (!checkDue(now, last, hours)) return
     if (start() !== 'busy') last = now
   }

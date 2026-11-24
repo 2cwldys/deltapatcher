@@ -104,6 +104,19 @@ what differs.
 useful when asking the game's maker for help. The **Settings** page shows `deltapatcher.ini`, every
 setting with a line explaining it.
 
+## Stopping everything at once
+
+**Force stop**, the red box at the bottom left, ends whatever DeltaPatcher is doing, for every project:
+
+- A download stops and the folder stays as it was. An update that was already putting files in place is
+  undone the next time that folder is updated.
+- The automatic checks, and updates by themselves, wait.
+- The pages are greyed out until you click **Lift the stop**, and DeltaPatcher stays stopped after a
+  restart too.
+
+Lifting it starts nothing that was stopped: update again when you are ready. The automatic checks come
+back on their usual schedule, counted from when you lifted it.
+
 ## The tray icon
 
 While DeltaPatcher is open, its icon sits in the notification area (tray). Right-click it to show the

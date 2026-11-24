@@ -119,6 +119,11 @@ export async function openProjectFile(): Promise<void> {
 
 // a file picked, dropped onto the window or double-clicked: a project file is imported, a settings file listed
 export async function addFile(path: string): Promise<void> {
+  const st = useApp.getState()
+  if (st.stopped) {
+    st.log(`Not added while Force stop is on: ${path}. Lift the stop, then add it again.`, 'warn')
+    return
+  }
   if (PROJECT_FILE.test(path)) return startImport(path)
   if (/\.ini$/i.test(path)) return addSettingsFile(path)
   await ask.info('Not a project file', `${path}\n\nDeltaPatcher adds these files:\n${WHICH_FILES}`)
@@ -158,6 +163,8 @@ export async function startImport(path: string): Promise<void> {
           : sentences(String(r.message ?? 'The engine gave no reason.'))
     return ask.info('This project file cannot be added', `${path}\n\n${why}`)
   }
+  // Force stop came while the file was read: no dialog opens
+  if (useApp.getState().stopped) return
   const taken = st.projects.map((p) => p.title)
   const entries: ImportEntry[] = (r.data.projects ?? []).map((e: ImportEntry) => ({
     ...e,
@@ -202,7 +209,7 @@ export async function finishImport(): Promise<void> {
   await st.loadProjects()
   if (added.length) await useApp.getState().selectProject(added[0].file)
   if (problems.length) await ask.info('Not every project was added', problems.join('\n'))
-  const toUpdate = im.updateNow ? added.filter((a) => a.folder) : []
+  const toUpdate = im.updateNow && !useApp.getState().stopped ? added.filter((a) => a.folder) : []
   if (toUpdate.length) {
     useApp.getState().setPage('projects')
     for (const a of toUpdate) void useApp.getState().runProject(a.file, false)
@@ -215,6 +222,7 @@ export async function startExport(file?: string): Promise<void> {
   const key = String(st.effective('signing_key'))
   const status = await st.side(['sign', 'status', `--path=${key}`])
   const exists = Boolean(status.ok && status.data.exists && status.data.can_sign)
+  if (useApp.getState().stopped) return
   useApp.setState({
     exporting: {
       picks: { [file ?? st.project]: true },

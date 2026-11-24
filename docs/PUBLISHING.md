@@ -114,6 +114,10 @@ The store is plain static files: any web server can serve it. Choose one:
 
 Deploying sends only the blobs the target does not have yet.
 
+**Force stop** (the red box at the bottom left of the app) ends a release at once. Players get a release
+only once its `manifest.json` is in place, the last step, so a release stopped before that never reaches
+them: the one before it stays live.
+
 ## 6. Give players the updater
 
 Players need DeltaPatcher and your source address. Common ways:

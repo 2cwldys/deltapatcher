@@ -2,8 +2,9 @@
 // activity log, the running job, and what each project's checks and updates on the Projects page are doing.
 import { create } from 'zustand'
 import type { EngineEvent, EngineOutcome, Style } from '@shared/types'
-import { ask } from './modal'
-import { anotherRun } from './schedule'
+import { FORCE_STOPPED } from '@shared/forceStop'
+import { ask, useModal } from './modal'
+import { anotherRun, restartSchedules } from './schedule'
 import { backupDue, madeAt } from './backups'
 
 export type Value = string | number | boolean
@@ -189,6 +190,13 @@ interface State {
   runAll: (check: boolean, auto?: boolean) => Promise<void>
   stopAll: () => void
   noteResult: (file: string, result: UpdateResult, check: boolean) => void
+
+  // Force stop: every run ended, none starts, no dialog opens and the pages are greyed out until it is
+  // lifted, also after a restart; stoppedSince is when it was turned on (an ISO time, '' when not known)
+  stopped: boolean
+  stoppedSince: string
+  forceStop: () => Promise<void>
+  liftStop: () => Promise<void>
 }
 
 let logId = 0
@@ -211,6 +219,9 @@ let pickedLast = ''
 
 // the commands that work on no single project; every other one gets the shown project's settings file
 const NO_PROJECT = ['self-update', 'version', 'projects', 'project']
+
+// the status bar while Force stop is on
+const STOPPED_STATUS = 'Force stop is on: nothing runs until it is lifted.'
 
 export function withProject(args: string[], file: string): string[] {
   if (!file || NO_PROJECT.includes(args[0]) || args.some((a) => a === '--all' || a.startsWith('--project'))) return args
@@ -327,9 +338,12 @@ export const useApp = create<State>((set, get) => {
     autoChecked: false,
     importing: null,
     exporting: null,
+    stopped: false,
+    stoppedSince: '',
 
     // GitHub's newest release against this version, by number; quiet, and nothing when offline
     checkAppUpdate: async () => {
+      if (get().stopped) return
       const r = await get().run('', ['self-update', '--check'], { quiet: true })
       if (r.ok && r.data.newer) {
         set({ appUpdate: { current: String(r.data.current), latest: String(r.data.latest), url: String(r.data.url) } })
@@ -340,7 +354,7 @@ export const useApp = create<State>((set, get) => {
     // closes DeltaPatcher; a copy that cannot replace itself (the zip, from source) opens the release page
     installAppUpdate: async () => {
       const u = get().appUpdate
-      if (!u) return
+      if (!u || get().stopped) return
       const info = await window.api.info()
       if (info.install === 'zip' || info.install === 'portable' || info.install === 'none') {
         const how = info.install === 'zip' ? 'it runs from the zip' : info.install === 'portable' ? 'it is the portable program' : 'it runs from source'
@@ -361,7 +375,7 @@ export const useApp = create<State>((set, get) => {
             : 'It downloads the new disk image and opens it: drag DeltaPatcher into Applications, replacing the old one.'
       if (!(await ask.confirm(`Update to DeltaPatcher ${u.latest}?`, `You have ${u.current}. ${how}`, 'Update'))) return
       const r = await get().run(`Download DeltaPatcher ${u.latest}`, ['self-update', `--app=${info.install}`])
-      if (!r.ok || !r.data.file) return
+      if (!r.ok || !r.data.file || get().stopped) return
       const done = await window.api.installUpdate(String(r.data.file), info.install)
       if (done !== 'started') await ask.info('The update was not started', 'Download it from the release page instead.', u.url)
     },
@@ -390,7 +404,7 @@ export const useApp = create<State>((set, get) => {
       const started = Boolean(get().serving?.url)
       handlers.delete(jobId)
       set({ serving: null })
-      if (!r.ok && r.code !== 'engine-stopped') {
+      if (!r.ok && r.code !== 'engine-stopped' && r.code !== FORCE_STOPPED) {
         get().log(`Serving stopped: ${r.message}`, 'err')
         // it never started (nothing published there yet, the port is taken): say why, not only in the console
         if (!started) await ask.info('The store could not be served', r.message ?? 'The engine gave no reason.')
@@ -415,6 +429,13 @@ export const useApp = create<State>((set, get) => {
     // the projects first (which one to show), then its settings; with several projects the window opens on
     // the Projects page, with one it opens on Update as it always did
     load: async () => {
+      // a Force stop left on holds: the window opens stopped
+      const fs = (await window.api.info()).forceStop
+      if (fs.on) {
+        useModal.getState().block(true)
+        set({ stopped: true, stoppedSince: fs.since, status: STOPPED_STATUS, statusKind: 'err' })
+        get().log(STOPPED_STATUS, 'warn')
+      }
       await get().loadProjects()
       await readSettings()
       set({ loaded: true, page: get().projects.length > 1 ? 'projects' : get().page })
@@ -486,6 +507,10 @@ export const useApp = create<State>((set, get) => {
       if (!opts.quiet) {
         if (r.ok) {
           set({ status: `${label} done.`, statusKind: 'ok' })
+        } else if (r.code === FORCE_STOPPED) {
+          // while the stop holds, the status bar keeps saying so; the job's own line is in the console
+          get().log(`${label}: ${r.message}`, 'warn')
+          set({ status: get().stopped ? STOPPED_STATUS : `${label}: ${r.message}`, statusKind: 'err', progress: null })
         } else {
           get().log(r.message ?? 'failed', 'err')
           set({ status: r.code === 'stopped' ? `${label} stopped.` : `${label} failed: ${r.message}`, statusKind: 'err', progress: null })
@@ -531,8 +556,8 @@ export const useApp = create<State>((set, get) => {
       if (r.ok) {
         putRun(file, { state: 'done', jobId: undefined, progress: undefined, result: r.data as UpdateResult })
       } else {
-        get().log(`[${p.title}] ${r.message ?? 'failed'}`, 'err')
-        putRun(file, { state: 'failed', jobId: undefined, progress: undefined, message: r.message, stopped: r.code === 'stopped' })
+        get().log(`[${p.title}] ${r.message ?? 'failed'}`, r.code === FORCE_STOPPED ? 'warn' : 'err')
+        putRun(file, { state: 'failed', jobId: undefined, progress: undefined, message: r.message, stopped: r.code === 'stopped' || r.code === FORCE_STOPPED })
       }
     },
 
@@ -580,17 +605,22 @@ export const useApp = create<State>((set, get) => {
       const runs = { ...get().runs }
       for (const [file, run] of Object.entries(runs)) {
         if (run.inAll) {
-          runs[file] = { ...run, inAll: false, state: 'failed', progress: undefined, message: r.ok ? 'Not finished.' : r.message, stopped: r.code === 'stopped' }
+          runs[file] = {
+            ...run, inAll: false, state: 'failed', progress: undefined, message: r.ok ? 'Not finished.' : r.message,
+            stopped: r.code === 'stopped' || r.code === FORCE_STOPPED
+          }
         }
       }
       const total = get().allJob?.total ?? 0
       set({ runs, allJob: null })
-      if (!r.ok) get().log(r.message ?? 'failed', 'err')
+      if (!r.ok) get().log(r.code === FORCE_STOPPED ? `${label}: ${r.message}` : r.message ?? 'failed', r.code === FORCE_STOPPED ? 'warn' : 'err')
       if (!get().busy) {
         if (r.ok) set({ status: `${label} done.`, statusKind: 'ok', progress: { done: total, total, label: 'projects' } })
+        else if (r.code === FORCE_STOPPED && get().stopped) set({ status: STOPPED_STATUS, statusKind: 'err', progress: null })
         else set({ status: r.code === 'stopped' ? `${label} stopped.` : `${label}: ${r.message}`, statusKind: 'err', progress: null })
       }
-      if (auto) await afterAutomatic(check, ended)
+      // a check that Force stop ended updates nothing by itself and says nothing more
+      if (auto && !get().stopped) await afterAutomatic(check, ended)
     },
 
     stopAll: () => {
@@ -603,6 +633,30 @@ export const useApp = create<State>((set, get) => {
     // an update or a check on the Update page: its project's row shows it too
     noteResult: (file, result, check) => {
       if (!running(get().runs[file])) putRun(file, { state: 'done', check, inAll: false, result, message: undefined })
+    },
+
+    // The panic button: the window greys out at once, the dialogs close, and the main process ends every run
+    // (each one then says it was stopped) and starts none until the stop is lifted.
+    forceStop: async () => {
+      useModal.getState().block(true)
+      set({ stopped: true, importing: null, exporting: null })
+      const r = await window.api.forceStop(true)
+      set({ stoppedSince: r.since, status: STOPPED_STATUS, statusKind: 'err', progress: null })
+      const what = r.stopped ? `${r.stopped} running ${r.stopped === 1 ? 'job' : 'jobs'} stopped` : 'nothing was running'
+      get().log(`== Force stop: ${what}. Nothing runs until the stop is lifted.`, 'warn')
+      if (r.problem) get().log(`Force stop holds until DeltaPatcher closes, not after a restart: ${r.problem}`, 'err')
+    },
+
+    // Lifted: nothing that was stopped starts again, and the automatic checks and backups count from now
+    liftStop: async () => {
+      const r = await window.api.forceStop(false)
+      const now = Date.now()
+      restartSchedules(now)
+      restartBackups(get().projects, now)
+      useModal.getState().block(false)
+      set({ stopped: false, stoppedSince: '', status: 'Force stop lifted. Nothing that was stopped starts again by itself.', statusKind: 'idle' })
+      get().log('== Force stop lifted', 'head')
+      if (r.problem) get().log(`Force stop comes back at the next start: ${r.problem}`, 'err')
     }
   }
 })
@@ -652,7 +706,7 @@ export function joinNames(names: string[]): string {
 // another run goes: 'busy' then, and the check waits; 'nothing' when no project has a folder and a source.
 export function autoCheck(): 'started' | 'busy' | 'nothing' {
   const st = useApp.getState()
-  if (anotherRun(st)) return 'busy'
+  if (st.stopped || anotherRun(st)) return 'busy'
   if (!st.projects.some((p) => p.update_ready)) return 'nothing'
   useApp.setState({ autoChecked: true })
   void st.runAll(true, true)
@@ -667,11 +721,17 @@ function lastBackup(p: ProjectInfo): number | null {
   return times.length ? Math.max(...times) : null
 }
 
-// A backup the app makes by itself (backup_every_hours), one project at a time and never while another run goes;
-// said in the console, and in a notification when it fails while the window is not on screen.
+// Force stop lifted: each project's next backup by itself comes backup_every_hours from now
+function restartBackups(projects: ProjectInfo[], now: number): void {
+  for (const p of projects) backupTried.set(p.file, now)
+}
+
+// A backup the app makes by itself (backup_every_hours), one project at a time and never while another run goes
+// or Force stop is on; said in the console, and in a notification when it fails while the window is not on
+// screen (not when Force stop ended it).
 export async function autoBackup(): Promise<void> {
   const st = useApp.getState()
-  if (anotherRun(st)) return
+  if (st.stopped || anotherRun(st)) return
   const at = Date.now()
   const p = st.projects.find((x) => !x.missing && x.backup_ready && backupDue(at, lastBackup(x), x.backup_every_hours))
   if (!p) return
@@ -689,6 +749,8 @@ export async function autoBackup(): Promise<void> {
   useApp.setState({ backupJob: null })
   if (r.ok) {
     st.log(`[${p.title}] ${r.data.made ? `Backed up the live release (${String(r.data.name)}).` : 'The live release has not changed since its last backup.'}`, 'ok')
+  } else if (r.code === FORCE_STOPPED) {
+    st.log(`[${p.title}] The backup: ${r.message}`, 'warn')
   } else {
     st.log(`[${p.title}] The backup failed: ${r.message}`, 'err')
     await window.api.notify('DeltaPatcher', `The backup of ${p.title} failed: ${r.message}`, true)
@@ -701,6 +763,7 @@ export async function autoBackup(): Promise<void> {
 // while the window is not on screen.
 async function afterAutomatic(check: boolean, ended: Ended[]): Promise<void> {
   const st = useApp.getState()
+  if (st.stopped) return
   const titleOf = (file: string): string => st.projects.find((p) => p.file === file)?.title ?? file
   if (check) {
     const waiting = ended.filter((e) => e.ok && e.result && !e.result.empty).map((e) => e.file)

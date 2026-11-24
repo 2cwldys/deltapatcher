@@ -9,6 +9,7 @@ Pick the page for what you want to do:
 | Release my game, mod or asset pack with it (and sign it) | [Publishing a release](PUBLISHING.md) |
 | Host the release on a VPS (Caddy, nginx, Apache) and deploy to it over SSH | [Setting up a VPS](VPS-SETUP.md) |
 | Use it from scripts, a launcher or a server; the settings file and logs | [Command line reference](CLI.md) |
+| Keep the files in my Docker image or Pterodactyl server up to date | [Docker and Pterodactyl](../docker/README.md) |
 | Understand the files, or write my own client | [The store and manifest format](FORMAT.md) |
 | Know what it protects, or report a security problem | [Security](../SECURITY.md) |
 | Fix an error message | [Troubleshooting](TROUBLESHOOTING.md) |

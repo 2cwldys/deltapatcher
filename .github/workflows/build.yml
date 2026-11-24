@@ -19,7 +19,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # Linux on 22.04: a program PyInstaller builds needs the build machine's glibc or newer, and 22.04's
+        # (2.35) is old enough for Debian 12, the base of most Docker images and Pterodactyl eggs
+        os: [ubuntu-22.04, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"

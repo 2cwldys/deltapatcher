@@ -69,7 +69,7 @@ artifacts) or **Releases**:
 | System | App | Command line |
 | --- | --- | --- |
 | Windows | `DeltaPatcher-<version>-setup.exe`, or `-windows-x64.zip` (no install: unzip, run `DeltaPatcher.exe`) | `deltapatcher-cli-windows-x64.exe` |
-| Linux | `DeltaPatcher-<version>.AppImage` or `-linux-x64.tar.gz` | `deltapatcher-cli-linux-x64.tar.gz` |
+| Linux (Ubuntu 22.04, Debian 12 or newer) | `DeltaPatcher-<version>.AppImage` or `-linux-x64.tar.gz` | `deltapatcher-cli-linux-x64.tar.gz` |
 | macOS (Apple silicon) | `DeltaPatcher-<version>-arm64.dmg` (unsigned: right-click > Open the first time) | `deltapatcher-cli-macos-arm64.tar.gz` |
 
 Everything is self-contained: the app carries its own engine, and the command line is one program. On
@@ -109,6 +109,7 @@ Step by step: [Quick start](docs/QUICKSTART.md).
 | [Publishing a release](docs/PUBLISHING.md) | Releasing, protecting player files, signing, giving players the updater |
 | [Setting up a VPS](docs/VPS-SETUP.md) | Deploy user, SSH key, host key, Caddy, nginx, Apache, Windows Server |
 | [Command line reference](docs/CLI.md) | Every command and option, exit codes, the settings file and logs |
+| [Docker and Pterodactyl](docker/README.md) | Keeping the files inside your containers at a release's version |
 | [The store and manifest format](docs/FORMAT.md) | The files, the path rules, signatures, the update algorithm |
 | [Security](SECURITY.md) | What DeltaPatcher protects, what it leaves to you, how to report a problem |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Every error message and what to do |

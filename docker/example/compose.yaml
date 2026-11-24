@@ -1,0 +1,16 @@
+# docker compose up --build: the files on the game-data volume are brought up to date from your release at
+# every start, then the server starts.
+services:
+  game:
+    build: .
+    environment:
+      DP_SOURCE: https://game.example.com/
+      DP_TRUST_KEY: ""          # ed25519:... when your releases are signed
+      DP_REQUIRED: "0"          # 1: do not start when the update fails
+    volumes:
+      - game-data:/data
+    ports:
+      - "27015:27015/udp"
+
+volumes:
+  game-data:

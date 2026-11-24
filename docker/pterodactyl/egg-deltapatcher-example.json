@@ -1,0 +1,62 @@
+{
+    "_comment": "An example egg to adapt: the server's files come from a DeltaPatcher release and are brought up to date on every start, downloading only what changed. Change the docker image, the start command and the done text for your game. Import: admin panel, Nests, Import Egg.",
+    "meta": {
+        "version": "PTDL_v2",
+        "update_url": null
+    },
+    "exported_at": "2026-11-24T00:00:00+00:00",
+    "name": "Game server (files from DeltaPatcher)",
+    "author": "deltapatcher@example.com",
+    "description": "A game server whose files come from a DeltaPatcher release. Every start updates them first: only what changed is downloaded, and files the server made itself (configs, saves) are kept.",
+    "features": null,
+    "docker_images": {
+        "Debian": "ghcr.io/parkervcp/yolks:debian"
+    },
+    "file_denylist": [],
+    "startup": "./deltapatcher-cli --no-log --close update /home/container --source \"${DP_SOURCE}\" ${DP_TRUST_KEY:+--trust-key ${DP_TRUST_KEY}}; ./${SERVER_START}",
+    "config": {
+        "files": "{}",
+        "startup": "{\r\n    \"done\": \"Server started\"\r\n}",
+        "logs": "{}",
+        "stop": "^C"
+    },
+    "scripts": {
+        "installation": {
+            "script": "#!/bin/bash\n# Runs once, when the server is installed: the DeltaPatcher command line, then the release's files.\nset -e\napt-get update\napt-get install -y --no-install-recommends ca-certificates curl\ncd /mnt/server\ncurl -fsSL https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-linux-x64.tar.gz | tar -xz\nchmod +x deltapatcher-cli\n./deltapatcher-cli --no-log --close update /mnt/server --source \"${DP_SOURCE}\" ${DP_TRUST_KEY:+--trust-key \"${DP_TRUST_KEY}\"}\necho \"Installed from ${DP_SOURCE}\"",
+            "container": "ghcr.io/pterodactyl/installers:debian",
+            "entrypoint": "bash"
+        }
+    },
+    "variables": [
+        {
+            "name": "Release address",
+            "description": "Where your DeltaPatcher release is: the address players use, for example https://game.example.com/",
+            "env_variable": "DP_SOURCE",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string|max:300",
+            "field_type": "text"
+        },
+        {
+            "name": "Publisher key",
+            "description": "Your publisher key (ed25519:...) when you sign releases: only releases signed with it are installed. Empty: unsigned releases are fine.",
+            "env_variable": "DP_TRUST_KEY",
+            "default_value": "",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "nullable|string|max:120",
+            "field_type": "text"
+        },
+        {
+            "name": "Start command",
+            "description": "The file that starts the server, inside the server folder.",
+            "env_variable": "SERVER_START",
+            "default_value": "start-server.sh",
+            "user_viewable": true,
+            "user_editable": false,
+            "rules": "required|string|max:100",
+            "field_type": "text"
+        }
+    ]
+}

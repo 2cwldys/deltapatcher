@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { ArrowUpCircle, Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
+import { ArrowUpCircle, BookOpen, Bug, RefreshCw, Rocket, SlidersHorizontal, LucideIcon } from 'lucide-react'
 import { Page, useApp } from '../store/app'
 import { REPO_URL } from '@shared/project'
 
@@ -72,10 +72,19 @@ export default function Sidebar(): JSX.Element {
           Every file is checked against its <span className="text-blob">SHA-256</span> before it is used.
         </div>
         <a
-          href={`${REPO_URL}/issues/new`}
+          href={`${REPO_URL}/wiki`}
           target="_blank"
           rel="noreferrer"
           className="mt-3 flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100"
+        >
+          <BookOpen size={14} className="text-delta-light" />
+          Read the wiki
+        </a>
+        <a
+          href={`${REPO_URL}/issues/new`}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2 rounded-lg px-1 py-1.5 text-xs text-ink-300 hover:text-slate-100"
         >
           <Bug size={14} className="text-blob-light" />
           Report an issue

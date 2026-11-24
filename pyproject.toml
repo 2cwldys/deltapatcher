@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "deltapatcher"
-version = "0.1.0"
+version = "0.2.0"
 description = "Delta patching with SHA-256 blobs: publish a folder, serve it anywhere, update clients with only what changed."
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,25 +14,20 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
     "Topic :: Games/Entertainment",
     "Topic :: System :: Software Distribution",
 ]
 
 [project.optional-dependencies]
-# the tray icon
-tray = ["pystray>=0.19", "Pillow>=9"]
-# making SSH keys inside the program (the CLI can use ssh-keygen instead)
-keys = ["cryptography>=41"]
-all = ["pystray>=0.19", "Pillow>=9", "cryptography>=41"]
+# making SSH keys and signing keys, and signing releases (checking signatures needs nothing extra)
+sign = ["cryptography>=41"]
 
 [project.scripts]
-deltapatcher = "deltapatcher.cli:main"
-
-[project.gui-scripts]
-deltapatcher-gui = "deltapatcher.gui.app:run"
+deltapatcher = "deltapatcher.__main__:main"
 
 [tool.setuptools]
-packages = ["deltapatcher", "deltapatcher.gui"]
+packages = ["deltapatcher"]
 
 [tool.setuptools.package-data]
 deltapatcher = ["assets/*.ico", "assets/*.png"]

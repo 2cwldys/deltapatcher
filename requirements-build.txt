@@ -1,2 +1,6 @@
--r requirements.txt
-pyinstaller>=6
+# Exactly what build.ps1 / build.sh and the build workflow install to make the engine (the versions
+# the tests and builds were made with).
+cryptography==50.0.2
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.10
+pillow==13.0.0      # tools/make_icon.py

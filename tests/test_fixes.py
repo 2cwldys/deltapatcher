@@ -8,6 +8,7 @@ import stat
 import subprocess
 import sys
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -383,6 +384,21 @@ class Network(TempCase):
                 s.server_close()
         self.assertNotIn("authorization", seen)
         self.assertIn("user-agent", seen)
+
+    def test_localhost_skips_the_ipv6_wait(self):
+        # the server listens on 127.0.0.1; trying ::1 first cost two seconds a request on Windows
+        write(self.p("src", "a.bin"), os.urandom(100))
+        publish.publish(self.p("src"), self.p("store"), "G", "1")
+        srv, _t = serve.serve_in_background(self.p("store"), "127.0.0.1", 0)
+        try:
+            src = source.Source("http://localhost:%d/" % srv.server_address[1])
+            started = time.time()
+            for _ in range(3):
+                self.assertTrue(src.get_manifest())
+            self.assertLess(time.time() - started, 3.0)
+        finally:
+            srv.shutdown()
+            srv.server_close()
 
     def test_backwards_range_is_refused(self):
         write(self.p("src", "a.bin"), os.urandom(100))

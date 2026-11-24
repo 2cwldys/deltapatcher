@@ -19,6 +19,7 @@ import configparser
 import os
 import re
 import sys
+import time
 
 from .signing import default_key_path as default_signing_key
 from .ssh import config_dir, default_key_path
@@ -103,11 +104,16 @@ def ensure():
     return p
 
 
+CHOICES = {"deploy_mode": ("sftp", "folder")}
+
+
 def _convert(key, raw):
     default = DEFAULTS[key]
     raw = raw.strip()
     if raw == "":
         return default
+    if key in CHOICES:
+        return raw.lower() if raw.lower() in CHOICES[key] else default
     if isinstance(default, bool):
         low = raw.lower()
         if low in ("1", "yes", "true", "on"):
@@ -183,7 +189,20 @@ def save(cfg):
             lines += ["", "[%s]" % sect]
             at = len(lines)
         lines.insert(at, "%s = %s" % (key, values[key]))
-    tmp = p + ".tmp"
+    # a temporary file of its own, so two writers never share one; on Windows the replace can be refused
+    # for a moment while another DeltaPatcher reads the file, so it is tried again
+    tmp = "%s.%d.%d.tmp" % (p, os.getpid(), int(time.time() * 1000000) % 1000000)
     with open(tmp, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(lines) + "\n")
-    os.replace(tmp, p)
+    for attempt in range(50):
+        try:
+            os.replace(tmp, p)
+            return
+        except PermissionError:
+            if attempt == 49:
+                try:
+                    os.remove(tmp)
+                except OSError:
+                    pass
+                raise
+            time.sleep(0.05)

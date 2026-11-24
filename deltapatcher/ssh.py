@@ -27,6 +27,11 @@ from .manifest import HEX64
 
 NOWINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 
+# Windows looks for a program in the current folder before PATH; a planted ssh-add.exe there would get
+# the passphrase relay's token. This makes shutil.which (and the programs this one starts) skip it.
+if os.name == "nt":
+    os.environ.setdefault("NoDefaultCurrentDirectoryInExePath", "1")
+
 HOST_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[0-9A-Fa-f:]+:[0-9A-Fa-f:.]*|[A-Za-z0-9]([A-Za-z0-9.\-_]*[A-Za-z0-9])?)$")
 USER_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._\-$]*$")
 SFTP_UNSAFE = set('"\'\\*?[]\r\n\t')
@@ -188,6 +193,16 @@ def known_keys(target):
 
 def is_trusted(target):
     return bool(known_keys(target))
+
+
+def host_key_state(target, scanned):
+    """'trusted' (it offers a key confirmed before), 'changed' (keys were confirmed for this host, and it
+    offers none of them: reinstalled, or someone in between) or 'unknown' (never confirmed)."""
+    known = set(known_keys(target))
+    if not known:
+        return "unknown"
+    offered = set((t, b) for t, b, _fp in scanned)
+    return "trusted" if known & offered else "changed"
 
 
 def trust(target, keys):
@@ -360,19 +375,17 @@ def agent_help():
     return "No ssh-agent is running: start one (eval \"$(ssh-agent -s)\") or log in with a desktop that runs one."
 
 
-def askpass_command():
-    """(program for SSH_ASKPASS, extra environment) that shows this program's passphrase dialog."""
-    env = {"DELTAPATCHER_ASKPASS": "1"}
+def askpass_program():
+    """The program ssh-add runs as SSH_ASKPASS: this program again (the built one), or from source a
+    small script that runs it with the same Python."""
     if getattr(sys, "frozen", False):
-        return sys.executable, env
+        return sys.executable
     pkg_parent = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     d = config_dir()
     os.makedirs(d, exist_ok=True)
     if os.name == "nt":
-        py = sys.executable
-        pyw = os.path.join(os.path.dirname(py), "pythonw.exe")
         script = os.path.join(d, "askpass.cmd")
-        body = '@echo off\r\nset "PYTHONPATH=%s"\r\n"%s" -m deltapatcher %%*\r\n' % (pkg_parent, pyw if os.path.isfile(pyw) else py)
+        body = '@echo off\r\nset "PYTHONPATH=%s"\r\n"%s" -m deltapatcher %%*\r\n' % (pkg_parent, sys.executable)
     else:
         script = os.path.join(d, "askpass.sh")
         body = '#!/bin/sh\nPYTHONPATH="%s" exec "%s" -m deltapatcher "$@"\n' % (pkg_parent, sys.executable)
@@ -380,28 +393,97 @@ def askpass_command():
         f.write(body)
     if os.name != "nt":
         os.chmod(script, 0o700)
-    return script, env
+    return script
 
 
-def agent_add(path, use_dialog=True, timeout=300):
-    """ssh-add the key. With use_dialog, the passphrase is asked by this program's own dialog through
-    SSH_ASKPASS; otherwise ssh-add asks in the terminal."""
+def agent_add(path, use_dialog=False, timeout=300):
+    """ssh-add the key, asking the passphrase in this terminal."""
     if agent_state() == "none":
         raise SshError(agent_help())
-    if not use_dialog:
-        rc = subprocess.call([tool("ssh-add"), path])
-        if rc != 0:
-            raise SshError("ssh-add failed (%d)" % rc)
-        return
-    prog, extra = askpass_command()
+    rc = subprocess.call([tool("ssh-add"), path])
+    if rc != 0:
+        raise SshError("ssh-add failed (%d)" % rc)
+
+
+def agent_add_with(path, passphrase, timeout=60):
+    """ssh-add the key with a passphrase this program already has (the app asked for it).
+
+    ssh-add takes a passphrase only from a terminal or from its SSH_ASKPASS program, so this program
+    becomes that program for one run: it listens on 127.0.0.1 for a single connection that must show a
+    one-time token, and hands the passphrase to it (askpass_relay below). The passphrase is never on a
+    command line, in the environment or in a file; the listener answers once and closes.
+    """
+    import hmac
+    import secrets
+    import socket
+    import threading
+    if agent_state() == "none":
+        raise SshError(agent_help())
+    token = secrets.token_hex(16)
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    srv.settimeout(timeout)
+    port = srv.getsockname()[1]
+    secret = {"value": passphrase.encode("utf-8")}
+
+    def serve_once():
+        try:
+            conn, _addr = srv.accept()
+            with conn:
+                conn.settimeout(10)
+                got = conn.recv(64).decode("ascii", "replace").strip()
+                if hmac.compare_digest(got, token):
+                    conn.sendall(secret["value"] + b"\n")
+                    secret["handed"] = True
+        except OSError:
+            pass
+        finally:
+            secret["value"] = b""
+            srv.close()
+
+    t = threading.Thread(target=serve_once, daemon=True)
+    t.start()
     env = dict(os.environ)
-    env.update(extra)
-    env["SSH_ASKPASS"] = prog
-    env["SSH_ASKPASS_REQUIRE"] = "force"
+    env.update({"SSH_ASKPASS": askpass_program(), "SSH_ASKPASS_REQUIRE": "force", "DELTAPATCHER_ASKPASS": "relay",
+                "DELTAPATCHER_ASKPASS_PORT": str(port), "DELTAPATCHER_ASKPASS_TOKEN": token})
     env.setdefault("DISPLAY", ":0")
-    r = run([tool("ssh-add"), path], timeout=timeout, env=env)
+    try:
+        r = run([tool("ssh-add"), path], timeout=timeout, env=env)
+    finally:
+        try:
+            srv.close()
+        except OSError:
+            pass
     if r.returncode != 0:
-        raise SshError("ssh-add did not add the key: %s" % (r.stderr or r.stdout).strip())
+        err = (r.stderr or r.stdout or "").strip()
+        # a wrong passphrase makes ssh-add ask again; the relay has closed, so it gives up without a word
+        if "bad passphrase" in err.lower() or "incorrect" in err.lower() or (secret.get("handed") and not err):
+            raise SshError("the passphrase is not the key's")
+        raise SshError("ssh-add did not add the key: %s" % (err or "no reason given"))
+
+
+def askpass_relay():
+    """This program run by ssh-add as SSH_ASKPASS: fetch the passphrase from agent_add_with's listener
+    and print it for ssh-add. Exit code 1 when there is nothing to give."""
+    import socket
+    try:
+        port = int(os.environ.get("DELTAPATCHER_ASKPASS_PORT", "0"))
+        token = os.environ.get("DELTAPATCHER_ASKPASS_TOKEN", "")
+        with socket.create_connection(("127.0.0.1", port), timeout=10) as c:
+            c.sendall(token.encode("ascii") + b"\n")
+            data = b""
+            while not data.endswith(b"\n"):
+                b = c.recv(4096)
+                if not b:
+                    break
+                data += b
+    except (OSError, ValueError):
+        return 1
+    if not data:
+        return 1
+    os.write(1, data)
+    return 0
 
 
 # ---- sftp ------------------------------------------------------------------------------------

@@ -1,11 +1,13 @@
+import atexit
 import hashlib
 import os
 import shutil
 import tempfile
 import unittest
 
-# the tests never touch the real settings or the real log: both go to a folder of their own
+# the tests never touch the real settings or the real log: both go to a folder of their own, removed after
 _SANDBOX = tempfile.mkdtemp(prefix="dp-test-config-")
+atexit.register(lambda: shutil.rmtree(_SANDBOX, ignore_errors=True))
 os.environ["DELTAPATCHER_CONFIG"] = os.path.join(_SANDBOX, "deltapatcher.ini")
 os.environ["DELTAPATCHER_LOG"] = os.path.join(_SANDBOX, "deltapatcher.log")
 os.environ["NO_COLOR"] = "1"

@@ -7,6 +7,7 @@ file:///C:/store/      or a plain folder path: the same layout on disk
 import http.client
 import os
 import shutil
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -76,6 +77,31 @@ class _Redirects(urllib.request.HTTPRedirectHandler):
         return new
 
 
+def _connect_loopback(address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None):
+    """Connect to "localhost" on 127.0.0.1 first, then ::1. The system's order is usually ::1 first,
+    `deltapatcher serve` listens on 127.0.0.1, and Windows waits about two seconds before it gives up
+    on a refused address: every request to the default source paid that wait."""
+    last = None
+    for ip in ("127.0.0.1", "::1"):
+        try:
+            return socket.create_connection((ip, address[1]), timeout, source_address)
+        except OSError as e:
+            last = e
+    raise last
+
+
+class _LoopbackFirst(http.client.HTTPConnection):
+    def __init__(self, *args, **kwargs):
+        http.client.HTTPConnection.__init__(self, *args, **kwargs)
+        if (self.host or "").lower() == "localhost":
+            self._create_connection = _connect_loopback
+
+
+class _HTTPHandler(urllib.request.HTTPHandler):
+    def http_open(self, req):
+        return self.do_open(_LoopbackFirst, req)
+
+
 class Source(object):
     def __init__(self, url, headers=None, timeout=30, tries=4):
         self.base = normalise(url)
@@ -84,7 +110,7 @@ class Source(object):
         self.headers.update(headers or {})
         self.timeout = timeout
         self.tries = tries
-        self.opener = urllib.request.build_opener(_Redirects())
+        self.opener = urllib.request.build_opener(_Redirects(), _HTTPHandler())
 
     def __str__(self):
         return self.base

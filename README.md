@@ -70,8 +70,6 @@ changed.
 
 **Settings**: every setting of the project and of DeltaPatcher, explained, with the log one click away.
 
-A picture of every page is in [the window guide](docs/README.md#the-window).
-
 ## How it works
 
 ```mermaid

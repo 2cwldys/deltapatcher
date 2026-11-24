@@ -304,9 +304,11 @@ class DeployResult(object):
                    "would remove" if self.dry_run else "removed", self.removed))
 
 
-def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, blob_dir=None):
+def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, blob_dir=None, cancel=None):
     """Send the store's release to `target` (FolderTarget or SftpTarget). Returns a DeployResult. `blob_dir`:
-    where the blobs are, when not in the store's own blobs folder (a backup's pool)."""
+    where the blobs are, when not in the store's own blobs folder (a backup's pool). `cancel`: an optional
+    threading.Event; set, the deploy stops before the new manifest goes up, so players keep the release the
+    target served before."""
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
     store = os.path.abspath(store)
@@ -362,6 +364,11 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
         log("dry run: nothing was sent or removed")
         return res
 
+    def stop_here(what):
+        if cancel is not None and cancel.is_set():
+            raise DeployError("stopped %s: players still get the release the target served before" % what)
+
+    stop_here("before anything was sent")
     done = [0]
 
     def tick(sha):
@@ -400,6 +407,7 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
     if old_raw == new_raw:
         log("the target already serves this manifest")
     else:
+        stop_here("before the new manifest went up (its files are there: sending it again finishes it)")
         # the same files under a new date or name: the target's previous release stays the previous one
         rotate = old_raw if (old is not None and old.files != new.files) else None
         res.atomic = target.put_manifests(new_raw, rotate)

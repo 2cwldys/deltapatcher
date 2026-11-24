@@ -459,9 +459,10 @@ def find(project, cfg, name):
                       "no-such-backup")
 
 
-def restore(project, cfg, name, target, dry_run=False, log=None, progress=None):
+def restore(project, cfg, name, target, dry_run=False, log=None, progress=None, cancel=None):
     """Put the backup `name` back at `target`, as a release goes: the blobs it lacks first, the manifest last.
-    Nothing at the destination is removed. Returns the deploy.DeployResult."""
+    Nothing at the destination is removed. `cancel` (a threading.Event) stops it before the manifest goes up.
+    Returns the deploy.DeployResult."""
     b = find(project, cfg, name)
     folder = folder_of(project, cfg)
     pool = _pool(folder)
@@ -471,7 +472,8 @@ def restore(project, cfg, name, target, dry_run=False, log=None, progress=None):
             raise BackupError("the backup %s lacks %d of its blobs in %s: it cannot be put back" % (name, len(short), pool),
                               "incomplete")
         try:
-            return deploy.deploy(b.path, target, prune=False, dry_run=dry_run, progress=progress, log=log, blob_dir=pool)
+            return deploy.deploy(b.path, target, prune=False, dry_run=dry_run, progress=progress, log=log, blob_dir=pool,
+                                 cancel=cancel)
         except deploy.DeployError as e:
             raise BackupError(str(e), "send-failed")
 

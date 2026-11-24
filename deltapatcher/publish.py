@@ -218,10 +218,12 @@ def _write_sig(store, data, signer, log):
 
 
 def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None,
-            signer=None, htaccess=True, leave_out=None):
+            signer=None, htaccess=True, leave_out=None, cancel=None):
     """Publish the folder `src` into `store`. Returns a PublishResult.
 
-    progress(done, total, label) and log(text) are optional callbacks. `signer` is a signing key
+    progress(done, total, label) and log(text) are optional callbacks. `cancel`: an optional threading.Event;
+    set, the publish stops before the new manifest is put in place, so the store serves what it did before.
+    `signer` is a signing key
     (signing.load_key) to sign the manifest with; `htaccess` writes the store's .htaccess for Apache.
     `protect` and `leave_out` are rules (manifest.rule_matches): files players keep once they have
     them, and files the release leaves out (with DEFAULT_IGNORE and the folder's .deltaignore).
@@ -289,6 +291,8 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
         if signer is not None:
             _write_sig(store, data, signer, log)
     else:
+        if cancel is not None and cancel.is_set():
+            raise PublishError("stopped before the new manifest was put in place: the store serves what it did before")
         data = man.to_json()
         if signer is not None:
             _write_sig(store, data, signer, log)     # the signature is there before the manifest it signs

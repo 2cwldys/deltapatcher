@@ -18,7 +18,8 @@ these follow each one:
 
 In --json mode standard input carries what a person would type: with --passphrase-stdin the first
 line is the passphrase (never put on a command line or in the environment), and a later line
-"cancel" stops a download, leaving the folder as it was.
+"cancel" stops the run at its next safe point: an update before it changes the folder, a publish,
+deploy or restore before its new manifest goes up.
 """
 
 import argparse
@@ -431,7 +432,7 @@ def cmd_publish(a, cfg):
     version = a.version if a.version is not None else cfg["version"]
     res = publish.publish(src, store, name, version, rules["protect"], prune=not a.no_prune,
                           progress=OUT.progress, log=say, signer=signer, htaccess=not a.no_htaccess,
-                          leave_out=rules["leave out"])
+                          leave_out=rules["leave out"], cancel=USER_CANCEL)
     OUT.end()
     if signer is None:
         say("Not signed. Players can check who made a release when you publish with --sign.", "warn")
@@ -734,7 +735,8 @@ def cmd_deploy(a, cfg):
         key_ready(t)
         confirm_host(t)
         tgt = deploy.SftpTarget(t)
-    res = deploy.deploy(store, tgt, prune=not a.no_prune, dry_run=a.dry_run, progress=OUT.progress, log=say)
+    res = deploy.deploy(store, tgt, prune=not a.no_prune, dry_run=a.dry_run, progress=OUT.progress, log=say,
+                        cancel=USER_CANCEL)
     OUT.end()
     return {"named": res.named, "had": res.had, "sent": res.sent, "sent_bytes": res.sent_bytes,
             "removed": res.removed, "atomic": res.atomic, "dry_run": res.dry_run, "summary": res.summary()}
@@ -828,7 +830,8 @@ def cmd_backup(a, cfg):
             say("Players there get it from then on, instead of %s. Nothing there is removed." % _release_words(live))
             if not ask_sure("Restore it"):
                 raise CliError("nothing was restored", "cancelled")
-        res = backup.restore(proj, cfg, a.name, target, dry_run=a.dry_run, log=say, progress=OUT.progress)
+        res = backup.restore(proj, cfg, a.name, target, dry_run=a.dry_run, log=say, progress=OUT.progress,
+                             cancel=USER_CANCEL)
         OUT.end()
         return {"name": a.name, "destination": str(target), "sent": res.sent, "sent_bytes": res.sent_bytes,
                 "dry_run": res.dry_run, "summary": res.summary()}

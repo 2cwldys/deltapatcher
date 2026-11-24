@@ -406,7 +406,8 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
 
     With check_only, nothing in the folder changes (an interrupted update is reported, not undone).
     progress(done, total, label) and log(text) are optional callbacks; `cancel` is an optional
-    threading.Event that stops the download (nothing in the folder has changed then). `trust_key`
+    threading.Event that stops the update before anything in the folder changes: during the download, or
+    once every blob is here and before the first file is put in place. `trust_key`
     ("ed25519:...") is the publisher key the release must be signed with (see signing.py).
     """
     log = log or (lambda s: None)
@@ -494,6 +495,9 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
                 cancel.set()       # the queued ones stop at once
                 raise
         log("downloaded and checked %d blobs (%s)" % (len(need), human(total)))
+        # a stop asked for now still finds the folder as it was
+        if cancel.is_set():
+            raise SourceError("stopped")
 
         # 2. apply, journalled into rollback.new: the replaced and removed files are kept there.
         #    The last completed update's rollback/ stays until this one completes.

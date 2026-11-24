@@ -347,8 +347,10 @@ With `--json` every command writes one JSON object a line, which is how the app 
 ```
 
 The last line is `result` or `error`. Standard input carries what a person would type: with
-`--passphrase-stdin` the first line is the passphrase; a later line `cancel` stops a download (the
-folder stays as it was); closing standard input stops `serve`.
+`--passphrase-stdin` the first line is the passphrase; a later line `cancel` stops the run at its next
+safe point: an update during its download or before it moves its first file (the folder stays as it
+was), a publish, release, deploy or backup restore before its new manifest goes up (players keep the
+release before); closing standard input stops `serve`.
 
 `update --all` and `check --all` add `queue`, `project-start` and `project-end` events, and every line
 about one project carries its name (`project`) and settings file (`file`); the full list is at the top of

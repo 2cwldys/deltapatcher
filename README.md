@@ -33,7 +33,7 @@ identical files are stored once.
 
 <table>
   <tr>
-    <td width="33%" valign="top"><b>Only what changed</b><br>Players download just the files their folder lacks, and a cut download resumes.</td>
+    <td width="33%" valign="top"><b>Only what changed</b><br>Players download just the files their folder lacks, files you deleted are removed (never their own), and a cut download resumes.</td>
     <td width="33%" valign="top"><b>Safe updates</b><br>Every file is checked before it is used. A failed update is undone, and <i>Roll back</i> undoes the last one.</td>
     <td width="33%" valign="top"><b>Signed releases</b><br>Optional Ed25519 signatures: updaters refuse any release your key did not sign.</td>
   </tr>

@@ -9,7 +9,7 @@ import fnmatch
 import os
 import shutil
 
-from . import hashing
+from . import hashing, signing
 from .manifest import (BLOB_DIR, MANIFEST_NAME, PREVIOUS_NAME, Entry, Manifest, ManifestError,
                        check_path)
 
@@ -17,6 +17,51 @@ IGNORE_FILE = ".deltaignore"
 DEFAULT_IGNORE = [".git/", ".svn/", ".hg/", ".deltapatcher/", "__pycache__/", "Thumbs.db",
                   "desktop.ini", ".DS_Store", "*.tmp", IGNORE_FILE]
 HASH_CACHE = ".deltapatcher-hashcache.json"
+HTACCESS = ".htaccess"
+
+# Apache (2.2 and 2.4) for a store: serve the manifests, the blobs and the signatures and nothing else,
+# never list a folder, give blobs (which have no extension) a type, and set the cache headers.
+HTACCESS_TEXT = r"""# Written by DeltaPatcher: Apache serves this store and nothing else from it.
+# The manifests are never cached; blobs and signatures never change, so they are cached for a year.
+
+Options -Indexes
+
+# blobs have no file extension: give them a type, or some servers refuse them
+<FilesMatch "^[0-9a-f]{64}$">
+    ForceType application/octet-stream
+</FilesMatch>
+<FilesMatch "^[0-9a-f]{64}\.sig$">
+    ForceType application/json
+</FilesMatch>
+
+<IfModule mod_headers.c>
+    <FilesMatch "^manifest(\.previous)?\.json$">
+        Header set Cache-Control "no-cache"
+    </FilesMatch>
+    <FilesMatch "^[0-9a-f]{64}(\.sig)?$">
+        Header set Cache-Control "public, max-age=31536000, immutable"
+    </FilesMatch>
+</IfModule>
+
+# everything else is refused: this file, half-uploaded .part files, anything put here by hand
+<FilesMatch "^(?!manifest(\.previous)?\.json$|[0-9a-f]{64}(\.sig)?$)">
+    <IfModule mod_authz_core.c>
+        Require all denied
+    </IfModule>
+    <IfModule !mod_authz_core.c>
+        Order allow,deny
+        Deny from all
+    </IfModule>
+</FilesMatch>
+
+# Optional: answer only DeltaPatcher (it sends "User-Agent: DeltaPatcher/<version>"). This keeps
+# casual browsing out; it is not security, since anyone can send that header. Remove the # to use it.
+#<IfModule mod_rewrite.c>
+#    RewriteEngine On
+#    RewriteCond %{HTTP_USER_AGENT} !^DeltaPatcher/
+#    RewriteRule ^ - [R=404,L]
+#</IfModule>
+"""
 
 
 class PublishError(Exception):
@@ -131,10 +176,40 @@ def load_manifest_file(path):
         return None
 
 
-def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None):
+def write_htaccess(store):
+    """The store's .htaccess for Apache; True when it was written or changed."""
+    p = os.path.join(store, HTACCESS)
+    data = HTACCESS_TEXT.replace("\r\n", "\n").encode("ascii")
+    try:
+        with open(p, "rb") as f:
+            if f.read() == data:
+                return False
+    except OSError:
+        pass
+    with open(p + ".tmp", "wb") as f:
+        f.write(data)
+    os.replace(p + ".tmp", p)
+    return True
+
+
+def _write_sig(store, data, signer, log):
+    """sigs/<sha of data>.sig, written before the manifest it signs is in place."""
+    d = os.path.join(store, signing.SIG_DIR)
+    os.makedirs(d, exist_ok=True)
+    p = os.path.join(d, signing.sig_name(hashing.sha256_bytes(data)))
+    sig = signing.make_sig(signer, data)
+    with open(p + ".tmp", "wb") as f:
+        f.write(sig)
+    os.replace(p + ".tmp", p)
+    log("signed with publisher key %s" % signing.fingerprint(signing.parse_key(signing.public_key_text(signer))))
+
+
+def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None,
+            signer=None, htaccess=True):
     """Publish the folder `src` into `store`. Returns a PublishResult.
 
-    progress(done, total, label) and log(text) are optional callbacks.
+    progress(done, total, label) and log(text) are optional callbacks. `signer` is a signing key
+    (signing.load_key) to sign the manifest with; `htaccess` writes the store's .htaccess for Apache.
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -189,22 +264,35 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     if old is not None and (old.files, old.protect, old.name, old.version) == (man.files, man.protect, man.name, man.version):
         # the same release again: the manifest (and its date) stay, so the previous release is not rotated out
         man = old
+        with open(mpath, "rb") as f:
+            data = f.read()
         log("nothing changed since the last publish: the manifest is kept as it was")
+        if signer is not None:
+            _write_sig(store, data, signer, log)
     else:
+        data = man.to_json()
+        if signer is not None:
+            _write_sig(store, data, signer, log)     # the signature is there before the manifest it signs
         # new manifest written aside first, so a store being served is never without one
         with open(mpath + ".tmp", "wb") as f:
-            f.write(man.to_json())
+            f.write(data)
         if os.path.isfile(mpath):
             prev = os.path.join(store, PREVIOUS_NAME)
             shutil.copyfile(mpath, prev + ".tmp")
             os.replace(prev + ".tmp", prev)
         os.replace(mpath + ".tmp", mpath)
+    if htaccess and write_htaccess(store):
+        log("wrote %s (for Apache: serves only the release, no listings)" % HTACCESS)
 
     if prune:
         keep = set(man.blobs())
-        prev = load_manifest_file(os.path.join(store, PREVIOUS_NAME))
+        sigs_keep = {signing.sig_name(hashing.sha256_bytes(data))}
+        prev_path = os.path.join(store, PREVIOUS_NAME)
+        prev = load_manifest_file(prev_path)
         if prev:
             keep.update(prev.blobs())
+            with open(prev_path, "rb") as f:
+                sigs_keep.add(signing.sig_name(hashing.sha256_bytes(f.read())))
         for fn in os.listdir(blob_dir):
             if fn.endswith(".part") or (len(fn) == 64 and fn not in keep):
                 try:
@@ -212,6 +300,14 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
                     res.pruned += 0 if fn.endswith(".part") else 1
                 except OSError:
                     pass
+        sig_dir = os.path.join(store, signing.SIG_DIR)
+        if os.path.isdir(sig_dir):
+            for fn in os.listdir(sig_dir):
+                if fn not in sigs_keep:
+                    try:
+                        os.remove(os.path.join(sig_dir, fn))
+                    except OSError:
+                        pass
 
     res.files = len(entries)
     res.bytes = man.bytes

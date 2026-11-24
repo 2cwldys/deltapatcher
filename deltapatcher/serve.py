@@ -12,6 +12,7 @@ import socketserver
 import threading
 
 from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PREVIOUS_NAME
+from .signing import SIG_DIR
 
 RANGE_RE = re.compile(r"^bytes=(\d+)-(\d*)$")
 
@@ -35,7 +36,9 @@ def make_handler(root, quiet=True):
                 return os.path.join(root, parts[0])
             if len(parts) == 2 and parts[0] == BLOB_DIR and HEX64.match(parts[1]):
                 return os.path.join(root, BLOB_DIR, parts[1])
-            return None   # nothing else is served: no listings, no other files
+            if len(parts) == 2 and parts[0] == SIG_DIR and parts[1].endswith(".sig") and HEX64.match(parts[1][:-4]):
+                return os.path.join(root, SIG_DIR, parts[1])
+            return None   # nothing else is served: no listings, no other files (not the .htaccess either)
 
         def do_HEAD(self):
             self._send(head=True)
@@ -66,7 +69,7 @@ def make_handler(root, quiet=True):
             self.send_response(status)
             self.send_header("Content-Length", str(end - start + 1))
             self.send_header("Accept-Ranges", "bytes")
-            self.send_header("Content-Type", "application/json" if full.endswith(".json") else "application/octet-stream")
+            self.send_header("Content-Type", "application/json" if full.endswith((".json", ".sig")) else "application/octet-stream")
             self.send_header("Cache-Control", "no-cache" if full.endswith(".json") else "public, max-age=31536000, immutable")
             if status == 206:
                 self.send_header("Content-Range", "bytes %d-%d/%d" % (start, end, size))

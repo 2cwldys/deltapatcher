@@ -7,19 +7,32 @@ reads every 100 ms (Tk must only be touched from its own thread).
 import json
 import os
 import queue
+import sys
 import threading
 import tkinter as tk
 import traceback
 from tkinter import filedialog, messagebox, ttk
 
-from .. import APP_NAME, __version__, client, config, deploy, publish, serve, ssh
+from .. import APP_NAME, __version__, client, config, deploy, logs, publish, serve, signing, ssh
 from ..manifest import ManifestError
 from ..source import DEFAULT_URL, SourceError, insecure_remote
 from . import app_user_model_id, asset, set_window_icon, theme
 from .tray import Tray
 
-ERRORS = (client.UpdateError, deploy.DeployError, publish.PublishError, ssh.SshError, SourceError, ManifestError,
-          OSError)
+ERRORS = (client.UpdateError, deploy.DeployError, publish.PublishError, ssh.SshError, signing.SignError, SourceError,
+          ManifestError, OSError)
+
+
+def open_path(p):
+    """Show a file or folder in the system's own program (Explorer, the text editor)."""
+    try:
+        if os.name == "nt":
+            os.startfile(p)
+        else:
+            import subprocess
+            subprocess.Popen(["xdg-open" if sys.platform != "darwin" else "open", p])
+    except OSError as e:
+        messagebox.showerror(APP_NAME, "Cannot open %s: %s" % (p, e))
 
 
 class App(object):
@@ -36,8 +49,8 @@ class App(object):
         self.vars = {}
         self.icon_ok = set_window_icon(root)
         root.title(APP_NAME)
-        root.geometry("820x660")
-        root.minsize(680, 560)
+        root.geometry("840x740")
+        root.minsize(700, 640)
         theme.apply(root)
 
         head = ttk.Frame(root, padding=(18, 14, 18, 6))
@@ -59,6 +72,8 @@ class App(object):
         ttk.Label(row, textvariable=self.status).pack(side="left")
         self.stop_btn = ttk.Button(row, text="Stop", command=self.stop, state="disabled")
         self.stop_btn.pack(side="right")
+        ttk.Button(row, text="Settings file", command=lambda: open_path(config.ensure())).pack(side="right", padx=(0, 8))
+        ttk.Button(row, text="Log folder", command=self.open_log_folder).pack(side="right", padx=(0, 8))
         self.bar = ttk.Progressbar(bottom, mode="determinate", maximum=1000)
         self.bar.pack(fill="x", pady=(6, 8))
         logf = ttk.Frame(bottom)
@@ -128,11 +143,14 @@ class App(object):
         p = self.page("  Update  ")
         self.field(p, 0, "Source", "source_url", hint="Where the release is: an http(s) address or a folder. Default " + DEFAULT_URL)
         self.field(p, 2, "Folder", "install_dir", browse="dir", hint="The folder to bring up to date (a game folder, for instance).")
-        self.buttons(p, 4, [("Update", self.do_update, True), ("Check", self.do_check, False),
+        self.field(p, 4, "Publisher key", "trust_key",
+                   hint="Optional: the key the publisher gave you (ed25519:...). Empty: the first signed release's key "
+                        "is trusted, and only that key after it.")
+        self.buttons(p, 6, [("Update", self.do_update, True), ("Check", self.do_check, False),
                             ("Roll back", self.do_rollback, False)])
         self.update_summary = tk.StringVar(value="")
         ttk.Label(p, textvariable=self.update_summary, style="Muted.TLabel", wraplength=640).grid(
-            row=5, column=0, columnspan=3, sticky="w", pady=(12, 0))
+            row=7, column=0, columnspan=3, sticky="w", pady=(12, 0))
 
     def _publish_tab(self):
         p = self.page("  Publish  ")
@@ -141,13 +159,22 @@ class App(object):
         self.field(p, 4, "Name", "name", width=30)
         self.field(p, 5, "Version", "version", width=16)
         self.field(p, 6, "Protect", "protect", hint="Optional, comma-separated: files clients keep once they have them, e.g. config/*.cfg")
-        f = self.buttons(p, 8, [("Publish", self.do_publish, True)])
+        self.field(p, 8, "Signing key", "signing_key", browse="file")
+        sf = ttk.Frame(p, style="Panel.TFrame")
+        sf.grid(row=9, column=1, columnspan=2, sticky="w")
+        ttk.Checkbutton(sf, text="Sign the release", variable=self.var("sign", tk.BooleanVar)).pack(side="left", padx=(0, 12))
+        for text, cmd in (("New signing key...", self.new_signing_key), ("Copy public key", self.copy_public_key)):
+            b = ttk.Button(sf, text=text, command=cmd)
+            b.pack(side="left", padx=(0, 6), pady=(2, 2))
+            self.action_buttons.append(b)
+        ttk.Checkbutton(sf, text=".htaccess for Apache", variable=self.var("htaccess", tk.BooleanVar)).pack(side="left", padx=(6, 0))
+        f = self.buttons(p, 10, [("Publish", self.do_publish, True)])
         self.serve_btn = ttk.Button(f, text="Serve locally", command=self.toggle_serve)
         self.serve_btn.pack(side="left", padx=(0, 8))
         ttk.Label(f, text="port", style="Panel.TLabel").pack(side="left", padx=(8, 4))
         ttk.Spinbox(f, from_=1024, to=65535, width=7, textvariable=self.var("serve_port", tk.IntVar)).pack(side="left")
         self.serve_state = tk.StringVar(value="")
-        ttk.Label(p, textvariable=self.serve_state, style="Good.TLabel").grid(row=9, column=0, columnspan=3, sticky="w", pady=(10, 0))
+        ttk.Label(p, textvariable=self.serve_state, style="Good.TLabel").grid(row=11, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
     def _server_tab(self):
         p = self.page("  Server  ")
@@ -261,6 +288,12 @@ class App(object):
         self.log_text.insert("end", text.rstrip() + "\n")
         self.log_text.see("end")
         self.log_text.configure(state="disabled")
+        logs.write(text)
+
+    def open_log_folder(self):
+        p = os.path.dirname(logs.path() or logs.default_path())
+        os.makedirs(p, exist_ok=True)
+        open_path(p)
 
     def save_cfg(self):
         if not self.persist:
@@ -383,15 +416,18 @@ class App(object):
     def do_check(self):
         a = self._update_args()
         if a:
-            self.start("Check", lambda log, prog: client.update(a[0], a[1], check_only=True, log=log, progress=prog),
+            key = self.var("trust_key").get().strip() or None
+            self.start("Check", lambda log, prog: client.update(a[0], a[1], check_only=True, log=log, progress=prog,
+                                                                trust_key=key),
                        done=lambda plan: self.update_summary.set("Up to date." if plan.empty() else plan.summary()))
 
     def do_update(self):
         a = self._update_args()
         if a:
             w = int(self.cfg.get("workers", 4) or 4)
+            key = self.var("trust_key").get().strip() or None
             self.start("Update", lambda log, prog: client.update(a[0], a[1], workers=w, log=log, progress=prog,
-                                                                 cancel=self.cancel),
+                                                                 cancel=self.cancel, trust_key=key),
                        cancellable=True, done=self._updated)
 
     def _updated(self, plan):
@@ -413,7 +449,83 @@ class App(object):
             return
         prot = [x.strip() for x in self.var("protect").get().split(",") if x.strip()]
         name, ver = self.var("name").get().strip(), self.var("version").get().strip()
-        self.start("Publish", lambda log, prog: publish.publish(src, store, name, ver, prot, progress=prog, log=log))
+        signer = None
+        if self.var("sign", tk.BooleanVar).get():
+            signer = self.load_signer()
+            if signer is None:
+                return
+        ht = bool(self.var("htaccess", tk.BooleanVar).get())
+        self.start("Publish", lambda log, prog: publish.publish(src, store, name, ver, prot, progress=prog, log=log,
+                                                                signer=signer, htaccess=ht))
+
+    # ---- signing ---------------------------------------------------------------------------------
+
+    def load_signer(self):
+        """The signing key, asking its passphrase in a dialog when it has one; None if cancelled or failed."""
+        path = self.var("signing_key").get().strip()
+        if not signing.can_sign():
+            messagebox.showerror(APP_NAME, "Signing needs the 'cryptography' package.")
+            return None
+        if not path or not os.path.isfile(path):
+            messagebox.showinfo(APP_NAME, "There is no signing key at\n%s\n\nMake one with New signing key..." % path)
+            return None
+        passphrase = None
+        if signing.needs_passphrase(path):
+            passphrase = ask_secret(self.root, "Signing key", "Passphrase of the signing key\n%s" % path)
+            if passphrase is None:
+                return None
+        try:
+            return signing.load_key(path, passphrase)
+        except signing.SignError as e:
+            messagebox.showerror(APP_NAME, str(e))
+            return None
+        finally:
+            passphrase = None
+
+    def new_signing_key(self):
+        if not signing.can_sign():
+            messagebox.showerror(APP_NAME, "Making a signing key needs the 'cryptography' package.")
+            return
+        path = self.var("signing_key").get().strip() or signing.default_key_path()
+        if os.path.exists(path):
+            messagebox.showinfo(APP_NAME, "A signing key already exists at\n%s\n\nAn existing key is never replaced. "
+                                          "Choose another file name in the Signing key field first." % path)
+            return
+        p1 = ask_secret(self.root, "New signing key", "A passphrase for the new signing key (at least 10 characters).\n"
+                                                      "It protects the key if the file is ever copied; it is not saved.")
+        if p1 is None:
+            return
+        if len(p1) < 10:
+            messagebox.showerror(APP_NAME, "Use at least 10 characters (a few words work well).")
+            return
+        if ask_secret(self.root, "New signing key", "The same passphrase again") != p1:
+            messagebox.showerror(APP_NAME, "The two passphrases differ.")
+            return
+        try:
+            pub = signing.generate_key(path, p1)
+        except (signing.SignError, OSError) as e:
+            messagebox.showerror(APP_NAME, str(e))
+            return
+        finally:
+            p1 = None
+        self.var("signing_key").set(path)
+        self.var("sign", tk.BooleanVar).set(True)
+        self.save_cfg()
+        self.root.clipboard_clear()
+        self.root.clipboard_append(pub)
+        self.log("made the signing key %s. Its public key (on the clipboard), to give to players:\n  %s" % (path, pub))
+        messagebox.showinfo(APP_NAME, "Signing key made, and Sign the release is on.\n\nIts public key is on the "
+                                      "clipboard. Give it to players (or put it in your launcher) so their updater "
+                                      "checks your releases are yours.")
+
+    def copy_public_key(self):
+        key = self.load_signer()
+        if key is None:
+            return
+        pub = signing.public_key_text(key)
+        self.root.clipboard_clear()
+        self.root.clipboard_append(pub)
+        self.log("the publisher key (on the clipboard): %s" % pub)
 
     def toggle_serve(self):
         if self.server:
@@ -681,11 +793,51 @@ class KeyDialog(object):
                                       "Check host key, and Test connection.")
 
 
+def ask_secret(parent, title, prompt):
+    """A passphrase typed into a small dialog; None when cancelled. Nothing keeps it."""
+    w = tk.Toplevel(parent)
+    w.title(title)
+    w.configure(background=theme.PANEL)
+    w.transient(parent)
+    w.resizable(False, False)
+    result = {"value": None}
+    f = ttk.Frame(w, style="Panel.TFrame", padding=18)
+    f.pack(fill="both", expand=True)
+    ttk.Label(f, text=prompt, style="Panel.TLabel", wraplength=420).pack(anchor="w")
+    var = tk.StringVar()
+    ent = ttk.Entry(f, textvariable=var, show="*", width=44)
+    ent.pack(fill="x", pady=(10, 0))
+    row = ttk.Frame(f, style="Panel.TFrame")
+    row.pack(fill="x", pady=(14, 0))
+
+    def ok(_e=None):
+        result["value"] = var.get()
+        var.set("")
+        w.destroy()
+
+    def cancel(_e=None):
+        var.set("")
+        w.destroy()
+
+    ttk.Button(row, text="Cancel", command=cancel).pack(side="right")
+    ttk.Button(row, text="OK", style="Accent.TButton", command=ok).pack(side="right", padx=(0, 8))
+    w.bind("<Return>", ok)
+    w.bind("<Escape>", cancel)
+    w.protocol("WM_DELETE_WINDOW", cancel)
+    ent.focus_set()
+    w.grab_set()
+    parent.wait_window(w)
+    return result["value"]
+
+
 def run():
     app_user_model_id()
+    logs.setup()
+    logs.write("== DeltaPatcher %s, the window (settings: %s)" % (__version__, config.ensure()))
     root = tk.Tk()
     App(root, config.load())
     root.mainloop()
+    logs.close()
     return 0
 
 

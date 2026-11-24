@@ -16,9 +16,18 @@ import os
 import shutil
 import tempfile
 
-from . import ssh
+import re
+
+from . import hashing, ssh
 from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PREVIOUS_NAME, Manifest, ManifestError
-from .publish import human
+from .publish import HTACCESS, human
+from .signing import SIG_DIR, sig_name
+
+SIG_RE = re.compile(r"^[0-9a-f]{64}\.sig$")
+
+
+def _sig_name(n):
+    return bool(SIG_RE.match(n))
 
 
 class DeployError(Exception):
@@ -81,6 +90,26 @@ class FolderTarget(object):
             if _blob_name(n):
                 try:
                     os.remove(os.path.join(self.root, BLOB_DIR, n))
+                except OSError:
+                    pass
+
+    def list_sigs(self):
+        d = os.path.join(self.root, SIG_DIR)
+        return sorted(fn for fn in os.listdir(d) if _sig_name(fn)) if os.path.isdir(d) else []
+
+    def put_extra(self, rel, data):
+        """A small file beside the release (.htaccess, sigs/<sha>.sig), replaced in one step."""
+        p = os.path.join(self.root, *rel.split("/"))
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p + ".new", "wb") as f:
+            f.write(data)
+        os.replace(p + ".new", p)
+
+    def remove_sigs(self, names):
+        for n in names:
+            if _sig_name(n):
+                try:
+                    os.remove(os.path.join(self.root, SIG_DIR, n))
                 except OSError:
                     pass
 
@@ -196,6 +225,35 @@ class SftpTarget(object):
             cmds = ["-rm %s" % ssh.q("%s/%s/%s" % (self.root, BLOB_DIR, n)) for n in names[i:i + 200]]
             ssh.sftp(self.t, cmds)
 
+    def list_sigs(self):
+        d = self.root + "/" + SIG_DIR
+        r = self._run(["-mkdir %s" % ssh.q(self.root), "-mkdir %s" % ssh.q(d), "ls -ln %s" % ssh.q(d)],
+                      what="listing %s" % d)
+        return sorted(n for n in ssh.parse_ls(r.stdout, blobs_only=False) if _sig_name(n))
+
+    def put_extra(self, rel, data):
+        """A small file beside the release (.htaccess, sigs/<sha>.sig): uploaded beside, then renamed in."""
+        name = rel.rsplit("/", 1)[-1]
+        if not (name == ".htaccess" or _sig_name(name)):
+            raise DeployError("not a file deploy sends: %r" % rel)
+        d = tempfile.mkdtemp(prefix="dp-extra-")
+        try:
+            with open(os.path.join(d, "upload.tmp"), "wb") as f:
+                f.write(data)
+            remote = self.root + "/" + rel
+            pre = ["-mkdir %s" % ssh.q(self.root + "/" + SIG_DIR)] if rel.startswith(SIG_DIR + "/") else []
+            self._run(pre + ["put %s %s" % (ssh.q("upload.tmp"), ssh.q(remote + ".new"))], cwd=d, what="uploading %s" % rel)
+            if ssh.sftp(self.t, ["rename %s %s" % (ssh.q(remote + ".new"), ssh.q(remote))]).returncode != 0:
+                self._run(["-rm %s" % ssh.q(remote), "rename %s %s" % (ssh.q(remote + ".new"), ssh.q(remote))],
+                          what="putting %s in place" % rel)
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    def remove_sigs(self, names):
+        names = [n for n in names if _sig_name(n)]
+        if names:
+            ssh.sftp(self.t, ["-rm %s" % ssh.q("%s/%s/%s" % (self.root, SIG_DIR, n)) for n in names])
+
 
 class DeployResult(object):
     def __init__(self):
@@ -288,6 +346,24 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None):
     if bad:
         raise DeployError("%d blobs are still missing or the wrong size on the target after the upload (%s...): "
                           "the manifest was NOT changed" % (len(bad), bad[0][:12]))
+
+    # the release's signature goes up before the manifest it signs, and so does the .htaccess
+    new_sig = sig_name(hashing.sha256_bytes(new_raw))
+    sig_local = os.path.join(store, SIG_DIR, new_sig)
+    if os.path.isfile(sig_local):
+        with open(sig_local, "rb") as f:
+            sig_data = f.read()
+        if target.get_file(SIG_DIR + "/" + new_sig) != sig_data:
+            target.put_extra(SIG_DIR + "/" + new_sig, sig_data)
+            log("signature in place")
+    ht_local = os.path.join(store, HTACCESS)
+    if os.path.isfile(ht_local):
+        with open(ht_local, "rb") as f:
+            ht = f.read()
+        if target.get_file(HTACCESS) != ht:
+            target.put_extra(HTACCESS, ht)
+            log("%s in place" % HTACCESS)
+
     if old_raw == new_raw:
         log("the target already serves this manifest")
     else:
@@ -298,5 +374,10 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None):
     if prune_ok and stale:
         target.remove(stale)
         log("removed %d blobs no release names" % len(stale))
+    if prune_ok:
+        sigs_keep = {sig_name(hashing.sha256_bytes(r)) for r in (new_raw, old_raw, prev_raw) if r is not None}
+        old_sigs = [n for n in target.list_sigs() if n not in sigs_keep]
+        if old_sigs:
+            target.remove_sigs(old_sigs)
     log("deployed: " + res.summary())
     return res

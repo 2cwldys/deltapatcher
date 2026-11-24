@@ -30,7 +30,7 @@ import sys
 import threading
 import time
 
-from . import hashing
+from . import hashing, logs, signing
 from .manifest import Manifest, ManifestError
 from .publish import human
 from .source import Source, SourceError
@@ -137,6 +137,7 @@ class State(object):
         self.source = ""
         self.manifest_sha = ""
         self.version = ""
+        self.publisher_key = ""      # "ed25519:..." once a signed release was accepted: later ones must match
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 doc = json.load(f)
@@ -144,11 +145,13 @@ class State(object):
             self.source = doc.get("source", "")
             self.manifest_sha = doc.get("manifest_sha", "")
             self.version = doc.get("version", "")
+            self.publisher_key = doc.get("publisher_key", "") or ""
         except (OSError, ValueError, AttributeError):
             pass
 
     def doc(self):
-        return {"source": self.source, "manifest_sha": self.manifest_sha, "version": self.version, "files": self.files}
+        return {"source": self.source, "manifest_sha": self.manifest_sha, "version": self.version,
+                "publisher_key": self.publisher_key, "files": self.files}
 
     def save(self):
         os.makedirs(self.dir, exist_ok=True)
@@ -337,7 +340,9 @@ def rollback(install, log=None):
     state_dir = os.path.join(install, STATE_DIR)
     with Lock(state_dir):
         _recover(install, state_dir, log)
-        return _undo(install, state_dir, ROLLBACK, log)
+        n = _undo(install, state_dir, ROLLBACK, log)
+        logs.folder_record(state_dir, ["rolled back the last update (%d changes)" % n])
+        return n
 
 
 def _prune_empty_dirs(install, paths):
@@ -357,13 +362,52 @@ def _prune_empty_dirs(install, paths):
             p = os.path.dirname(p)
 
 
+def check_signature(src, raw, state, trust_key, check_only, log):
+    """Who signed this manifest, and is that the publisher this folder trusts? Returns the key text
+    or None (unsigned). The trusted key is `trust_key` when given, else the one pinned in state.json
+    by the first signed release; with neither, the first signed release's key is pinned now.
+    trust_key "off" skips the check (signing is the publisher's choice; checking is the player's)."""
+    if (trust_key or "").strip().lower() == "off":
+        log("signature checks are off (trust_key = off)")
+        return None
+    try:
+        trusted = signing.parse_key(trust_key) if trust_key else (
+            signing.parse_key(state.publisher_key) if state.publisher_key else None)
+    except signing.SignError as e:
+        raise UpdateError(str(e))
+    sig = src.get_signature(hashing.sha256_bytes(raw))
+    if sig is None:
+        if trusted is not None:
+            raise UpdateError("the release is not signed, but this folder trusts publisher key %s: refused"
+                              % signing.fingerprint(trusted))
+        log("the release is not signed")
+        return None
+    try:
+        key = signing.check_sig(sig, raw)
+    except signing.SignError as e:
+        raise UpdateError("the release's signature is refused: %s" % e)
+    if trusted is not None and key != trusted:
+        raise UpdateError("the release is signed by %s, but this folder trusts %s: refused. If the publisher really "
+                          "changed keys, update once with --trust-key and their new key."
+                          % (signing.fingerprint(key), signing.fingerprint(trusted)))
+    text = signing.key_text(key)
+    log("signed by publisher key %s" % signing.fingerprint(key))
+    if not check_only and state.publisher_key != text:
+        if trusted is None:
+            log("trusting this publisher key from now on (the first signed release seen here)")
+        state.publisher_key = text
+        state.save()
+    return text
+
+
 def update(url, install, check_only=False, workers=4, headers=None, progress=None, log=None, cancel=None,
-           keep_cache=False):
+           keep_cache=False, trust_key=None):
     """Bring `install` up to the release at `url`. Returns the Plan.
 
     With check_only, nothing in the folder changes (an interrupted update is reported, not undone).
     progress(done, total, label) and log(text) are optional callbacks; `cancel` is an optional
-    threading.Event that stops the download (nothing in the folder has changed then).
+    threading.Event that stops the download (nothing in the folder has changed then). `trust_key`
+    ("ed25519:...") is the publisher key the release must be signed with (see signing.py).
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -389,6 +433,7 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         log("release: %s %s (published %s), %d files, %s" % (man.name or "(unnamed)", man.version, man.published,
                                                             len(man.files), human(man.bytes)))
         state = State(install)
+        signer = check_signature(src, raw, state, trust_key, check_only, log)
         cache = hashing.HashCache(os.path.join(state_dir, "hashes.json"))
         plan = make_plan(man, install, state, cache)
         cache.save()
@@ -496,10 +541,12 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
                         installed.add(path)
                 _record(state, src, man, raw, install, cache, installed)
                 _journal_write(jf, {"done": True})
-            except BaseException:
+            except BaseException as e:
                 jf.close()
                 log("the update failed while installing: undoing it")
                 _undo(install, state_dir, ROLLBACK_NEW, log)
+                logs.folder_record(state_dir, ["update to %s %s from %s FAILED and was undone: %s"
+                                               % (man.name, man.version, src, e)])
                 raise
         # complete: this update's journal becomes the one `rollback` undoes
         _rmtree(_rb(state_dir)[0])
@@ -512,7 +559,15 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
                 except OSError:
                     pass
         progress(len(ops), len(ops), "done")
-        log("updated to %s" % (" ".join(x for x in (man.name, man.version) if x) or "the new release"))
+        title = " ".join(x for x in (man.name, man.version) if x) or "the new release"
+        record = ["updated to %s from %s (%s): %s" % (title, src, ("signed by " + signing.fingerprint(signing.parse_key(signer)))
+                                                       if signer else "not signed", plan.summary())]
+        record += ["  added    %s" % e.path for e in plan.add if e.path in installed]
+        record += ["  replaced %s" % e.path for e in plan.replace if e.path in installed]
+        record += ["  removed  %s" % r[0] for r in plan.remove]
+        record += ["  kept     %s (edited here)" % p for p in plan.kept_changed + plan.protected]
+        logs.folder_record(state_dir, record)
+        log("updated to %s" % title)
         return plan
 
 

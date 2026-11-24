@@ -14,6 +14,7 @@ import urllib.request
 
 from . import USER_AGENT
 from .manifest import BLOB_DIR, MANIFEST_NAME, check_sha
+from .signing import SIG_DIR
 
 DEFAULT_URL = "http://localhost:8000/"
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1", "[::1]")
@@ -116,6 +117,35 @@ class Source(object):
                 last = e
             time.sleep(min(8, 1 << attempt))
         raise SourceError("cannot reach %s: %s" % (self.base, getattr(last, "reason", last)))
+
+    def get_signature(self, manifest_sha):
+        """The bytes of sigs/<manifest sha256>.sig, or None when the release has no signature."""
+        check_sha(manifest_sha)
+        name = manifest_sha + ".sig"
+        if not self.http:
+            path = os.path.join(self.base, SIG_DIR, name)
+            if not os.path.isfile(path):
+                return None
+            try:
+                with open(path, "rb") as f:
+                    return f.read(1 << 16)
+            except OSError as e:
+                raise SourceError("cannot read %s: %s" % (path, e))
+        last = None
+        for attempt in range(self.tries):
+            try:
+                with self._open(SIG_DIR + "/" + name) as r:
+                    return r.read(1 << 16)
+            except urllib.error.HTTPError as e:
+                if e.code in (404, 410):
+                    return None
+                if e.code in (401, 403):
+                    raise SourceError("%s%s/%s answered %d %s" % (self.base, SIG_DIR, name, e.code, e.reason))
+                last = e
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+                last = e
+            time.sleep(min(8, 1 << attempt))
+        raise SourceError("cannot read the release's signature from %s: %s" % (self.base, getattr(last, "reason", last)))
 
     def fetch_blob(self, sha, dest, size, progress=None, cancel=None):
         """Put blob `sha` at `dest`, resuming from dest + '.part'. The caller checks the hash."""

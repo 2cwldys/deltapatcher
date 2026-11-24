@@ -4,6 +4,12 @@ import shutil
 import tempfile
 import unittest
 
+# the tests never touch the real settings or the real log: both go to a folder of their own
+_SANDBOX = tempfile.mkdtemp(prefix="dp-test-config-")
+os.environ["DELTAPATCHER_CONFIG"] = os.path.join(_SANDBOX, "deltapatcher.ini")
+os.environ["DELTAPATCHER_LOG"] = os.path.join(_SANDBOX, "deltapatcher.log")
+os.environ["NO_COLOR"] = "1"
+
 
 def write(path, data):
     os.makedirs(os.path.dirname(path), exist_ok=True)

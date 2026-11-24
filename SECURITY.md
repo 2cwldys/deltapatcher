@@ -30,6 +30,9 @@ Only the latest release gets security fixes.
 | **What a web server shows** | The built-in server answers only `manifest.json`, `manifest.previous.json`, `blobs/<sha256>` and `sigs/<sha256>.sig`: no listings, no other files. Published stores get a `.htaccess` that makes Apache do the same. |
 | **Access tokens** | A header given with `--header` (an `Authorization` token, say) is sent only to the host it was given for, never after a redirect to another host. A redirect from `https` to `http` is refused. Header values never reach the log. |
 | **Settings and logs** | Settings (`deltapatcher.ini`) hold addresses, folder paths, public keys and the *paths* of key files, never a key or a passphrase. Logs hold what was shown on screen, with header values hidden. |
+| **Players, in a publisher's statistics** | Statistics keep counts only. A web server's access log is read where it is or from a temporary copy that is deleted as soon as it is read; players are told apart in memory, by a salted hash of their address that exists only while the log is read; no address, user agent or log line is stored, logged or sent anywhere. An updater tells the server only which DeltaPatcher and which release it has, in its User-Agent. |
+| **Backups and restores** | A backup only reads the live release where it is sent, and checks every file against its SHA-256 before keeping it; a damaged file means no backup. A restore asks first, sends its files before its manifest, and removes nothing at the server or folder. |
+| **Force stop** | The app's red **Force stop** ends every job it runs at once and starts none until it is lifted, also after a restart. An update stopped part way is undone the next time that folder is updated; a release stopped before its manifest went up never reaches players. |
 | **The repository** | `.gitignore` refuses key files, `known_hosts`, `.env`, settings files, stores, builds and virtual environments. |
 
 ## What it leaves to you

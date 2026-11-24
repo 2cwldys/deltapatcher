@@ -170,6 +170,66 @@ The signing key and the SSH key are DeltaPatcher's, shared by every project unle
 name others. Players can keep several of your projects up to date at once: see
 [For players](PLAYERS.md#several-games).
 
+## Statistics
+
+The **Statistics** card on the **Release** page, or on the command line:
+
+```
+deltapatcher stats [--days N]
+```
+
+The last 30 days by default (up to 366); `--json` gives the whole document, for your own tools.
+
+- **Releases**: the live release, what it changed from the one before, the store's size, and every release
+  so far. Each release adds a line to `history.jsonl` in the store; it is never sent to your server.
+- **Downloads**, from your web server's access log: update checks, downloads, bytes and players a day, and
+  which release players are on. Set **access_log** (the card, the Settings page, or
+  `deltapatcher config set access_log=/var/log/nginx/access.log`): its path on the server, read over SFTP
+  the way a release is sent, or a path on this computer for a release sent to a folder. It reads the
+  Combined Log Format of nginx and Apache, and Caddy's JSON log. Only requests under **public_url**'s path
+  count.
+
+Only counts are kept. No address, user agent or log line is stored, logged or sent anywhere: players are
+told apart in memory, by a salted hash, while the log is read, and a log copied from the server is deleted
+as soon as it is read. An updater says only which release it has, in its User-Agent
+(`DeltaPatcher/0.3.0 release/1.2`).
+
+The log named is read, not the older rotated ones (`access.log.1`); a compressed log (`.gz`), or one over
+512 MB, is refused.
+
+## Backups
+
+A backup is a copy of your **live release**, what players download now, read from where you send it (your
+server over SFTP, or the folder) and kept on this computer. The **Backups** card on the **Release** page has
+**Back up now**, the list, and **Restore...**. On the command line:
+
+```
+deltapatcher backup                    one backup now
+deltapatcher backup list               the backups: date, release, files, size
+deltapatcher backup restore DATE       put that backup back where players download from (asks first)
+deltapatcher backup prune              apply the limits now
+deltapatcher backup schedule daily     the system makes backups without the app: daily, hourly or off
+```
+
+- **Many backups cost little.** Each file is kept once, however many backups have it, and checked against
+  its SHA-256 as it arrives. A release that has not changed since the last backup makes no new one, and
+  there is one backup a day at most: a second one that day replaces it.
+- **Limits**, on the Settings page under *Backups*: **backup_keep_daily** (7), **backup_keep_weekly** (4),
+  **backup_keep_monthly** (0) and **backup_max_size** (empty: no limit). After each backup the newest of each
+  kept day, week and month stays and the others go; then the oldest go while the folder is over the size.
+  The newest backup always stays.
+- **Where they are**: **backup_dir**, else `backups/<the project's file name>` beside the main settings
+  file.
+- **Restore** is a release of the backup: its files first and its manifest last, and nothing at your
+  server or folder is removed. It asks first; `--dry-run` says what it would send.
+- **By itself**: **backup_every_hours** (0, off, by default) has the app make backups while it runs, window
+  shown or in the tray, never while something else runs. With the app closed, `backup schedule daily` (or
+  `hourly`) has the system run it: Task Scheduler on Windows, your crontab on Linux and macOS; `off` removes
+  only that project's entry. A cron job cannot reach your ssh-agent, so on Linux and macOS a scheduled
+  backup over SFTP stops with *key-locked*: let the app make them instead (**backup_every_hours**).
+
+A release sent only to this computer (*This computer, to test*) has nothing to back up.
+
 ## Versions
 
 *Version* is shown to players and in the log. It does not decide anything: clients always move to

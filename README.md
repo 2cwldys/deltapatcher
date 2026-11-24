@@ -54,6 +54,8 @@ identical files are stored once.
     <td valign="top"><b>Updates while you play</b><br>It checks every hour from the tray, says what is waiting, and can update by itself.</td>
   </tr>
   <tr>
+    <td valign="top"><b>Statistics for publishers</b><br>How many players check and download, and which release they are on, counted from your own web server's log.</td>
+    <td valign="top"><b>Backups</b><br>Dated copies of the live release on your computer, by hand or on a schedule, and one step to put one back.</td>
     <td valign="top"><b>Force stop</b><br>One red button ends every update, check, release and download at once, and nothing starts until you lift it.</td>
   </tr>
 </table>

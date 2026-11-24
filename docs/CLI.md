@@ -185,6 +185,30 @@ last. The first time a server is used, its host key is shown for you to confirm.
 | `--dry-run` | Say what would be sent and removed, change nothing |
 | `--no-prune` | Keep blobs no manifest on the target names any more |
 
+## stats
+
+```
+deltapatcher stats [--days N]
+```
+
+The project's statistics for the last N days (1 to 366, default 30): its releases, from the store, and
+update checks, downloads, bytes, players and the releases they are on, from the web server's access log
+(the `access_log` setting). Only counts, never an address. `--json` gives the whole document
+(`"format": "deltapatcher-stats"`); a part that cannot be made says why under `problems`, and the rest is
+still there. See [Publishing, Statistics](PUBLISHING.md#statistics).
+
+## backup
+
+| Command | |
+| --- | --- |
+| `deltapatcher backup [now]` | Back up the live release, read from the server or folder it is sent to, onto this computer. An unchanged release makes no new backup. |
+| `deltapatcher backup list` | The backups: date, release, files, size |
+| `deltapatcher backup restore DATE [--dry-run] [--yes]` | Put a backup (`YYYY-MM-DD`) back where players download from: its blobs first, its manifest last; nothing there is removed. Asks first. |
+| `deltapatcher backup prune` | Apply the limits now (`backup_keep_daily`, `_weekly`, `_monthly`, `backup_max_size`) |
+| `deltapatcher backup schedule daily\|hourly\|off` | The system runs the backup without the app: Task Scheduler on Windows, the user's crontab elsewhere. `off` removes only this project's entry. |
+
+See [Publishing, Backups](PUBLISHING.md#backups).
+
 ## ssh
 
 | Command | |

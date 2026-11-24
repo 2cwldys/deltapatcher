@@ -50,6 +50,21 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `skipped X (a link or junction)` | Links are never followed. Copy the real files into the release folder. |
 | `nothing changed since the last publish` | Not an error: the manifest stays as it was. |
 
+## Statistics and backups
+
+| Message | What to do |
+| --- | --- |
+| `access_log is not set` | Statistics count downloads from the web server's access log: set **access_log** to its path (on the server, or on this computer for a folder). The releases part works without it. |
+| `public_url is not set` | Set the address players update from (`public_url`): it tells which lines of the log are your project's. |
+| `the access log is compressed` | Name the log the web server writes now (`access.log`), not a rotated `.gz` one. |
+| `the access log ... is ..., more than 512 MB` | Rotate the log more often (daily, say): statistics read only the one file named. |
+| `the server does not let ... read ...` | Give the deploy user read access to the log (for example the `adm` group on Debian and Ubuntu). |
+| `the SSH key ... is locked` | Unlock it (**Unlock key**, or `deltapatcher ssh unlock`). A scheduled backup on Linux or macOS runs from cron, which cannot reach your ssh-agent: let the app make backups instead (`backup_every_hours`). |
+| `a release served from this computer ... has no destination to back up` | Backups read the release where players download it: set your server or folder on the Release page. |
+| `nothing is released at ... yet` | Release once; there is nothing to back up before that. |
+| `the blob ... is damaged` | A file on the server is not what its name says. No backup was kept. Release again to put good files back, then back up. |
+| `another backup of this project is running` | Wait for it (the app, or a scheduled one) and try again. |
+
 ## Deploying and SSH
 
 | Message | What to do |

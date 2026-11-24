@@ -53,8 +53,7 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
 ## Decisions, and why
 
 - **Static hosting only.** A release is plain files any web server can serve: no server program to
-  install, run or secure. It is also why download statistics, if they come, would read the web server's own
-  access log.
+  install, run or secure. It is also why download statistics read the web server's own access log.
 - **Content addressing.** A blob is named by its SHA-256: identical files are stored once, unchanged files
   never travel, and a damaged download is caught before it is used.
 - **Manifest last, journal always.** A deploy or an update that stops halfway changes nothing anyone sees,
@@ -92,7 +91,8 @@ Version 0.3.0: one Release page for publishing and sending, a menu of plain ques
 self-update, putting a key on a server with its password, Docker and Pterodactyl, the wiki. Since then:
 several projects, project files to share them, Reset and Remove all, hourly checks with an optional
 auto-update, minimize to tray and start with the computer, the wiki from the command line, and an MCP
-server for AI assistants. A compatibility test keeps what each released version wrote working.
+server for AI assistants, statistics for publishers, backups of the live release, and Force stop. A
+compatibility test keeps what each released version wrote working.
 
 ## Where it is going
 
@@ -123,5 +123,19 @@ as possible without becoming hard to use.
 6. **Starting over** (built): Reset and Remove all never touch a project's folders, and Reset keeps a copy
    of the settings.
 7. **The wiki from the command line** (built): `deltapatcher wiki [guide]`.
-8. **Perhaps: statistics for publishers.** Release statistics from the store; download statistics from the
-   web server's access log, read over SSH. Not decided.
+8. **Statistics for publishers** (built). One versioned document from collectors that can be added to
+   (`deltapatcher/stats.py`): the releases, from the store and its `history.jsonl`; the downloads, from the
+   web server's access log, read here or over SFTP. Counts only, never an address. `deltapatcher stats`,
+   the Release page's Statistics card, the MCP `stats` tool.
+9. **Backups of the live release** (built). Read from where the release is sent, kept on this computer in a
+   blob pool with one dated folder a day, thinned by day, week, month and size limits; restore is a release
+   of the backup that removes nothing (`deltapatcher/backup.py`). By hand, by the app every
+   `backup_every_hours`, or by the system (`backup schedule`).
+10. **Force stop** (built). The panic button: see the decision above.
+11. **Next: projects that follow their publisher.** A release carries its project's details, signed; a
+    player is asked before a change is applied; a project file can be update capable or one-off; players can
+    see what changed (file names, release notes) when the publisher allows it; containers take a project
+    file (`update --project-file`).
+12. **Being looked into: torrents beside HTTP**, set by the publisher per project, off by default: the store
+    as a BitTorrent v2 torrent, the newest release found through the DHT under the publisher key, players
+    seeding by choice. A research spike comes before any of it is built.

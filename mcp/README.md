@@ -57,6 +57,8 @@ On Linux and macOS the command is the unpacked `deltapatcher-cli`. From a clone 
   line that goes on the server.
 - `sign_status`, `sign_pubkey`: the signing key, and the public key players use.
 - `guide`, `log`: these guides, and the last lines of DeltaPatcher's log.
+- `stats`: a project's statistics, its releases and its downloads (counts only).
+- `backup_list`: the backups of a project's live release kept on this computer.
 - `version`, `check_for_new_version`.
 
 **Change files or servers** (marked as such, so your assistant asks you first)
@@ -64,10 +66,12 @@ On Linux and macOS the command is the unpacked `deltapatcher-cli`. From a clone 
 - `update`, `rollback`: bring a folder up to date (one project or all of them, several at once), or undo
   the last update.
 - `release`, `deploy`: send a release to a server over SFTP, or to a folder. A dry run comes first.
+- `backup_restore`: put a backup back where players download from. A dry run comes first.
 - `project_remove`.
 
 **Everything else**
 
+- `backup_now`: back up a project's live release onto this computer.
 - `publish`: turn a folder into a store, sent nowhere.
 - `serve_start`, `serve_stop`: serve a store on this computer, to test updates.
 - `set_settings`, `project_new`, `project_add`, `project_rename`, `ssh_trust`.

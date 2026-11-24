@@ -13,10 +13,11 @@ export function checkDue(now: number, last: number | null, hours: unknown): bool
   return now - last >= h * 60 * 60 * 1000
 }
 
-// a run that is going: Update all or Check all, one project's update or check, or the job of the Update or
-// Release page (an update, a release, a rollback)
-export function anotherRun(s: { busy: string | null; allJob: unknown; runs: Record<string, { state: string }> }): boolean {
-  return Boolean(s.busy) || Boolean(s.allJob) || Object.values(s.runs).some((r) => ['waiting', 'checking', 'updating'].includes(r.state))
+// a run that is going: Update all or Check all, one project's update or check, the job of the Update or
+// Release page (an update, a release, a rollback, a backup), or a backup the app makes by itself
+export function anotherRun(s: { busy: string | null; allJob: unknown; runs: Record<string, { state: string }>; backupJob?: string | null }): boolean {
+  return Boolean(s.busy) || Boolean(s.allJob) || Boolean(s.backupJob) ||
+    Object.values(s.runs).some((r) => ['waiting', 'checking', 'updating'].includes(r.state))
 }
 
 // The automatic checks: the function it returns is called every TICK with the time and check_every_hours,

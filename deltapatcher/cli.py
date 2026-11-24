@@ -34,10 +34,11 @@ import threading
 import time
 import traceback
 
-from . import APP_NAME, __version__, client, config, deploy, logs, presets, projects, publish, selfupdate, serve, signing, ssh
+from . import (APP_NAME, __version__, backup, client, config, deploy, logs, presets, projects, publish, selfupdate,
+               serve, signing, ssh, stats)
 from .color import enable as color_enable
 from .color import paint, plain
-from .manifest import ManifestError
+from .manifest import MANIFEST_NAME, Manifest, ManifestError
 from .source import DEFAULT_URL, SourceError, insecure_remote
 
 # %(prog)s is the name to type (see prog_name); argparse fills it in
@@ -63,6 +64,8 @@ more:
   %%(prog)s sign keygen                 (once: a signing key; then release with --sign)
   %%(prog)s release --to folder --to-folder D:/www/game
   %%(prog)s publish ./game ./store      (only the release's files, sent nowhere)
+  %%(prog)s stats                       (your releases; with access_log also update checks, downloads, players)
+  %%(prog)s backup                      (the live release, copied onto this computer; backup list, backup restore)
   %%(prog)s config                      (where the settings file and the log are)
   %%(prog)s mcp                         (for AI assistants: Claude Code, Claude Desktop, VS Code)
 
@@ -710,26 +713,140 @@ def cmd_rollback(a, cfg):
     return {"undone": n}
 
 
+def key_ready(t):
+    """A deploy's check of the private key: readable by this account only (in a terminal, asked to fix it)."""
+    if t.key and os.path.isfile(t.key):
+        probs = ssh.permission_problems(t.key)
+        if probs:
+            if OUT.json or not ask_yes("Your private key %s is readable by others (%s). Restrict it to your account now"
+                                      % (t.key, "; ".join(probs)), default=True):
+                raise CliError("the private key %s can be read by other accounts: %s" % (t.key, "; ".join(probs)),
+                               "key-permissions", {"key": t.key, "problems": probs})
+            ssh.fix_permissions(t.key)
+
+
 def cmd_deploy(a, cfg):
     store = store_of(a, cfg)
     if a.to_folder:
         tgt = deploy.FolderTarget(a.to_folder)
     else:
         t = target_from(a, cfg)
-        if t.key and os.path.isfile(t.key):
-            probs = ssh.permission_problems(t.key)
-            if probs:
-                if OUT.json or not ask_yes("Your private key %s is readable by others (%s). Restrict it to your account now"
-                                          % (t.key, "; ".join(probs)), default=True):
-                    raise CliError("the private key %s can be read by other accounts: %s" % (t.key, "; ".join(probs)),
-                                   "key-permissions", {"key": t.key, "problems": probs})
-                ssh.fix_permissions(t.key)
+        key_ready(t)
         confirm_host(t)
         tgt = deploy.SftpTarget(t)
     res = deploy.deploy(store, tgt, prune=not a.no_prune, dry_run=a.dry_run, progress=OUT.progress, log=say)
     OUT.end()
     return {"named": res.named, "had": res.had, "sent": res.sent, "sent_bytes": res.sent_bytes,
             "removed": res.removed, "atomic": res.atomic, "dry_run": res.dry_run, "summary": res.summary()}
+
+
+def backup_target(cfg):
+    """Where the project's release is deployed: what a backup reads and a restore sends to, after a deploy's
+    checks (the key unlocked, the host key trusted). CliError with what to set when there is none."""
+    mode = cfg["deploy_mode"] or "sftp"
+    if mode == "local":
+        raise CliError("a release served from this computer (deploy_mode local) has no destination to back up: its "
+                       "store is on this computer already", "no-destination")
+    if mode == "folder":
+        if not cfg["deploy_folder"]:
+            raise CliError("set the folder releases are copied to first:  %s config set deploy_folder=FOLDER"
+                           % prog_name(), "no-destination")
+        return deploy.FolderTarget(cfg["deploy_folder"])
+    if not cfg["ssh_host"] or not cfg["remote_root"]:
+        raise CliError("set the server first:  %s config set ssh_host=HOST ssh_user=USER remote_root=/var/www/game"
+                       % prog_name(), "no-destination")
+    t = ssh.Target(cfg["ssh_host"], cfg["ssh_user"], cfg["ssh_port"], cfg["ssh_key"], cfg["remote_root"])
+    key_ready(t)
+    if t.key and os.path.isfile(t.key):
+        try:
+            locked = ssh.key_has_passphrase(t.key) and not ssh.agent_has(t.key)
+        except ssh.SshError:
+            locked = False
+        if locked:
+            raise CliError("the SSH key %s is locked: unlock it first (%s ssh unlock, or Unlock key in the app)"
+                           % (t.key, prog_name()), "key-locked", {"key": t.key})
+    confirm_host(t)
+    return deploy.SftpTarget(t)
+
+
+def live_release(target):
+    """The release `target` serves now: its name, version and files; None when there is none."""
+    try:
+        raw = target.get_file(MANIFEST_NAME)
+        man = Manifest.from_json(raw) if raw is not None else None
+    except (deploy.DeployError, ManifestError):
+        man = None
+    if man is None:
+        return None
+    return {"name": man.name, "version": man.version, "published": man.published, "files": len(man.files),
+            "bytes": man.bytes}
+
+
+def _release_words(r):
+    return ("%s %s" % (r.get("name") or "(unnamed)", r.get("version") or "")).strip() if r else "nothing"
+
+
+def cmd_backup(a, cfg):
+    """backup [now | list | restore NAME | prune | schedule daily|hourly|off]: backups of the project's live
+    release, kept on this computer (backup.py)."""
+    c = a.backup_cmd or "now"
+    proj = project_of(a)
+    if c == "list":
+        data = backup.listing(proj, cfg)
+        if not OUT.json:
+            if not data["backups"]:
+                say("No backups of %s yet. One now:  %s" % (proj.title, paint(prog_name() + " backup", "code")))
+            for b in data["backups"]:
+                r = b["release"]
+                say("  %s  %s, %d files, %s" % (b["name"], _release_words(r), r["files"], publish.human(r["bytes"])))
+            say("They are in %s, %s together." % (paint(data["folder"], "code"), publish.human(data["bytes"])))
+        return data
+    if c == "prune":
+        res = backup.apply_limits(proj, cfg, log=say)
+        if not res["removed"]:
+            say("The limits keep every backup (%d)." % len(res["kept"]))
+        return res
+    if c == "schedule":
+        res = backup.schedule(proj, a.when)
+        if a.when == "off":
+            say("No scheduled backups of %s any more%s." % (proj.title, "" if res["removed"] else " (there were none)"), "ok")
+        else:
+            say("The system backs %s up %s: %s" % (proj.title, "every day" if a.when == "daily" else "every hour",
+                                                    paint(res.get("task") or res.get("entry"), "code")), "ok")
+        return res
+    target = backup_target(cfg)
+    if c == "restore":
+        b = backup.find(proj, cfg, a.name)
+        if not a.dry_run and not a.yes:
+            live = live_release(target)
+            question = {"backup": b.describe(), "live": live, "destination": str(target)}
+            if not interactive():
+                raise CliError("restoring a backup asks first: add --yes to restore it without asking", "confirm-needed",
+                               question)
+            say("Restore the backup of %s (%s) to %s?" % (b.name, _release_words(question["backup"]["release"]), target),
+                "warn")
+            say("Players there get it from then on, instead of %s. Nothing there is removed." % _release_words(live))
+            if not ask_sure("Restore it"):
+                raise CliError("nothing was restored", "cancelled")
+        res = backup.restore(proj, cfg, a.name, target, dry_run=a.dry_run, log=say, progress=OUT.progress)
+        OUT.end()
+        return {"name": a.name, "destination": str(target), "sent": res.sent, "sent_bytes": res.sent_bytes,
+                "dry_run": res.dry_run, "summary": res.summary()}
+    res = backup.take(proj, cfg, target, log=say, progress=OUT.progress)
+    OUT.end()
+    return res
+
+
+def cmd_stats(a, cfg):
+    """stats [--days N]: the project's statistics (stats.py), a few lines in a terminal, the whole document with
+    --json. Counts only: never an address or a line of a log."""
+    if not 1 <= a.days <= stats.MAX_DAYS:
+        raise CliError("--days is a number from 1 to %d" % stats.MAX_DAYS, "bad-arguments")
+    doc = stats.build(project_of(a), cfg, a.days)
+    if not OUT.json:
+        for line, style in stats.text(doc):
+            say(line, style)
+    return doc
 
 
 def _new_passphrase(a, what):
@@ -913,6 +1030,11 @@ def cmd_config(a, cfg):
             changes["title"] = projects.check_name(changes["title"], project)
         if changes.get("install_folder") and projects.folder_name_problem(changes["install_folder"]):
             raise CliError(projects.folder_name_problem(changes["install_folder"]), "bad-name")
+        if "backup_max_size" in changes:
+            try:
+                backup.parse_size(changes["backup_max_size"])
+            except ValueError as e:
+                raise CliError(str(e), "bad-setting")
         config.save(changes, project)     # only these keys change, each in its own file; everything else stays
         return {"path": own, "settings": config.load(project)}
     data = {"path": own, "main_path": p, "project": dict(project.tag(), kind=project.kind),
@@ -1432,6 +1554,26 @@ def build_parser():
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--no-prune", action="store_true")
 
+    s = sub.add_parser("backup", help="back up the live release (where players download from) onto this computer; "
+                                      "list, restore, prune or schedule backups")
+    bs = s.add_subparsers(dest="backup_cmd")
+    bs.add_parser("now", help="one backup now (also with no word after backup)")
+    bs.add_parser("list", help="the backups: date, release, files, size")
+    k = bs.add_parser("restore", help="put a backup back where players download from: its blobs first, the manifest "
+                                      "last; nothing there is removed")
+    k.add_argument("name", metavar="NAME", help="the backup: its date, YYYY-MM-DD")
+    k.add_argument("--yes", action="store_true", help="do not ask first")
+    k.add_argument("--dry-run", action="store_true", help="say what would be sent; send nothing")
+    bs.add_parser("prune", help="apply the limits now (backup_keep_daily, _weekly, _monthly, backup_max_size)")
+    k = bs.add_parser("schedule", help="the system backs the project up daily or hourly without the app (Windows: Task "
+                                       "Scheduler; elsewhere crontab); off stops it")
+    k.add_argument("when", choices=["daily", "hourly", "off"])
+
+    s = sub.add_parser("stats", help="statistics of the project: its releases, and from the web server's access log "
+                                     "(access_log) update checks, downloads and players; counts only")
+    s.add_argument("--days", type=int, default=stats.DAYS, metavar="N",
+                   help="the last N days (1 to %d, default %d)" % (stats.MAX_DAYS, stats.DAYS))
+
     s = sub.add_parser("sign", help="the key that signs your releases")
     ss = s.add_subparsers(dest="sign_cmd")
     for name, helptext in (("keygen", "make a signing key (asks a passphrase)"),
@@ -1547,7 +1689,8 @@ def _project_everywhere(parser, top=True):
 HANDLERS = {"publish": cmd_publish, "release": cmd_release, "serve": cmd_serve, "update": cmd_update,
             "check": cmd_check, "rollback": cmd_rollback, "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign,
             "config": cmd_config, "projects": cmd_projects, "project": cmd_project, "version": cmd_version,
-            "self-update": cmd_self_update, "reset": cmd_reset, "wiki": cmd_wiki}
+            "self-update": cmd_self_update, "reset": cmd_reset, "wiki": cmd_wiki, "stats": cmd_stats,
+            "backup": cmd_backup}
 # commands that work on no single project
 WITHOUT_PROJECT = ("version", "self-update", "projects", "project", "reset", "wiki")
 
@@ -1698,7 +1841,7 @@ def main(argv=None, prompt=True, project=None):
         data = HANDLERS[a.cmd](a, cfg) or {}
         rc = data.pop("exit", 0) if isinstance(data, dict) else 0
         OUT.result(data)
-    except (CliError, projects.ProjectError, presets.PresetError) as e:
+    except (CliError, projects.ProjectError, presets.PresetError, backup.BackupError) as e:
         OUT.error(str(e), e.code, e.data)
         rc = 1
     except FAILURES as e:

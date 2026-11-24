@@ -3,10 +3,14 @@
 // the same version again with changed files is fine: players get the changed files (a shadow patch).
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw, Rocket,
+  Archive, ArchiveRestore, ChartColumn, Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw, Rocket,
   Server as ServerIcon, ShieldAlert, ShieldCheck, Square, Unlock, Upload
 } from 'lucide-react'
 import { useApp } from '../store/app'
+import { sentences } from '../store/projectActions'
+import { BarRow, readStats, StatsView, when } from '../store/stats'
+import { BackupInfo, BackupList, backupRows, ReleaseShort, restoreQuestion, sizeProblem } from '../store/backups'
+import { REPO_URL } from '@shared/project'
 import { ask, HostKey } from '../store/modal'
 import { Banner, Button, Card, Chip, Field, Segmented, SettingToggle, Stat, Toggle, human } from '../components/ui'
 import { PathList, listOf } from '../components/PathList'
@@ -351,6 +355,269 @@ function SigningCard(): JSX.Element {
   )
 }
 
+// the guide's part on statistics, on the wiki
+const STATS_GUIDE = `${REPO_URL}/wiki/Publishing-a-release#statistics`
+// each project's last statistics, kept while another page or project is shown
+const statsOf = new Map<string, StatsView>()
+
+function StatBars(props: { row: BarRow }): JSX.Element {
+  const { row } = props
+  return (
+    <div>
+      <div className="flex items-baseline justify-between text-[11px] text-ink-400">
+        <span className="font-semibold uppercase tracking-wider">{row.label}</span>
+        <span>{row.max ? `most in a day: ${row.max}` : 'none'}</span>
+      </div>
+      <div className="mt-1 flex h-10 items-end gap-[2px]">
+        {row.bars.map((b) => (
+          <div key={b.date} title={`${b.date}: ${b.value}`} className={`flex-1 rounded-sm ${b.value ? 'bg-delta/80' : 'bg-ink-700'}`}
+            style={{ height: b.value ? `${Math.max(8, Math.round(b.height * 100))}%` : '2px' }} />
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// Statistics: the current release and what it changed, the store, and from the web server's access log the
+// update checks, downloads and players of each day and the releases players are on. Counted when a project is
+// first shown, after a release, when the access log changes, and on Refresh.
+function StatsCard(): JSX.Element {
+  const project = useApp((s) => s.project)
+  const accessLog = useApp((s) => String(s.settings.access_log ?? ''))
+  const mode = useApp((s) => modeOf(s.settings.deploy_mode))
+  const released = useApp((s) => s.results.release as Data | undefined)
+  const [view, setView] = useState<StatsView | null>(statsOf.get(project) ?? null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const asked = useRef(0)
+
+  const load = useCallback(async (): Promise<void> => {
+    const n = ++asked.current
+    const file = useApp.getState().project
+    setLoading(true)
+    const r = await useApp.getState().run('', ['stats', '--days=30'], { quiet: true })
+    if (n !== asked.current) return
+    setLoading(false)
+    if (r.ok) {
+      const v = readStats(r.data)
+      statsOf.set(file, v)
+      setView(v)
+      setError('')
+    } else {
+      setError(String(r.message ?? 'The engine gave no reason.'))
+    }
+  }, [])
+
+  useEffect(() => {
+    setView(statsOf.get(project) ?? null)
+    setError('')
+    if (!statsOf.has(project)) void load()
+  }, [project, load])
+  // a release made while it is shown, or another access log typed: counted again
+  const seen = useRef({ project, released, accessLog })
+  useEffect(() => {
+    const before = seen.current
+    seen.current = { project, released, accessLog }
+    if (before.project !== project) return
+    if (released && before.released !== released) {
+      void load()
+      return
+    }
+    if (before.accessLog === accessLog) return
+    const t = setTimeout(() => void load(), 1500)
+    return () => clearTimeout(t)
+  }, [project, released, accessLog, load])
+
+  const dl = view?.downloads
+  return (
+    <Card title="Statistics" icon={ChartColumn}
+      actions={<Button small variant="ghost" icon={RefreshCw} disabled={loading} onClick={() => void load()}>{loading ? 'Counting...' : 'Refresh'}</Button>}>
+      {error && <div className="mb-4"><Banner kind="bad">{error}</Banner></div>}
+      {!view && !error && <p className="text-sm text-ink-400">Counting...</p>}
+      {view?.release ? (
+        <div>
+          <p className="text-sm text-slate-100">
+            Release <span className="font-semibold">{view.release.version}</span>
+            {view.release.name ? ` of ${view.release.name}` : ''}, published {when(view.release.published)}
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <Stat label="Files" value={view.release.files} />
+            <Stat label="Size" value={human(view.release.bytes)} />
+            <Stat label="Distinct files" value={view.release.blobs} />
+            <Stat label="The store" value={human(view.store?.bytes ?? 0)} />
+          </div>
+          <p className="hint">
+            {(view.change
+              ? `From ${view.change.from}: ${view.change.new} new, ${view.change.changed} changed, ${view.change.removed} removed.\n` +
+                `A player on ${view.change.from} downloads ${human(view.change.download)}.\n`
+              : 'The first release in this store.\n') +
+              `${view.store?.releases === 1 ? '1 release' : `${view.store?.releases ?? 0} releases`} in its history; ` +
+              `the store keeps ${view.store?.files ?? 0} files.`}
+          </p>
+        </div>
+      ) : (
+        view && <p className="hint">{sentences(view.releasesProblem) || 'Nothing is released yet.'}</p>
+      )}
+      <div className="mt-5 border-t border-ink-700/70 pt-4">
+        <p className="text-sm font-semibold text-slate-100">Players, the last {view?.days || 30} days</p>
+        {dl ? (
+          <>
+            <div className="mt-3 grid grid-cols-3 gap-3">
+              <Stat label="Update checks" value={dl.total.checks} />
+              <Stat label="Downloads" value={`${dl.total.downloads} (${human(dl.total.bytes)})`} />
+              <Stat label="Players" value={dl.total.players} accent />
+            </div>
+            <div className="mt-4 space-y-3">
+              {dl.rows.map((row) => <StatBars key={row.key} row={row} />)}
+              <div className="flex justify-between text-[11px] text-ink-400"><span>{dl.first}</span><span>{dl.last}</span></div>
+            </div>
+            {dl.releases.length > 0 && (
+              <div className="mt-4">
+                <p className="label">The releases players are on</p>
+                <div className="space-y-1.5">
+                  {dl.releases.map((r) => (
+                    <div key={r.label} className="flex items-center gap-3 text-sm">
+                      <span className="w-28 truncate font-mono text-slate-100" title={r.label}>{r.label}</span>
+                      <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-700">
+                        <div className="h-full rounded-full bg-delta" style={{ width: `${Math.round(r.share * 100)}%` }} />
+                      </div>
+                      <span className="w-24 text-right tabular-nums text-ink-300">{r.players === 1 ? '1 player' : `${r.players} players`}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            <p className="hint">
+              {`Counted from ${dl.log}, ${dl.readFrom === 'server' ? 'on the server' : 'on this computer'}.\nCounts only: never an address.` +
+                (dl.unreadable ? `\n${dl.unreadable} of ${dl.lines} lines could not be read.` : '')}
+            </p>
+          </>
+        ) : !accessLog ? (
+          <p className="mt-2 whitespace-pre-line text-sm text-ink-300">
+            {"Name the web server's access log below to see update checks, downloads and players per day, and the releases players are on.\nCounts only: never an address."}
+          </p>
+        ) : view?.downloadsProblem ? (
+          <div className="mt-3"><Banner kind="warn">{view.downloadsProblem}</Banner></div>
+        ) : null}
+        <Field className="mt-4" label="Access log" setting="access_log" mono
+          placeholder={mode === 'sftp' ? '/var/log/nginx/access.log' : 'the log file on this computer'}
+          hint={(mode === 'sftp' ? 'Its path on the server: read over SFTP, like a release is sent.' : 'Its path on this computer.') +
+            "\nnginx's or Apache's access log, or Caddy's JSON log."} />
+        {!accessLog && (
+          <a href={STATS_GUIDE} target="_blank" rel="noreferrer" className="mt-2 inline-block text-sm text-delta-light hover:underline">
+            How to set up statistics: the publishing guide
+          </a>
+        )}
+      </div>
+    </Card>
+  )
+}
+
+// Backups: copies of the live release, read from where players download it and kept on this computer. Back up
+// now, the backups, Restore... (after a question that says what it replaces there), the limits, how often the
+// app backs up by itself, and the folder.
+function BackupsCard(): JSX.Element {
+  const project = useApp((s) => s.project)
+  const busy = useApp((s) => s.busy)
+  const backupJob = useApp((s) => s.backupJob)
+  const mode = useApp((s) => modeOf(s.settings.deploy_mode))
+  const backupDir = useApp((s) => String(s.settings.backup_dir ?? ''))
+  const [list, setList] = useState<BackupList | null>(null)
+  const [problem, setProblem] = useState('')
+  const asked = useRef(0)
+
+  const load = useCallback(async (): Promise<void> => {
+    const n = ++asked.current
+    const r = await useApp.getState().run('', ['backup', 'list'], { quiet: true })
+    if (n !== asked.current) return
+    if (r.ok) {
+      setList(r.data as unknown as BackupList)
+      setProblem('')
+    } else {
+      setList(null)
+      setProblem(String(r.message ?? ''))
+    }
+  }, [])
+  useEffect(() => {
+    void load()
+  }, [project, backupJob, load])
+  // another backup folder typed: listed again once it is saved
+  const dirSeen = useRef({ project, backupDir })
+  useEffect(() => {
+    const before = dirSeen.current
+    dirSeen.current = { project, backupDir }
+    if (before.project !== project || before.backupDir === backupDir) return
+    const t = setTimeout(() => void load(), 1500)
+    return () => clearTimeout(t)
+  }, [project, backupDir, load])
+
+  const now = async (): Promise<void> => {
+    const d = await withHostTrust('Back up', ['backup', 'now'])
+    await load()
+    if (d && !d.made) await ask.info('No new backup', 'The live release has not changed since its last backup.')
+  }
+  const restore = async (name: string): Promise<void> => {
+    const st = useApp.getState()
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const r = await st.run('', ['backup', 'restore', name], { quiet: true })
+      if (r.code === 'host-unknown') {
+        if (!(await confirmHost(String(r.data.host ?? ''), (r.data.keys ?? []) as HostKey[], false))) return
+        continue
+      }
+      if (r.code !== 'confirm-needed') {
+        await ask.info('The backup cannot be restored', sentences(String(r.message ?? 'The engine gave no reason.')))
+        return
+      }
+      const q = restoreQuestion(r.data as { backup?: BackupInfo; live?: ReleaseShort | null; destination?: string })
+      if (!(await ask.confirm(q.title, q.body, 'Restore it', true))) return
+      await withHostTrust('Restore a backup', ['backup', 'restore', name, '--yes'])
+      return
+    }
+  }
+
+  const rows = backupRows(list)
+  return (
+    <Card title="Backups" icon={Archive}
+      actions={<Button small icon={Archive} disabled={Boolean(busy) || Boolean(backupJob) || mode === 'local'} onClick={now}>
+        {backupJob === project ? 'Backing up...' : 'Back up now'}
+      </Button>}>
+      <p className="whitespace-pre-line text-sm text-ink-300">
+        {mode === 'local'
+          ? 'A release served from this computer has nothing to back up: its store is here already.'
+          : 'A copy of the live release, read from where players download it and kept on this computer.\nEach file is kept once, however many backups need it; a backup changes nothing there.'}
+      </p>
+      {problem && <div className="mt-3"><Banner kind="warn">{problem}</Banner></div>}
+      {rows.length > 0 ? (
+        <div className="mt-4 divide-y divide-ink-700/70 rounded-lg border border-ink-700">
+          {rows.map((b) => (
+            <div key={b.name} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
+              <span className="w-28 font-mono text-slate-100">{b.name}</span>
+              <span className="min-w-0 flex-1 truncate text-ink-300" title={b.made}>{b.release}</span>
+              <span className="w-20 text-right tabular-nums text-ink-400">{b.files} files</span>
+              <span className="w-24 text-right tabular-nums text-ink-400">{human(b.bytes)}</span>
+              <Button small variant="ghost" icon={ArchiveRestore} disabled={Boolean(busy) || Boolean(backupJob)}
+                onClick={() => restore(b.name)}>Restore...</Button>
+            </div>
+          ))}
+        </div>
+      ) : (
+        !problem && <p className="hint">No backups yet.</p>
+      )}
+      {list && <p className="hint">{`They are in ${list.folder}, ${human(list.bytes)} together.`}</p>}
+      <div className="mt-5 grid gap-5 md:grid-cols-3">
+        <Field label="Keep daily" setting="backup_keep_daily" type="number" hint="The newest of each of the last this many days." />
+        <Field label="Keep weekly" setting="backup_keep_weekly" type="number" hint="The newest of each of the last this many weeks." />
+        <Field label="Keep monthly" setting="backup_keep_monthly" type="number" hint="The newest of each of the last this many months." />
+        <Field label="At most" setting="backup_max_size" check={sizeProblem} placeholder="no limit"
+          hint={'For example 10 GB.\nThe oldest backups go first; the newest always stays.'} />
+        <Field label="Back up every (hours)" setting="backup_every_hours" type="number"
+          hint={'While the app runs, window shown or in the tray.\n0: never.'} />
+        <Field label="Backup folder" setting="backup_dir" browse="folder" mono placeholder={list?.folder ?? ''} />
+      </div>
+    </Card>
+  )
+}
+
 function ReleaseResult(props: { r: Data }): JSX.Element {
   const serving = useApp((s) => s.serving)
   const pub = (props.r.publish ?? {}) as Data
@@ -472,6 +739,10 @@ export default function ReleasePage(): JSX.Element {
         </div>
         {result && <ReleaseResult r={result} />}
       </Card>
+
+      <StatsCard />
+
+      <BackupsCard />
     </div>
   )
 }

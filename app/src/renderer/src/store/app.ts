@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import type { EngineEvent, EngineOutcome, Style } from '@shared/types'
 import { ask } from './modal'
 import { anotherRun } from './schedule'
+import { backupDue, madeAt } from './backups'
 
 export type Value = string | number | boolean
 export interface SchemaItem {
@@ -42,6 +43,10 @@ export interface ProjectInfo {
   // where it goes for players, and the folder it goes into inside the one they pick
   install_hint: string
   install_folder: string
+  // how often the app backs it up (0: never), when its newest backup was made, and whether it has a destination
+  backup_every_hours: number
+  backup_last: string
+  backup_ready: boolean
   // the http(s) address a project file gives for it ('' when it has none)
   address: string
   update_ready: boolean
@@ -176,6 +181,8 @@ interface State {
   // the Projects page: each project's check or update, by its file, and Update all / Check all
   runs: Record<string, ProjectRun>
   allJob: AllJob | null
+  // the project the app is backing up by itself (backup_every_hours), while it does
+  backupJob: string | null
   autoChecked: boolean
   runProject: (file: string, check: boolean) => Promise<void>
   // auto: a check (or an update) DeltaPatcher started by itself, which may notify or update on its own
@@ -316,6 +323,7 @@ export const useApp = create<State>((set, get) => {
     parallel: 3,
     runs: {},
     allJob: null,
+    backupJob: null,
     autoChecked: false,
     importing: null,
     exporting: null,
@@ -649,6 +657,43 @@ export function autoCheck(): 'started' | 'busy' | 'nothing' {
   useApp.setState({ autoChecked: true })
   void st.runAll(true, true)
   return 'started'
+}
+
+// when the app last started a backup of each project by itself (milliseconds)
+const backupTried = new Map<string, number>()
+
+function lastBackup(p: ProjectInfo): number | null {
+  const times = [madeAt(p.backup_last), backupTried.get(p.file) ?? null].filter((t): t is number => t !== null)
+  return times.length ? Math.max(...times) : null
+}
+
+// A backup the app makes by itself (backup_every_hours), one project at a time and never while another run goes;
+// said in the console, and in a notification when it fails while the window is not on screen.
+export async function autoBackup(): Promise<void> {
+  const st = useApp.getState()
+  if (anotherRun(st)) return
+  const at = Date.now()
+  const p = st.projects.find((x) => !x.missing && x.backup_ready && backupDue(at, lastBackup(x), x.backup_every_hours))
+  if (!p) return
+  backupTried.set(p.file, at)
+  const jobId = `bak-${++jobSeq}`
+  jobTitles.set(jobId, p.title)
+  useApp.setState({ backupJob: p.file })
+  let r: EngineOutcome
+  try {
+    r = await window.api.run({ jobId, args: ['backup', 'now', `--project=${p.file}`] })
+  } catch (err) {
+    r = failure(err)
+  }
+  jobTitles.delete(jobId)
+  useApp.setState({ backupJob: null })
+  if (r.ok) {
+    st.log(`[${p.title}] ${r.data.made ? `Backed up the live release (${String(r.data.name)}).` : 'The live release has not changed since its last backup.'}`, 'ok')
+  } else {
+    st.log(`[${p.title}] The backup failed: ${r.message}`, 'err')
+    await window.api.notify('DeltaPatcher', `The backup of ${p.title} failed: ${r.message}`, true)
+  }
+  await useApp.getState().loadProjects()
 }
 
 // What an automatic check found, acted on: with auto_update the projects with an update update by themselves,

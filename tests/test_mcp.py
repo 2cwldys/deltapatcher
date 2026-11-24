@@ -7,6 +7,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -251,6 +252,56 @@ class Mcp(TempCase):
         self.assertFalse([n for n in names if "reset" in n or "remove_all" in n])
         export = next(t for t in c.request("tools/list")["result"]["tools"] if t["name"] == "project_export")
         self.assertNotIn("sign", export["inputSchema"]["properties"])                 # signing needs a passphrase
+
+    def test_stats_reads_and_never_names_a_player(self):
+        c = Client(self)
+        c.start()
+        tool = next(t for t in c.request("tools/list")["result"]["tools"] if t["name"] == "stats")
+        self.assertEqual((tool["annotations"]["readOnlyHint"], tool["annotations"]["destructiveHint"]), (True, False))
+        write(self.p("game", "a.pak"), b"a" * 100)
+        r = c.tool("set_settings", values={"publish_src": self.p("game"), "version": "1.0", "deploy_mode": "folder",
+                                           "public_url": "https://game.example.com/", "access_log": self.p("access.log")})
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        self.assertFalse(c.tool("publish")["isError"])
+        stamp = time.strftime("%d/{}/%Y:%H:%M:%S +0000", time.gmtime()).format(
+            "Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec".split()[time.gmtime().tm_mon - 1])
+        write(self.p("access.log"), '203.0.113.10 - - [%s] "GET /manifest.json HTTP/1.1" 200 100 "-" '
+                                    '"DeltaPatcher/0.3.0 release/1.0"\n' % stamp)
+        r = c.tool("stats", days=7)
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        doc = r["structuredContent"]
+        self.assertEqual((doc["format"], doc["version"], doc["days"]), ("deltapatcher-stats", 1, 7))
+        self.assertEqual(doc["sections"]["releases"]["current"]["version"], "1.0")
+        self.assertEqual(doc["sections"]["downloads"]["total"]["checks"], 1)
+        self.assertEqual(doc["sections"]["downloads"]["releases"], [{"release": "1.0", "players": 1}])
+        self.assertNotIn("203.0.113.10", json.dumps(r))
+        self.assertIn("error", c.request("tools/call", {"name": "stats", "arguments": {"days": 0}}))   # out of range
+
+    def test_backups_now_list_and_restore(self):
+        c = Client(self)
+        c.start()
+        by = {t["name"]: t for t in c.request("tools/list")["result"]["tools"]}
+        self.assertTrue(by["backup_list"]["annotations"]["readOnlyHint"])
+        self.assertEqual((by["backup_now"]["annotations"]["readOnlyHint"], by["backup_now"]["annotations"]["destructiveHint"]),
+                         (False, False))                                       # it writes on this computer only
+        self.assertTrue(by["backup_restore"]["annotations"]["destructiveHint"])  # a client asks before it
+        self.assertFalse([n for n in by if n.startswith("backup_") and n not in ("backup_now", "backup_list",
+                                                                                 "backup_restore")])
+        write(self.p("game", "a.pak"), b"a" * 100)
+        r = c.tool("set_settings", values={"publish_src": self.p("game"), "version": "1.0", "deploy_mode": "folder",
+                                           "deploy_folder": self.p("www")})
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        self.assertFalse(c.tool("release")["isError"])
+        r = c.tool("backup_now")
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        self.assertTrue(r["structuredContent"]["made"])
+        listed = c.tool("backup_list")["structuredContent"]["backups"]
+        self.assertEqual([b["release"]["version"] for b in listed], ["1.0"])
+        r = c.tool("backup_restore", name=listed[0]["name"], dry_run=True)
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        self.assertTrue(r["structuredContent"]["dry_run"])
+        self.assertFalse(c.tool("backup_restore", name=listed[0]["name"])["isError"])
+        self.assertTrue(c.tool("backup_restore", name="--all")["isError"])
 
     def test_a_cancelled_request_gets_no_answer(self):
         silent = socket.socket()                                       # accepts, never answers: a check would hang

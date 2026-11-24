@@ -353,7 +353,9 @@ def where(cfg):
 def describe(project, cfg=None):
     """A project for listings: its name and file, and what is set up: the folder it updates and its source,
     the folder it releases and where that goes; its description, website and where it goes for players; the
-    http(s) address a project file would give for it ('' when it has none)."""
+    http(s) address a project file would give for it ('' when it has none); how often the app backs it up and
+    when its newest backup was made."""
+    from .backup import newest
     from .presets import address
     if cfg is None:
         cfg = dict(config.DEFAULTS) if project.missing else config.load(project)
@@ -365,4 +367,8 @@ def describe(project, cfg=None):
             "description": cfg["description"], "website": cfg["website"], "install_hint": cfg["install_hint"],
             "install_folder": cfg["install_folder"], "address": address(cfg),
             "update_ready": bool(cfg["install_dir"]) and bool(cfg["source_url"]) and not project.missing,
-            "release_ready": bool(cfg["publish_src"]) and bool(goes) and not project.missing}
+            "release_ready": bool(cfg["publish_src"]) and bool(goes) and not project.missing,
+            "backup_every_hours": cfg["backup_every_hours"], "backup_last": "" if project.missing else newest(project, cfg),
+            "backup_ready": not project.missing and (
+                (cfg["deploy_mode"] == "folder" and bool(cfg["deploy_folder"])) or
+                (cfg["deploy_mode"] == "sftp" and bool(cfg["ssh_host"]) and bool(cfg["remote_root"])))}

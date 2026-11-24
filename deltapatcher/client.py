@@ -424,6 +424,8 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         else:
             _recover(install, state_dir, log)
 
+        state = State(install)
+        src.for_release(state.version)          # the User-Agent says which release this folder has
         log("reading %s" % src)
         raw = src.get_manifest()
         try:
@@ -432,7 +434,6 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
             raise UpdateError("the source's manifest is refused: %s" % e)
         log("release: %s %s (published %s), %d files, %s" % (man.name or "(unnamed)", man.version, man.published,
                                                             len(man.files), human(man.bytes)))
-        state = State(install)
         signer = check_signature(src, raw, state, trust_key, check_only, log)
         cache = hashing.HashCache(os.path.join(state_dir, "hashes.json"))
         plan = make_plan(man, install, state, cache)

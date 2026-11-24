@@ -65,6 +65,17 @@ class FolderTarget(object):
         except OSError as e:
             raise DeployError("cannot read %s: %s" % (p, e))
 
+    def get_blobs(self, shas, sizes, into, progress):
+        """Copy blobs/<sha> of each sha into the folder `into` (a backup reads them; the caller checks them)."""
+        for sha in shas:
+            if not HEX64.match(sha):
+                raise DeployError("not a blob name: %r" % sha)
+            try:
+                shutil.copyfile(os.path.join(self.root, BLOB_DIR, sha), os.path.join(into, sha))
+            except OSError as e:
+                raise DeployError("cannot read the blob %s in %s: %s" % (sha[:12], self.root, e))
+            progress(sha)
+
     def put_blobs(self, blob_dir, shas, progress):
         d = os.path.join(self.root, BLOB_DIR)
         for sha in shas:
@@ -156,6 +167,27 @@ class SftpTarget(object):
             raise DeployError("cannot read %s on the server: %s" % (name, ssh.explain(r)))
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    def get_blobs(self, shas, sizes, into, progress):
+        """Download blobs/<sha> of each sha into the folder `into`, a batch at a time; the local names are the
+        bare hashes, so no local path reaches sftp (a backup reads them; the caller checks them)."""
+        chunk, size = [], 0
+        for sha in shas:
+            if not HEX64.match(sha):
+                raise DeployError("not a blob name: %r" % sha)
+            chunk.append(sha)
+            size += sizes.get(sha, 0)
+            if len(chunk) >= self.CHUNK_FILES or size >= self.CHUNK_BYTES:
+                self._get_chunk(chunk, size, into, progress)
+                chunk, size = [], 0
+        if chunk:
+            self._get_chunk(chunk, size, into, progress)
+
+    def _get_chunk(self, chunk, size, into, progress):
+        cmds = ["get %s %s" % (ssh.q("%s/%s/%s" % (self.root, BLOB_DIR, sha)), ssh.q(sha)) for sha in chunk]
+        self._run(cmds, cwd=into, what="download", timeout=600 + size // self.MIN_RATE)
+        for sha in chunk:
+            progress(sha)
 
     def put_blobs(self, blob_dir, shas, progress):
         chunk, size = [], 0
@@ -272,12 +304,13 @@ class DeployResult(object):
                    "would remove" if self.dry_run else "removed", self.removed))
 
 
-def deploy(store, target, prune=True, dry_run=False, progress=None, log=None):
-    """Send the store's release to `target` (FolderTarget or SftpTarget). Returns a DeployResult."""
+def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, blob_dir=None):
+    """Send the store's release to `target` (FolderTarget or SftpTarget). Returns a DeployResult. `blob_dir`:
+    where the blobs are, when not in the store's own blobs folder (a backup's pool)."""
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
     store = os.path.abspath(store)
-    blob_dir = os.path.join(store, BLOB_DIR)
+    blob_dir = os.path.abspath(blob_dir) if blob_dir else os.path.join(store, BLOB_DIR)
     try:
         with open(os.path.join(store, MANIFEST_NAME), "rb") as f:
             new_raw = f.read()

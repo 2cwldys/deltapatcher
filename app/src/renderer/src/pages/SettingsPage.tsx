@@ -12,7 +12,8 @@ const SECTIONS: Record<string, string> = {
   publish: 'Publish',
   server: 'Server',
   window: 'Window',
-  general: 'Projects'
+  general: 'Projects',
+  backup: 'Backups'
 }
 // DeltaPatcher's own settings, in the main file whichever project is shown
 const APP_SECTIONS = ['window', 'general']

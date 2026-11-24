@@ -372,6 +372,8 @@ RELEASE = dict(name=s_str("The release's name, shown to players (left out: the s
                htaccess=s_bool("Write the .htaccess for Apache (default yes)."))
 
 RO = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
+# reads the destination and writes only on this computer
+BACKS_UP = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
 RO_NET = dict(RO, openWorldHint=True)
 WRITES = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 CHANGES = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
@@ -445,6 +447,19 @@ def b_settings_set(a):
         elif value is None:
             value = ""
         argv.append("%s=%s" % (key, value))
+    return project_first(a, argv)
+
+
+def b_backup_restore(a):
+    name = str(a["name"])
+    if not re.match(r"^\d{4}-\d{2}-\d{2}$", name):
+        raise ToolProblem("name is a backup's date, YYYY-MM-DD (backup_list names them)")
+    return project_first(a, ["backup", "restore", name] + (["--dry-run"] if a.get("dry_run") else ["--yes"]))
+
+
+def b_stats(a):
+    argv = ["stats"]
+    opt(argv, "--days", a.get("days"))
     return project_first(a, argv)
 
 
@@ -704,6 +719,31 @@ TOOLS_LIST = [
                 dry_run=s_bool("Read the file and say what it holds; add nothing.")),
          {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": False, "openWorldHint": False},
          build=b_project_import),
+    Tool("backup_now", "Back up the live release",
+         "Back up a project's live release onto this computer: read from where it is deployed (the server over SFTP, "
+         "with the checks a release makes, or the deploy folder), each blob checked against its SHA-256 as it arrives. "
+         "Nothing at the destination changes. A release unchanged since the last backup makes no new one; a second "
+         "backup the same day replaces that day's. The limits (backup_keep_daily, backup_keep_weekly, "
+         "backup_keep_monthly, backup_max_size) are applied after it.",
+         schema(project=PROJECT), BACKS_UP, build=lambda a: project_first(a, ["backup", "now"])),
+    Tool("backup_list", "List the backups",
+         "A project's backups of its live release, the newest first: each one's date (its name), the release it holds "
+         "(name, version, files, size), and the folder they are in with its size and the limits.",
+         schema(project=PROJECT), RO, build=simple("backup", "list")),
+    Tool("backup_restore", "Restore a backup",
+         "Put a backup back where players download from, as a release goes: the blobs the destination lacks first, "
+         "the manifest last. Players get that release from then on; nothing at the destination is removed. "
+         "dry_run=true only says what would be sent.",
+         schema(["name"], name=s_str("The backup: its date, YYYY-MM-DD (backup_list names them)."),
+                dry_run=s_bool("Say what would be sent; send nothing."), project=PROJECT),
+         CHANGES_NET, build=b_backup_restore),
+    Tool("stats", "Statistics of a project",
+         "A project's statistics as one document (format deltapatcher-stats, version 1): its current release, what it "
+         "changed and the release history, from its store; and, when its access_log is set, update checks, downloads, "
+         "bytes and players per day and the releases players are on, counted from the web server's access log (read "
+         "over the project's SFTP connection, or on this computer for a folder or local release). Counts only: never "
+         "an address or a line of the log. A section that cannot be made says why under problems.",
+         schema(days=s_int("How many days back (default 30).", 1, 366), project=PROJECT), RO_NET, build=b_stats),
     Tool("check_for_new_version", "Is DeltaPatcher up to date",
          "Whether a newer DeltaPatcher is out. Updating DeltaPatcher itself is done in its app or command line.",
          schema(), RO_NET, build=simple("self-update", "--check")),

@@ -6,6 +6,7 @@ file:///C:/store/      or a plain folder path: the same layout on disk
 
 import http.client
 import os
+import re
 import shutil
 import socket
 import time
@@ -102,11 +103,24 @@ class _HTTPHandler(urllib.request.HTTPHandler):
         return self.do_open(_LoopbackFirst, req)
 
 
+# a release's version as it goes in a User-Agent: letters, digits and . _ + - only, at most 40 of them
+_TOKEN_OUT = re.compile(r"[^A-Za-z0-9._+-]+")
+
+
+def user_agent(release=""):
+    """The User-Agent an updater sends: "DeltaPatcher/<version>", then "release/<version>" of the release the
+    folder has, when it has one. That is all it says (no name, no folder, no id): publishers count from it
+    which releases players are on. Characters a header cannot carry become _."""
+    token = _TOKEN_OUT.sub("_", str(release or "")).strip("_")[:40]
+    return "%s release/%s" % (USER_AGENT, token) if token else USER_AGENT
+
+
 class Source(object):
     def __init__(self, url, headers=None, timeout=30, tries=4):
         self.base = normalise(url)
         self.http = is_http(self.base)
         self.headers = {"User-Agent": USER_AGENT}
+        self.own_agent = any(str(k).lower() == "user-agent" for k in (headers or {}))
         self.headers.update(headers or {})
         self.timeout = timeout
         self.tries = tries
@@ -114,6 +128,12 @@ class Source(object):
 
     def __str__(self):
         return self.base
+
+    def for_release(self, version):
+        """From now on the User-Agent names the release the folder has (user_agent()), unless the caller gave
+        a User-Agent of its own."""
+        if not self.own_agent:
+            self.headers["User-Agent"] = user_agent(version)
 
     def _open(self, rel, start=0):
         req = urllib.request.Request(self.base + rel, headers=dict(self.headers))

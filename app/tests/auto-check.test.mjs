@@ -27,6 +27,7 @@ test('another run: Update all, one project, or the Update or Release page', () =
   assert.equal(anotherRun(idle), false)
   assert.equal(anotherRun({ ...idle, busy: 'Release' }), true)
   assert.equal(anotherRun({ ...idle, allJob: { jobId: 'all-1', check: false, total: 2, done: 0 } }), true)
+  assert.equal(anotherRun({ ...idle, backupJob: 'Mod.ini' }), true)                // a backup the app makes by itself
   for (const state of ['waiting', 'checking', 'updating']) assert.equal(anotherRun({ ...idle, runs: { a: { state } } }), true)
   for (const state of ['done', 'failed']) assert.equal(anotherRun({ ...idle, runs: { a: { state } } }), false)
 })

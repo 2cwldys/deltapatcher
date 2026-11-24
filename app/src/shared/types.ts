@@ -85,5 +85,5 @@ export interface AppInfo {
 // the engine commands the window may run; anything else is refused by the main process
 export const ENGINE_COMMANDS = [
   'update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve', 'self-update', 'projects', 'project',
-  'reset'
+  'reset', 'stats', 'backup'
 ] as const

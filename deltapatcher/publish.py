@@ -2,9 +2,12 @@
 
 The store is what a web server serves and what `deploy` sends to a host. Publishing again only
 copies files whose content is new; the previous manifest is kept as manifest.previous.json so
-clients that are halfway through an update can still fetch the blobs they started with.
+clients that are halfway through an update can still fetch the blobs they started with. Each new
+release also adds a line to the store's history.jsonl, for statistics (stats.py); that file stays on
+this computer.
 """
 
+import json
 import os
 import shutil
 
@@ -17,6 +20,7 @@ DEFAULT_IGNORE = [".git/", ".svn/", ".hg/", ".deltapatcher/", "__pycache__/", "T
                   "desktop.ini", ".DS_Store", "*.tmp", IGNORE_FILE]
 HASH_CACHE = ".deltapatcher-hashcache.json"
 HTACCESS = ".htaccess"
+HISTORY_NAME = "history.jsonl"
 
 # Apache (2.2 and 2.4) for a store: serve the manifests, the blobs and the signatures and nothing else,
 # never list a folder, give blobs (which have no extension) a type, and set the cache headers.
@@ -188,6 +192,19 @@ def write_htaccess(store):
     return True
 
 
+def add_history(store, man, new_blobs, before):
+    """One line in <store>/history.jsonl for a new release, for statistics: when, its name and version, its
+    files and bytes, the blobs it added to the store, and what a player on the release before downloads
+    (None for the first one). It stays on this computer: deploy never sends it and the built-in server never
+    serves it."""
+    had = before.blobs() if before is not None else None
+    line = {"time": man.published, "name": man.name, "version": man.version, "files": len(man.files),
+            "bytes": man.bytes, "new_blobs": new_blobs,
+            "download_bytes": None if had is None else sum(s for sha, s in man.blobs().items() if sha not in had)}
+    with open(os.path.join(store, HISTORY_NAME), "a", encoding="utf-8", newline="\n") as f:
+        f.write(json.dumps(line, sort_keys=True) + "\n")
+
+
 def _write_sig(store, data, signer, log):
     """sigs/<sha of data>.sig, written before the manifest it signs is in place."""
     d = os.path.join(store, signing.SIG_DIR)
@@ -283,6 +300,10 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
             shutil.copyfile(mpath, prev + ".tmp")
             os.replace(prev + ".tmp", prev)
         os.replace(mpath + ".tmp", mpath)
+        try:
+            add_history(store, man, res.new_blobs, old)
+        except OSError as e:
+            log("the release history was not written (%s): statistics leave this release out" % e)
     if htaccess and write_htaccess(store):
         log("wrote %s (for Apache: serves only the release, no listings)" % HTACCESS)
 

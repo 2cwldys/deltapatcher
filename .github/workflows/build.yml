@@ -1,7 +1,7 @@
 # Each system on its own: the tests, then the engine and the app, uploaded as that system's artifact.
 # Each system's engine (PyInstaller) has to be built on that system, so each app is built there too,
 # and a failure on one system does not stop the others.
-name: Build
+name: Builds
 
 on:
   push:

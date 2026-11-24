@@ -3,7 +3,7 @@
     python tools/version.py 1.4.2            set the version to 1.4.2, everywhere it is written
     python tools/version.py                  the version, and a check that every place agrees
     python tools/version.py patch            or minor, or major: the next one (0.2.0 -> 0.2.1, 0.3.0, 1.0.0)
-    python tools/version.py --tag v1.4.2     the check, and the tag must name this version (the Build workflow)
+    python tools/version.py --tag v1.4.2     the check, and the tag must name this version (the Builds workflow)
 
 The version lives in deltapatcher/__init__.py (__version__); pyproject.toml reads it from there. The app's
 app/package.json and app/package-lock.json carry a copy, because electron-builder names the app's files

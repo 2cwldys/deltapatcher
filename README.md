@@ -10,9 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml"><img alt="Build" src="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml/badge.svg"></a>
+  <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml"><img alt="Builds" src="https://github.com/2cwldys/deltapatcher/actions/workflows/build.yml/badge.svg"></a>
   <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml"><img alt="CodeQL" src="https://github.com/2cwldys/deltapatcher/actions/workflows/codeql.yml/badge.svg"></a>
   <a href="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml"><img alt="Secret scan" src="https://github.com/2cwldys/deltapatcher/actions/workflows/secret-scan.yml/badge.svg"></a>
+  <img alt="Windows, Linux, macOS" src="https://img.shields.io/badge/Windows%20%7C%20Linux%20%7C%20macOS-f2a33a">
 </p>
 
 <p align="center">

@@ -11,7 +11,7 @@ dist/release/ then holds, for this system:
                                                       of the bare program would lose that)
 The command line's names carry no version; the app's carry the one tools/version.py sets.
 Files another system put there are left alone, so one folder can gather every system's files.
-Each system's files are built on that system; the Build workflow uploads each one's dist/release/.
+Each system's files are built on that system; the Builds workflow uploads each one's dist/release/.
 """
 
 import glob

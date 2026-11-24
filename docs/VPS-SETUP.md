@@ -103,14 +103,21 @@ The server line looks like this:
 restrict,command="internal-sftp" ssh-ed25519 AAAAC3Nza... deltapatcher@your-pc
 ```
 
-On the VPS, add it as one line to the deploy user's keys:
+The server has to know this line. The easy way: **Check host key** (Part 3, step 3), then **Put key on
+server**: DeltaPatcher logs in once with the deploy user's password, adds the line (never twice, with the
+permissions sshd wants) and forgets the password. It works on a Linux server and on Windows' OpenSSH server
+(an administrator's key goes to `administrators_authorized_keys` there). Command line:
+`deltapatcher ssh install-key`.
+
+Or add it yourself, as one line, to the deploy user's keys on the VPS:
 
 ```
 sudo nano /home/deploy/.ssh/authorized_keys
 ```
 
 `restrict,command="internal-sftp"` means this key can only transfer files with SFTP: no shell, no
-port forwarding. That is all DeltaPatcher needs.
+port forwarding. That is all DeltaPatcher needs. (A server that only takes keys, with passwords switched
+off, needs this second way.)
 
 ## Part 3: connect and release
 

@@ -523,6 +523,21 @@ def cmd_sign(a, cfg):
 
 def cmd_ssh(a, cfg):
     c = a.ssh_cmd
+    if c == "install-key":
+        t = target_from(a, cfg)
+        if not t.key:
+            t.key = ssh.default_key_path()
+        if not os.path.isfile(t.key):
+            raise CliError("there is no key at %s yet: make one first (ssh keygen)" % t.key, "no-key")
+        if not t.user:
+            raise CliError("give the user to log in as (--user), or save it:  deltapatcher config set ssh_user=USER",
+                           "no-user")
+        confirm_host(t)                    # the host key first: the password goes only to the server you trust
+        password = read_passphrase(a, "Password of %s on %s (used once, to add the key; never kept): "
+                                   % (t.user, t.host))
+        result = ssh.install_key(t, password)
+        say("Your key is on %s (%s): DeltaPatcher logs in with it from now on." % (t.host, result), "ok")
+        return {"host": t.host, "user": t.user, "result": result}
     if c in ("keygen", "pubkey", "unlock", "fix-permissions"):
         path = a.path or cfg["ssh_key"] or ssh.default_key_path()
     if c == "keygen":
@@ -870,6 +885,10 @@ def build_parser():
     k.add_argument("--accept", metavar="FINGERPRINTS", help="trust without asking, if the server offers exactly these (comma-separated)")
     k = ss.add_parser("test", help="log in with sftp")
     ssh_args(k)
+    k = ss.add_parser("install-key", help="put your key on the server, logging in once with its password (never "
+                                          "kept); the host key is checked first")
+    ssh_args(k, root=False)
+    pass_stdin(k)
 
     s = sub.add_parser("config", help="the settings file: where it is (made, every setting explained, if missing)")
     cs = s.add_subparsers(dest="config_cmd")

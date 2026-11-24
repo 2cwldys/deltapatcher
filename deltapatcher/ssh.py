@@ -353,6 +353,115 @@ def authorized_keys_line(path, sftp_only=True):
     return "%s %s" % (opts, public_key(path))
 
 
+# ---- putting the key on the server, with its password, once -------------------------------------
+
+KEY_ADDED = "DELTAPATCHER-KEY-ADDED"
+KEY_ALREADY = "DELTAPATCHER-KEY-ALREADY"
+
+# a Linux or other Unix server: the line arrives on standard input; nothing is added twice
+UNIX_INSTALL = ("sh -c 'umask 077; mkdir -p \"$HOME/.ssh\" && touch \"$HOME/.ssh/authorized_keys\" && "
+                "chmod 700 \"$HOME/.ssh\" && chmod 600 \"$HOME/.ssh/authorized_keys\" && read -r line && "
+                "if grep -qxF \"$line\" \"$HOME/.ssh/authorized_keys\"; then echo %s; "
+                "else printf \"%%s\\n\" \"$line\" >> \"$HOME/.ssh/authorized_keys\" && echo %s; fi'"
+                % (KEY_ALREADY, KEY_ADDED))
+
+# a Windows server (OpenSSH for Windows): an administrator's keys go to ProgramData, readable by the
+# Administrators and SYSTEM only, as its sshd expects; anyone else's to their own .ssh folder
+WINDOWS_INSTALL_SCRIPT = r"""
+$line = [Console]::In.ReadLine()
+$me = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+$admin = $me.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($admin) { $file = Join-Path $env:ProgramData 'ssh\administrators_authorized_keys' }
+else { $dir = Join-Path $env:USERPROFILE '.ssh'; New-Item -ItemType Directory -Force $dir | Out-Null
+       $file = Join-Path $dir 'authorized_keys' }
+if ((Test-Path $file) -and ((Get-Content $file) -contains $line)) { 'KEY_ALREADY'; exit 0 }
+Add-Content -Path $file -Value $line -Encoding ascii
+if ($admin) { icacls $file /inheritance:r /grant '*S-1-5-32-544:F' /grant '*S-1-5-18:F' | Out-Null }
+'KEY_ADDED'
+""".replace("KEY_ALREADY", KEY_ALREADY).replace("KEY_ADDED", KEY_ADDED)
+
+
+def windows_install_command():
+    script = base64.b64encode(WINDOWS_INSTALL_SCRIPT.encode("utf-16-le")).decode("ascii")
+    return "powershell -NoProfile -NonInteractive -EncodedCommand " + script
+
+
+def _remote(transport, command, stdin_text, timeout):
+    """Run one command on the server, give it stdin_text, and return what it printed."""
+    chan = transport.open_session(timeout=timeout)
+    try:
+        chan.settimeout(timeout)
+        chan.exec_command(command)
+        chan.sendall(stdin_text.encode("utf-8"))
+        chan.shutdown_write()
+        out = chan.makefile("rb").read() + chan.makefile_stderr("rb").read()
+        return out.decode("utf-8", errors="replace")
+    finally:
+        chan.close()
+
+
+def install_key(target, password, timeout=20):
+    """Put this computer's key (target.key) on the server, logging in once with the password, which is used
+    for that login only and never kept. The server's host key must be one already trusted (ssh trust): it
+    is checked against those entries before the password is sent. Returns 'added' or 'already there'."""
+    try:
+        import paramiko
+    except ImportError:
+        raise SshError("putting a key on a server needs the paramiko package: pip install paramiko "
+                       "(the DeltaPatcher app and deltapatcher-cli carry it)")
+    import socket
+    if not target.user:
+        raise SshError("give the user to log in as")
+    line = authorized_keys_line(target.key)
+    trusted = set(known_keys(target))
+    if not trusted:
+        raise SshError("the server's host key is not trusted yet: check it first (ssh trust)")
+    wanted = []
+    for kind, _blob in trusted:
+        wanted += {"ssh-rsa": ["rsa-sha2-512", "rsa-sha2-256", "ssh-rsa"]}.get(kind, [kind])
+    try:
+        sock = socket.create_connection((target.host, target.port), timeout=timeout)
+    except OSError as e:
+        raise SshError("could not reach %s:%d: %s" % (target.host, target.port, e))
+    transport = paramiko.Transport(sock)
+    try:
+        options = transport.get_security_options()
+        offered = [k for k in options.key_types if k in wanted]
+        if offered:
+            options.key_types = offered
+        try:
+            transport.start_client(timeout=timeout)
+        except paramiko.SSHException as e:
+            raise SshError("could not talk SSH with %s: %s" % (target.host, e))
+        key = transport.get_remote_server_key()
+        if (key.get_name(), key.get_base64()) not in trusted:
+            raise SshError("%s did not show the host key you trusted: nothing was sent (check it again: ssh trust)"
+                           % target.host)
+        try:
+            transport.auth_password(target.user, password)
+        except paramiko.BadAuthenticationType as e:
+            if "keyboard-interactive" not in (e.allowed_types or []):
+                raise SshError("%s does not take a password for %s (it takes: %s)"
+                               % (target.host, target.user, ", ".join(e.allowed_types or [])))
+            transport.auth_interactive(target.user, lambda title, instructions, prompts: [password] * len(prompts))
+        if not transport.is_authenticated():
+            raise SshError("%s refused the password for %s" % (target.host, target.user))
+        out = _remote(transport, UNIX_INSTALL, line + "\n", timeout)
+        if KEY_ADDED not in out and KEY_ALREADY not in out:
+            out = _remote(transport, windows_install_command(), line + "\n", timeout)   # cmd.exe: a Windows server
+        if KEY_ALREADY in out:
+            return "already there"
+        if KEY_ADDED in out:
+            return "added"
+        raise SshError("the server did not take the key: %s" % (out.strip()[-300:] or "no answer"))
+    except paramiko.AuthenticationException:
+        raise SshError("%s refused the password for %s" % (target.host, target.user))
+    except (paramiko.SSHException, OSError) as e:
+        raise SshError("the login to %s stopped: %s" % (target.host, e))
+    finally:
+        transport.close()
+
+
 # ---- the agent --------------------------------------------------------------------------------
 
 def agent_state():

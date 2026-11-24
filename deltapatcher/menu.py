@@ -130,14 +130,22 @@ def setup():
         print("  DeltaPatcher logs in to the server with an SSH key (a pair of files on this computer).")
         if yes("Make one now?"):
             run("ssh", "keygen")
+    print()
+    if not yes("Check the server's host key now (once: it proves later that it is the same server)?"):
+        return pause()
+    if not run("ssh", "trust"):
+        return pause()
     if os.path.isfile(key):
         print()
-        print("  The server has to know this key. Add this line to ~/.ssh/authorized_keys of %s on the server" % user)
-        print("  (it lets the key send files, nothing else):")
-        run("ssh", "pubkey")
+        print("  The server has to know your key. DeltaPatcher can put it there, logging in once with the")
+        print("  password of %s on the server (used for that login only, never kept)." % user)
+        if yes("Put it there now?"):
+            run("ssh", "install-key")
+        else:
+            print("  Then add this line yourself to ~/.ssh/authorized_keys of %s on the server" % user)
+            print("  (it lets the key send files, nothing else):")
+            run("ssh", "pubkey")
     print()
-    if yes("Check the server's host key now (once: it proves later that it is the same server)?"):
-        run("ssh", "trust")
     if yes("Try logging in now?"):
         run("ssh", "test")
     pause()

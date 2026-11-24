@@ -165,6 +165,7 @@ last. The first time a server is used, its host key is shown for you to confirm.
 | `deltapatcher ssh unlock [--path FILE]` | Add the key to `ssh-agent` (asks for the passphrase once) |
 | `deltapatcher ssh trust --host HOST [--port N] [--forget]` | Show the server's host key fingerprints and remember them after you confirm. `--forget` removes them, for after a server reinstall. |
 | `deltapatcher ssh test --host HOST [--user U] [--remote-root PATH]` | Log in with SFTP and look at the remote folder |
+| `deltapatcher ssh install-key [--host HOST] [--user U] [--key FILE]` | Put your key on the server: checks the host key first, then logs in once with the user's password (asked, or the first line of standard input with `--passphrase-stdin`) and adds the key's line, never twice. The password is used for that login only and never kept. Linux servers and Windows' OpenSSH server. |
 
 ## sign
 

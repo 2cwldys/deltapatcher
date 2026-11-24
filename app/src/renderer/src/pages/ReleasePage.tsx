@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw, Rocket,
-  Server as ServerIcon, ShieldAlert, ShieldCheck, Square, Unlock
+  Server as ServerIcon, ShieldAlert, ShieldCheck, Square, Unlock, Upload
 } from 'lucide-react'
 import { useApp } from '../store/app'
 import { ask, HostKey } from '../store/modal'
@@ -76,10 +76,10 @@ async function confirmHost(host: string, keys: HostKey[], changed: boolean): Pro
 }
 
 // run an SSH step; on an unknown host or a key others can read, ask, fix, and run it again
-async function withHostTrust(label: string, args: string[]): Promise<Data | null> {
+async function withHostTrust(label: string, args: string[], passphrase?: string): Promise<Data | null> {
   const st = useApp.getState()
   for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await st.run(label, args)
+    const r = await st.run(label, args, { passphrase })
     if (r.ok) return r.data
     if (r.code === 'host-unknown') {
       if (!(await confirmHost(String(r.data.host ?? ''), (r.data.keys ?? []) as HostKey[], false))) return null
@@ -189,8 +189,21 @@ function ServerSettings(): JSX.Element {
     const r = await useApp.getState().run('New SSH key', ['ssh', 'keygen', `--path=${keyPath}`, '--passphrase-stdin'], { passphrase: p })
     if (r.ok) {
       await window.api.copy(String(r.data.authorized_keys_line))
-      await ask.info('Key made', 'The line for the server is on the clipboard. Add it as one line to ~/.ssh/authorized_keys of the deploy user on the server: it allows SFTP only, nothing else. Then Unlock key, and Check host key.', String(r.data.authorized_keys_line))
+      await ask.info('Key made', "Next: Put key on server (it logs in once with the server's password). Or add this line yourself to ~/.ssh/authorized_keys of the user on the server: it allows SFTP only, nothing else. Then Unlock key.", String(r.data.authorized_keys_line))
     }
+    refresh()
+  }
+  // log in once with the server's password (used for that login only, never kept) and add the key
+  const installKey = async (): Promise<void> => {
+    const s = useApp.getState().settings
+    if (!s.ssh_host || !s.ssh_user) {
+      await ask.info('The server and the user first', 'Fill in Host and User above.')
+      return
+    }
+    const p = await ask.passphrase('Put your key on the server', `The password of ${String(s.ssh_user)} on ${String(s.ssh_host)}.\n\nIt is used once, to add your key, and never kept: after that DeltaPatcher logs in with the key.`, false, 1)
+    if (p === null) return
+    const d = await withHostTrust('Put key on server', ['ssh', 'install-key', ...hostArgs(), '--passphrase-stdin'], p)
+    if (d) await ask.info('Your key is on the server', `${String(d.host)} knows your key now (${String(d.result)}). Unlock key, then Test connection.`)
     refresh()
   }
   const copyLine = async (): Promise<void> => {
@@ -262,6 +275,7 @@ function ServerSettings(): JSX.Element {
         {perms.length > 0 && <div className="mt-3"><Banner kind="bad">{perms.join('; ')}. OpenSSH refuses a key others can read: use Fix permissions.</Banner></div>}
         <div className="mt-4 flex flex-wrap gap-2">
           <Button small icon={KeyRound} disabled={Boolean(busy) || Boolean(status?.key_exists)} onClick={newKey}>New key</Button>
+          <Button small icon={Upload} disabled={Boolean(busy) || !status?.key_exists || !settings.ssh_host} onClick={installKey}>Put key on server</Button>
           <Button small icon={Copy} disabled={Boolean(busy) || !status?.key_exists} onClick={copyLine}>Copy server line</Button>
           <Button small icon={Unlock} disabled={Boolean(busy) || !status?.key_exists || !status?.has_passphrase} onClick={unlock}>Unlock key</Button>
           <Button small icon={Lock} disabled={Boolean(busy) || !perms.length} onClick={fixPerms}>Fix permissions</Button>

@@ -88,13 +88,13 @@ flowchart LR
 
 ## Get it
 
-From the [latest release](https://github.com/2cwldys/deltapatcher/releases/latest):
+From the [latest release](https://github.com/2cwldys/deltapatcher/releases):
 
 | | The app | The command line |
 | --- | --- | --- |
-| **Windows** | Installer: `DeltaPatcher-<version>-setup.exe`<br>No install: `...-windows-x64.zip`<br>One file: `...-portable.exe` | [`deltapatcher-cli-windows-x64.exe`](https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-windows-x64.exe) |
-| **Linux**<br><sub>Ubuntu 22.04+, Debian 12+</sub> | `DeltaPatcher-<version>.AppImage`<br>or `...-linux-x64.tar.gz` | [`deltapatcher-cli-linux-x64.tar.gz`](https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-linux-x64.tar.gz) |
-| **macOS**<br><sub>Apple silicon</sub> | `DeltaPatcher-<version>-arm64.dmg`<br><sub>The first time: right-click it, then Open.</sub> | [`deltapatcher-cli-macos-arm64.tar.gz`](https://github.com/2cwldys/deltapatcher/releases/latest/download/deltapatcher-cli-macos-arm64.tar.gz) |
+| **Windows** | Installer: `DeltaPatcher-<version>-setup.exe`<br>No install: `...-windows-x64.zip`<br>One file: `...-portable.exe` | `deltapatcher-cli-windows-x64.exe` |
+| **Linux**<br><sub>Ubuntu 22.04+, Debian 12+</sub> | `DeltaPatcher-<version>.AppImage`<br>or `...-linux-x64.tar.gz` | `deltapatcher-cli-linux-x64.tar.gz` |
+| **macOS**<br><sub>Apple silicon</sub> | `DeltaPatcher-<version>-arm64.dmg`<br><sub>The first time: right-click it, then Open.</sub> | `deltapatcher-cli-macos-arm64.tar.gz` |
 
 Everything is self-contained. Double-click the command line for a menu of plain questions (`--close`
 makes it close when it is done); on Linux and macOS, unpack it with `tar -xzf` first, and give the AppImage

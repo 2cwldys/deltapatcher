@@ -49,7 +49,7 @@ identical files are stored once.
   </tr>
   <tr>
     <td valign="top"><b>Several projects</b><br>Every game, mod or server you keep up to date or release, each with its own settings. <i>Update all</i> runs three at once.</td>
-    <td valign="top"><b>Share a project</b><br>One <code>.deltapatch</code> or <code>.html</code> file sets a player up, signed so they know it is yours.</td>
+    <td valign="top"><b>Project presets</b><br>Share projects as one <code>.deltapatch</code> or <code>.html</code> file: players open it and are set up, signed so they know it is yours.</td>
     <td valign="top"><b>Updates while you play</b><br>It checks every hour from the tray, says what is waiting, and can update by itself.</td>
   </tr>
 </table>

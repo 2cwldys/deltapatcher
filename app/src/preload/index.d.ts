@@ -17,6 +17,7 @@ declare global {
       onShowPage: (cb: (page: string) => void) => void
       notify: (title: string, body: string, onlyHidden: boolean) => Promise<string>
       setMinimizeToTray: (on: boolean) => Promise<void>
+      setSeeding: (count: number) => Promise<void>
       setStartWithSystem: (on: boolean) => Promise<string>
       startAfresh: () => Promise<boolean>
       open: (path: string) => Promise<string>

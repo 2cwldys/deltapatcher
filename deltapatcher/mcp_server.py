@@ -635,6 +635,57 @@ def t_project_accept(server, a, key, progress):
     return engine_result(server.engine.run(["project", "accept", a["project"], "--yes", "--expect", change["hash"]], key=key))
 
 
+def size_text(n):
+    """Bytes for people: 512 bytes, 12.0 KB, 4.5 MB."""
+    n = float(n or 0)
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if n < 1024:
+            return "%d %s" % (n, unit) if unit == "bytes" else "%.1f %s" % (n, unit)
+        n /= 1024
+    return "%.1f TB" % n
+
+
+def t_seed_status(server, a, key, progress):
+    """Which projects are shared by torrent and set to seed, and which a seed run seeds now (seeding.json, as the
+    engine's project list reads it: only runs whose process is alive), with their peers and rates; whether torrents
+    are refused. It only reads: starting and stopping seeding stay with a person."""
+    listing = server.engine.run(["projects"], key=key)
+    if not listing.ok:
+        return engine_result(listing)
+    cfg = server.engine.run(["config", "get"], key=key)
+    torrents = str(((cfg.data or {}).get("settings") or {}).get("torrents") or "allow") if cfg.ok else "unknown"
+    rows = []
+    for p in listing.data.get("projects") or []:
+        run = p.get("seeding") if isinstance(p.get("seeding"), dict) else None
+        if not (p.get("torrent") or p.get("seed") or run):
+            continue
+        rows.append({"project": p.get("title"), "file": p.get("file"), "torrent": bool(p.get("torrent")),
+                     "torrent_only": bool(p.get("torrent_only")), "seed": bool(p.get("seed")),
+                     "seeding": None if run is None else {k: run.get(k) for k in (
+                         "state", "why", "release", "peers", "upload_rate", "sent", "kind", "folder", "pid")}})
+    lines = ["Torrents are allowed here." if torrents == "allow" else
+             "Torrents are refused here (Settings, Torrents): nothing is seeded." if torrents == "refuse" else
+             "Whether torrents are allowed here could not be read: %s" % cfg.message]
+    if not rows:
+        lines.append("No project is shared by torrent.")
+    for r in rows:
+        shared = "by torrent only" if r["torrent_only"] else "shared by torrent" if r["torrent"] else "not shared by torrent"
+        s = r["seeding"]
+        if s is None:
+            now = "not seeded now"
+        elif s.get("state") == "seeding":
+            now = "seeded now: %s peer%s, %s/s up, %s sent this run (process %s)" % (
+                s.get("peers") or 0, "" if s.get("peers") == 1 else "s", size_text(s.get("upload_rate")),
+                size_text(s.get("sent")), s.get("pid"))
+        else:
+            now = "in a seed run, %s%s" % (s.get("state"), (": " + s["why"]) if s.get("why") else "")
+        lines.append("%s: %s, %s; %s" % (r["project"], shared, "set to seed" if r["seed"] else "not set to seed", now))
+    lines.append("Seeding starts and stops only with a person: in the DeltaPatcher app (Projects, Seed this project or "
+                 "Stop seeding), or with deltapatcher seed.")
+    seeding = len([r for r in rows if r["seeding"] and r["seeding"].get("state") == "seeding"])
+    return text_result("\n".join(lines), {"torrents": torrents, "projects": rows, "seeding": seeding})
+
+
 TOOLS_LIST = [
     Tool("version", "DeltaPatcher's version", "The version of DeltaPatcher this server runs, and whether it can sign.",
          schema(), RO, build=simple("version")),
@@ -832,6 +883,12 @@ TOOLS_LIST = [
          "over the project's SFTP connection, or on this computer for a folder or local release). Counts only: never "
          "an address or a line of the log. A section that cannot be made says why under problems.",
          schema(days=s_int("How many days back (default 30).", 1, 366), project=PROJECT), RO_NET, build=b_stats),
+    Tool("seed_status", "Seeding status",
+         "Which projects are shared by torrent and set to seed (seed = yes), and which a seed run seeds now, with their "
+         "peers, upload rate (bytes a second) and what they sent this run, read from DeltaPatcher's seeding.json and the "
+         "settings; and whether torrents are refused here. It only reads: it never starts or stops seeding, which stays "
+         "with a person (the DeltaPatcher app, or deltapatcher seed).",
+         schema(), RO, run=t_seed_status),
     Tool("check_for_new_version", "Is DeltaPatcher up to date",
          "Whether a newer DeltaPatcher is out. Updating DeltaPatcher itself is done in its app or command line.",
          schema(), RO_NET, build=simple("self-update", "--check")),

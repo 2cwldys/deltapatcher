@@ -27,6 +27,8 @@ const api = {
   notify: (title: string, body: string, onlyHidden: boolean): Promise<string> =>
     ipcRenderer.invoke('app:notify', title, body, onlyHidden),
   setMinimizeToTray: (on: boolean): Promise<void> => ipcRenderer.invoke('app:minimize-to-tray', on),
+  // how many projects are seeded now: the tray's tooltip says it
+  setSeeding: (count: number): Promise<void> => ipcRenderer.invoke('app:seeding', count),
   // '' when the system is in step with the setting, else what went wrong
   setStartWithSystem: (on: boolean): Promise<string> => ipcRenderer.invoke('app:start-with-system', on),
   startAfresh: (): Promise<boolean> => ipcRenderer.invoke('app:start-afresh'),

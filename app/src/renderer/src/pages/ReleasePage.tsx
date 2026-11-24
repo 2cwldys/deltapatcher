@@ -1,20 +1,23 @@
-// The Release page: what to release (with what is new in it for players, and whether they see the file names),
-// where players download it from, the one-time setup of the server (folded once it is all done), and one button
-// that publishes the folder and sends only what changed there (or serves it on this computer, to try it first);
-// then the statistics of the release players have. Publishing the same version again with changed files is fine:
-// players get the changed files (a shadow patch). A project with no folder to release yet opens on a short start;
-// the rest is one click away. The backups of the live release are on the Settings page.
+// The Release page: what to release (with what is new in it for players, whether they see the file names, and
+// whether it is shared by torrent too), where players download it from, the one-time setup of the server (folded
+// once it is all done), and one button that publishes the folder and sends only what changed there (or serves it on
+// this computer, to try it first); then the statistics of the release players have. Publishing the same version
+// again with changed files is fine: players get the changed files (a shadow patch). A project with no folder to
+// release yet opens on a short start; the rest is one click away. The backups of the live release are on the
+// Settings page.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   ChartColumn, ChevronsDown, Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw,
   Rocket, Server as ServerIcon, ServerCog, ShieldAlert, ShieldCheck, Square, Unlock, Upload
 } from 'lucide-react'
 import type { EngineOutcome } from '@shared/types'
-import { useApp } from '../store/app'
+import { seedAfterPublish, useApp } from '../store/app'
 import { sentences } from '../store/projectActions'
 import { BarRow, players, statsCounter, StatsState, statsSummary, when } from '../store/stats'
 import { serverSetup, signingSetup, SignStatus, SshStatus } from '../store/setup'
 import { NOTES_MAX, notesProblem } from '../store/publisher'
+import { seedsProblem, torrentSwitches } from '../store/seeding'
+import { useFolds } from '../store/folds'
 import { REPO_URL } from '@shared/project'
 import { ask, HostKey } from '../store/modal'
 import { Banner, Button, Card, Chip, Field, InfoTip, Segmented, SettingToggle, Stat, Toggle, human } from '../components/ui'
@@ -129,7 +132,10 @@ export async function publishRelease(): Promise<Data | null> {
       args.push('--passphrase-stdin')
     }
   }
+  const project = st.project
   const r = await st.run('Publish', args, { passphrase })
+  // a torrent made for a project set to seed: its store is seeded from now on
+  if (r.ok && r.data.torrent) seedAfterPublish(project)
   return r.ok ? r.data : null
 }
 
@@ -165,6 +171,44 @@ export async function runRelease(dry = false): Promise<void> {
   // the notes went out with this release: the box is ready for the next one
   if (!dry && pub.notes) st.setNotes(project, '')
   st.setResult('release', { publish: pub, deploy: d, players_url: String(s.public_url || ''), mode })
+}
+
+// Shared by torrent too (off at first): players also download each release from each other. It needs signed
+// releases: until they are, the switch says so and leads to signing. On, it shows the seeds players connect to
+// first, and whether this computer seeds the release (the project's store).
+function TorrentPart(props: { mode: Mode }): JSX.Element {
+  const settings = useApp((s) => s.settings)
+  const blocked = torrentSwitches(settings)
+  const toSigning = (): void => {
+    useFolds.getState().setFolded(props.mode === 'sftp' ? 'release/setup' : 'release/sign', false)
+    setTimeout(() => document.getElementById('release-signing')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+  return (
+    <>
+      {blocked.torrent ? (
+        <div>
+          <Toggle checked={false} disabled onChange={() => undefined} label="Share by torrent too" line={blocked.torrent} />
+          <div className="mt-2 pl-12">
+            <Button small variant="ghost" icon={PenLine} onClick={toSigning}>Set up signing</Button>
+          </div>
+        </div>
+      ) : (
+        <SettingToggle setting="torrent" label="Share by torrent too" line="Players also download each release from each other."
+          hint={'Players also download each release from each other, beside your address.\nA project with no address updates by torrent only.\n' +
+            'Export the project file again once it is on: players need its torrent from it.'} />
+      )}
+      {Boolean(settings.torrent) && (
+        <>
+          <Field className="md:col-span-2" label="Seeds" setting="seeds" mono placeholder="game.example.com:6881" check={seedsProblem}
+            line="Computers players connect to first: host:port, separated by ,"
+            hint={'Keep at least one of them on: a new player who reaches none of them cannot start.\n' +
+              'Your own computer with its torrent port forwarded, or deltapatcher seed on a server.'} />
+          <SettingToggle setting="seed" label="Seed it from this computer" line="Players need at least one seed they can reach."
+            hint={'Players need at least one seed they can reach.\nDeltaPatcher shares this release with them while it runs.\nOthers see your IP address.'} />
+        </>
+      )}
+    </>
+  )
 }
 
 // What is new in the release, for players: kept in the window, per project, until its release is sent
@@ -424,7 +468,7 @@ function SetupCard(props: { mode: Mode }): JSX.Element {
   if (!sftp) {
     const state = signingSetup(sign, signing)
     return (
-      <Card fold="release/sign" title="Sign releases (optional)" icon={PenLine} startsFolded={state.ready} summary={state.line}
+      <Card fold="release/sign" anchor="release-signing" title="Sign releases (optional)" icon={PenLine} startsFolded={state.ready} summary={state.line}
         actions={signing?.exists ? <Chip kind="ok" icon={KeyRound}>Key ready{signing.has_passphrase ? ', passphrase protected' : ''}</Chip> : <Chip kind="muted">No key yet</Chip>}>
         <SigningSteps status={signing} keep={keep} />
       </Card>
@@ -433,7 +477,7 @@ function SetupCard(props: { mode: Mode }): JSX.Element {
   const state = serverSetup(ssh, sign, signing)
   const line = <span className={ssh ? (state.ready ? 'text-delta-light' : 'text-blob-light') : 'text-ink-400'}>{state.line}</span>
   return (
-    <Card fold="release/setup" title="Set up your server" icon={ServerCog} startsFolded={state.ready} summary={line}
+    <Card fold="release/setup" anchor="release-signing" title="Set up your server" icon={ServerCog} startsFolded={state.ready} summary={line}
       info={'Done once for a server: an SSH key, on the server and unlocked; its host key, confirmed; and a signing key, if releases are signed.\nThis part folds by itself once everything in it is done.'}
       actions={<Button small variant="ghost" icon={RefreshCw} onClick={() => void refresh()}>Refresh</Button>}>
       <p className="text-sm">{line}</p>
@@ -695,6 +739,7 @@ export default function ReleasePage(): JSX.Element {
           <NotesBox />
           <SettingToggle setting="show_files" label="Show players the file names"
             hint={'Players see which files a release adds, changes and removes, and its whole list.\nThe release is public either way: off, DeltaPatcher shows them only how many.'} />
+          <TorrentPart mode={mode} />
         </div>
       </Card>
 

@@ -12,7 +12,7 @@ import UpdatePage, { runUpdate } from './pages/UpdatePage'
 import ReleasePage, { publishRelease } from './pages/ReleasePage'
 import SettingsPage from './pages/SettingsPage'
 import ProjectsPage from './pages/ProjectsPage'
-import { autoBackup, autoCheck, Page, useApp } from './store/app'
+import { autoBackup, autoCheck, Page, startSeeding, useApp } from './store/app'
 import { addFile } from './store/projectActions'
 import { scheduler, TICK } from './store/schedule'
 
@@ -95,6 +95,9 @@ export default function App(): JSX.Element {
         return
       }
       if (useApp.getState().settings.check_updates !== false) useApp.getState().checkAppUpdate()
+      // seeding is remembered: the seed run starts when a project is set to seed, torrents are allowed and Force
+      // stop is not on
+      void startSeeding()
       // every project is checked at the start, then every check_every_hours hours while DeltaPatcher runs; a
       // project with backup_every_hours is backed up as often
       const tick = scheduler(autoCheck)

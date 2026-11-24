@@ -1,12 +1,14 @@
 // The dialogs of project files (.deltapatch, .html). Import: what a file holds and who signed it, a tick and
 // a folder for each project; a project of an update capable file is marked so, and one this computer has
-// already is updated in place (what changes listed), or added as a new project instead. Export: which projects
-// go into one, update capable or a new project for every file, which kind of file, signed or not.
-import { FileDown, FolderOpen, PackagePlus, RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-react'
+// already is updated in place (what changes listed), or added as a new project instead. A project shared by
+// torrent is marked so, with the choice to seed it (off at first), or what refused torrents leave of it. Export:
+// which projects go into one, update capable or a new project for every file, which kind of file, signed or not.
+import { FileDown, FolderOpen, Magnet, PackagePlus, RefreshCw, ShieldAlert, ShieldCheck } from 'lucide-react'
 import { Exporting, ImportEntry, Importing, useApp } from '../store/app'
 import { baseName, finishExport, finishImport, nameProblem } from '../store/projectActions'
 import { suggestedFolder } from '../store/folders'
 import { changeLines, importButton, inPlace, UPDATE_CAPABLE, updateLine } from '../store/publisher'
+import { refusedLine, SEED_IT, torrentMark } from '../store/seeding'
 import { Frame } from './Modals'
 import { Button, InfoTip, Toggle } from './ui'
 
@@ -24,6 +26,18 @@ export function UpdateCapable(): JSX.Element {
       className="inline-flex shrink-0 items-center gap-1 rounded-full border border-delta/30 bg-delta/10 px-2 py-0.5 text-[11px] font-medium text-delta-light">
       <RefreshCw size={11} />
       update capable
+    </span>
+  )
+}
+
+// the mark of a project shared by torrent (by torrent only: it has no address); its hover text says what that means
+export function TorrentMark(props: { only: boolean }): JSX.Element {
+  const mark = torrentMark(props.only)
+  return (
+    <span title={mark.hint} aria-label={mark.hint}
+      className="inline-flex shrink-0 items-center gap-1 rounded-full border border-sky-500/30 bg-sky-500/10 px-2 py-0.5 text-[11px] font-medium text-sky-300">
+      <Magnet size={11} />
+      {mark.text}
     </span>
   )
 }
@@ -100,12 +114,16 @@ export function ImportDialog(): JSX.Element | null {
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="text-sm font-semibold text-slate-100">{e.title}</span>
                     {im.updates && <UpdateCapable />}
+                    {e.torrent && <TorrentMark only={!e.source_url} />}
                   </span>
                   {e.description && <span className="block text-xs text-ink-300">{e.description}</span>}
                   <span className="selectable block break-all font-mono text-[12px] text-ink-300">{e.source_url}</span>
                   <span className="block text-[11px] text-ink-400">
                     {e.trust_key ? 'Its releases must be signed by the publisher key it gives.' : 'No publisher key given.'}
                   </span>
+                  {e.torrent && im.torrentsRefused && (
+                    <span className="block text-[11px] text-blob-light">{refusedLine(Boolean(e.source_url))}</span>
+                  )}
                 </span>
               </label>
               {e.pick && inPlace(e) && <InPlace e={e} working={im.working} onAsNew={() => setEntry(i, { asNew: true })} />}
@@ -138,6 +156,11 @@ export function ImportDialog(): JSX.Element | null {
                     {e.install_folder && <p className="hint">{`Browse puts it in ${e.install_folder} inside the folder you pick.`}</p>}
                   </div>
                   {problem && <p className="text-xs text-rose-300">{problem}</p>}
+                  {e.torrent && !im.torrentsRefused && (
+                    <div className="pt-1">
+                      <Toggle checked={e.seed} disabled={im.working} onChange={(v) => setEntry(i, { seed: v })} label="Seed this project" line={SEED_IT} />
+                    </div>
+                  )}
                 </div>
               )}
             </div>

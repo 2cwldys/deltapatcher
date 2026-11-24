@@ -52,7 +52,20 @@ export interface ProjectEndEvent extends ProjectRef {
   code?: string
 }
 
-export type EngineEvent = LogEvent | ProgressEvent | ServingEvent | QueueEvent | ProjectStartEvent | ProjectEndEvent
+// seed: every 5 seconds, for each project the run seeds, how it is doing (bytes a second; bytes this run)
+export interface SeedingEvent extends ProjectRef {
+  event: 'seeding'
+  folder: string
+  kind: 'folder' | 'store'
+  state: 'seeding' | 'paused' | 'waiting' | 'stopped'
+  why: string
+  release: string
+  peers: number
+  upload_rate: number
+  sent: number
+}
+
+export type EngineEvent = LogEvent | ProgressEvent | ServingEvent | QueueEvent | ProjectStartEvent | ProjectEndEvent | SeedingEvent
 
 export interface EngineOutcome {
   ok: boolean
@@ -99,5 +112,5 @@ export interface AppInfo {
 // the engine commands the window may run; anything else is refused by the main process
 export const ENGINE_COMMANDS = [
   'update', 'rollback', 'publish', 'deploy', 'sign', 'ssh', 'config', 'version', 'serve', 'self-update', 'projects', 'project',
-  'reset', 'stats', 'backup'
+  'reset', 'stats', 'backup', 'seed'
 ] as const

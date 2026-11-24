@@ -72,7 +72,7 @@ export const WORDS: Record<string, SettingWords> = {
   parallel_updates: { label: 'Projects updated at once', line: 'How many projects Update all runs at the same time.', more: true },
   check_every_hours: { label: 'Hours between checks', line: 'Every project is checked at the start, then this often.' },
   auto_update: { label: 'Update by themselves', line: 'Projects with an update are updated when they are checked.' },
-  torrents: { label: 'Torrents', line: 'allow, or refuse: then DeltaPatcher never uses BitTorrent.' },
+  torrents: { label: 'Torrents', line: 'Refuse: DeltaPatcher never uses BitTorrent, whatever a project asks.' },
   torrent_port: { label: 'Torrent port', line: 'The port seeding listens on; 0: any free port.', more: true },
   seed_upload_kbps: { label: 'Upload limit', line: 'The most torrents send to others, in KB/s; 0: no limit.', more: true },
   torrent_port_mapping: { label: 'Port mapping', line: 'Ask the router to forward the torrent port (UPnP, NAT-PMP).', more: true }

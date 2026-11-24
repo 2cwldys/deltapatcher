@@ -1,7 +1,7 @@
-// Force stop, the panic button: the red box at the bottom of the sidebar ends everything DeltaPatcher runs, and
-// the pages stay greyed out under a notice until the stop is lifted. The box stays clickable over a dialog.
+// Force stop, the panic button: the red box at the bottom of the sidebar ends everything DeltaPatcher runs, seeding
+// too, and the pages stay greyed out under a notice until the stop is lifted. The box stays clickable over a dialog.
 import { OctagonX } from 'lucide-react'
-import { useApp } from '../store/app'
+import { joinNames, useApp } from '../store/app'
 import { Button } from './ui'
 
 // when Force stop was turned on, for people ('' when that is not known)
@@ -49,10 +49,11 @@ export function ForceStopBox(): JSX.Element {
   )
 }
 
-// over the greyed-out pages while Force stop is on
+// over the greyed-out pages while Force stop is on; it says which projects it turned seeding off for
 export function StoppedNotice(): JSX.Element {
   const since = useApp((s) => s.stoppedSince)
   const liftStop = useApp((s) => s.liftStop)
+  const seedOff = useApp((s) => s.seedTurnedOff)
   const at = sinceText(since)
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center p-8">
@@ -62,6 +63,11 @@ export function StoppedNotice(): JSX.Element {
         <p className="mt-2 text-sm leading-relaxed text-ink-300">
           Every update, check, release and download was stopped, and nothing starts until you lift the stop.
         </p>
+        {seedOff.length > 0 && (
+          <p className="mt-3 text-sm leading-relaxed text-ink-300">
+            {`Seeding was turned off for ${joinNames(seedOff)}: it stays off until you turn it on again.`}
+          </p>
+        )}
         <p className="mt-3 text-sm leading-relaxed text-ink-300">
           Lifting it starts nothing that was stopped; the automatic checks come back on their usual schedule.
         </p>

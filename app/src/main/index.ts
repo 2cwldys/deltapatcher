@@ -81,6 +81,12 @@ let hideFirstWindow = false
 let startWithSystem: boolean | null = null
 // Force stop, as the window last set it or the last run left it
 let forceStopState: ForceStop = { on: false, since: '' }
+// how many projects the window's seed run seeds now, which the tray's tooltip says
+let seedingNow = 0
+
+function trayTip(): string {
+  return seedingNow > 0 ? `DeltaPatcher: seeding ${seedingNow} ${seedingNow === 1 ? 'project' : 'projects'}` : 'DeltaPatcher'
+}
 
 // Force stop holds until it is lifted, also through a restart: force-stop.json in the app's data folder says
 // since when. A file that is there but cannot be read still means stopped.
@@ -240,7 +246,7 @@ function createTray(): void {
   const image = nativeImage.createFromPath(asset(process.platform === 'win32' ? 'icon.ico' : 'icon.png'))
   if (image.isEmpty()) return
   tray = new Tray(process.platform === 'darwin' ? image.resize({ width: 18, height: 18 }) : image)
-  tray.setToolTip('DeltaPatcher')
+  tray.setToolTip(trayTip())
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: 'Show DeltaPatcher', click: () => showWindow() },
@@ -360,6 +366,11 @@ function registerIpc(): void {
   })
   handle('app:minimize-to-tray', (_e, on: boolean) => {
     minimizeToTray = Boolean(on)
+  })
+  // the tray's tooltip while seeding: how many projects are seeded now
+  handle('app:seeding', (_e, count: number) => {
+    seedingNow = Math.max(0, Math.min(9999, Math.floor(Number(count)) || 0))
+    tray?.setToolTip(trayTip())
   })
   // start_with_system, put in place at every start and on every change: '' when done, else what went wrong
   handle('app:start-with-system', (_e, on: boolean) => {

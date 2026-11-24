@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { ChevronDown, ChevronUp, FileText, FolderKanban, FolderOpen, Info, RotateCcw, Settings2, SlidersHorizontal, Trash2, TriangleAlert } from 'lucide-react'
+import { ChevronDown, ChevronUp, FileText, FolderKanban, FolderOpen, Info, Magnet, RotateCcw, Settings2, SlidersHorizontal, Trash2, TriangleAlert } from 'lucide-react'
 import { running, SchemaItem, useApp, Value } from '../store/app'
 import { removeProject, resetAll, sentences } from '../store/projectActions'
 import { folderNameProblem } from '../store/folders'
 import { sizeProblem } from '../store/backups'
 import { useFold } from '../store/folds'
 import { HIDDEN, splitMore, wordsOf } from '../store/settingWords'
+import { portProblem, seedsProblem, torrentNameProblem, torrentSwitches } from '../store/seeding'
 import BackupsSection from '../components/BackupsSection'
-import { Button, Card, Chip, Field, SettingToggle } from '../components/ui'
+import { Button, Card, Chip, Field, SettingChoice, SettingToggle } from '../components/ui'
 import type { AppInfo } from '@shared/types'
 
 const SECTIONS: Record<string, string> = {
@@ -17,29 +18,69 @@ const SECTIONS: Record<string, string> = {
   server: 'Server',
   window: 'Window',
   general: 'Projects',
-  backup: 'Backups'
+  backup: 'Backups',
+  torrent: 'Torrents'
 }
 // DeltaPatcher's own settings, in the main file whichever project is shown
 const APP_SECTIONS = ['window', 'general']
+// settings that take one of a few words, never typed: the engine refuses anything else
+const CHOICES: Record<string, { value: string; label: string }[]> = {
+  torrents: [{ value: 'allow', label: 'Allow' }, { value: 'refuse', label: 'Refuse' }]
+}
+// what is wrong with a typed value, said under it while it stays unsaved: the engine's own rules
+const CHECKS: Record<string, (v: string) => string> = {
+  install_folder: folderNameProblem,
+  backup_max_size: sizeProblem,
+  seeds: seedsProblem,
+  torrent_name: torrentNameProblem,
+  torrent_port: portProblem
+}
 
 // A setting in plain words (store/settingWords.ts): its label, its own name small beside it, one short line
 // under it, and the engine's whole explanation behind the (i). blocked: a switch that cannot work in this copy,
-// and why (start_with_system, run from source).
+// or not yet, and why (start_with_system, run from source; torrents before releases are signed).
 function Setting(props: { s: SchemaItem; blocked?: string }): JSX.Element {
   const s = props.s
   const words = wordsOf(s.key)
+  if (CHOICES[s.key]) {
+    return <SettingChoice setting={s.key} label={words.label} showSetting hint={sentences(s.what)} line={words.line} options={CHOICES[s.key]} />
+  }
   return typeof s.default === 'boolean' ? (
     <SettingToggle setting={s.key} label={words.label} showSetting hint={sentences(s.what)} line={words.line} blocked={props.blocked} />
   ) : (
     <Field label={words.label} setting={s.key} showSetting hint={sentences(s.what)} line={words.line} mono
       type={typeof (s.default as Value) === 'number' ? 'number' : 'text'}
       browse={FOLDERS.includes(s.key) ? 'folder' : undefined}
-      check={s.key === 'install_folder' ? folderNameProblem : s.key === 'backup_max_size' ? sizeProblem : undefined} />
+      check={CHECKS[s.key]} />
   )
 }
 
 // a folder chosen with Browse here: these settings are typed on no other page
 const FOLDERS = ['backup_dir']
+
+// BitTorrent in this copy, tested when asked: the engine's self-test (a session on 127.0.0.1, a small torrent made
+// and checked). With torrents refused it makes no session, and says so.
+function TorrentTest(): JSX.Element {
+  const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null)
+  const [testing, setTesting] = useState(false)
+  const test = async (): Promise<void> => {
+    setTesting(true)
+    const r = await useApp.getState().run('', ['version', '--torrent'], { quiet: true })
+    setTesting(false)
+    if (r.ok) return setSaid({ ok: true, text: 'BitTorrent works here' })
+    const steps = (r.data.torrent_test?.steps ?? []) as { step: string; ok: boolean; detail: string }[]
+    const bad = steps.find((x) => !x.ok)
+    setSaid({ ok: false, text: bad ? `It failed at: ${bad.step}${bad.detail ? ` (${bad.detail})` : ''}.` : sentences(String(r.message ?? 'It failed.')) })
+  }
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-2">
+      <Button small variant="ghost" icon={Magnet} disabled={testing} title="A session on this computer only, and a small torrent made and checked"
+        onClick={() => void test()}>{testing ? 'Testing...' : 'Test BitTorrent'}</Button>
+      {said?.ok && <Chip kind="ok">{said.text}</Chip>}
+      {said && !said.ok && <p className="whitespace-pre-line text-xs text-blob-light">{said.text}</p>}
+    </div>
+  )
+}
 
 // A section's settings: the ones often changed, then More, which unfolds the ones rarely changed (each in the
 // order of the settings file; the window remembers it as it remembers its cards)
@@ -96,7 +137,7 @@ const RESET =
   'A copy of the settings files is kept beside them, so a reset can be undone by hand.'
 
 export default function SettingsPage(): JSX.Element {
-  const { schema, settingsPath, mainPath, logDir } = useApp()
+  const { schema, settingsPath, mainPath, logDir, settings } = useApp()
   const project = useApp((s) => s.projects.find((p) => p.file === s.project))
   const working = useApp((s) => Boolean(s.busy) || Boolean(s.allJob) || Object.values(s.runs).some((r) => running(r)))
   const [info, setInfo] = useState<AppInfo | null>(null)
@@ -126,7 +167,7 @@ export default function SettingsPage(): JSX.Element {
         </div>
       </Card>
 
-      <Sections names={own} schema={schema} />
+      <Sections names={own} schema={schema} blocked={torrentSwitches(settings)} />
 
       <Card fold="settings/deltapatcher" title="DeltaPatcher" icon={Settings2}>
         <p className="text-sm text-ink-300">
@@ -153,6 +194,7 @@ export default function SettingsPage(): JSX.Element {
           <Chip kind="muted">MIT licence</Chip>
         </div>
         <p className="selectable mt-3 break-all font-mono text-xs text-ink-400">engine: {info?.engine}</p>
+        <TorrentTest />
       </Card>
 
       <div className="pt-6">

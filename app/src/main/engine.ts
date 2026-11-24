@@ -32,7 +32,8 @@ const ALLOWED_OPTIONS = new Set([
   '--source', '--trust-key', '--check', '--name', '--version', '--protect', '--leave-out', '--sign', '--no-htaccess',
   '--passphrase-stdin', '--port', '--to-folder', '--host', '--user', '--key', '--remote-root', '--dry-run',
   '--path', '--accept', '--forget', '--app', '--project', '--all', '--jobs', '--yes', '--out', '--only', '--folder',
-  '--as-is', '--days', '--files', '--notes', '--updates', '--no-updates', '--as-new', '--not-now', '--expect'
+  '--as-is', '--days', '--files', '--notes', '--updates', '--no-updates', '--as-new', '--not-now', '--expect', '--seed',
+  '--torrent'
 ])
 
 function repoRoot(): string {

@@ -1,8 +1,8 @@
 // What the project picker, the Projects page and the Settings page do with projects, with the same questions
 // everywhere: make, rename and remove them; add a project file (imported, or updating the project it is for) or a
 // settings file (listed); export a project file; apply a publisher's change or answer it Not now; show what a
-// release changed; remove every project; reset DeltaPatcher.
-import { ImportEntry, ProjectInfo, UpdateResult, useApp } from './app'
+// release changed; seed a project or stop seeding it; remove every project; reset DeltaPatcher.
+import { ImportEntry, ProjectInfo, seedSettingsChanged, UpdateResult, useApp } from './app'
 import { ask } from './modal'
 import { nameRules } from './folders'
 import { acceptArgs, applyQuestion, inPlace, PublisherChange, updatesDefault } from './publisher'
@@ -173,7 +173,8 @@ export async function startImport(path: string): Promise<void> {
     pick: true,
     name: e.taken ? freeName(e.title, taken) : e.title,
     folder: '',
-    asNew: false
+    asNew: false,
+    seed: false
   }))
   useApp.setState({
     importing: {
@@ -182,6 +183,7 @@ export async function startImport(path: string): Promise<void> {
       signer: String(r.data.signer ?? ''),
       fingerprint: String(r.data.fingerprint ?? ''),
       updates: Boolean(r.data.updates),
+      torrentsRefused: Boolean(r.data.torrents_refused),
       entries,
       updateNow: true,
       working: false
@@ -189,14 +191,14 @@ export async function startImport(path: string): Promise<void> {
   })
 }
 
-// Add (or Update) in the import dialog: each ticked project with its name and folder, or the project here it
-// updates, then the updates asked for
+// Add (or Update) in the import dialog: each ticked project with its name and folder (and seeding, when the person
+// said yes to it), or the project here it updates, then the updates asked for
 export async function finishImport(): Promise<void> {
   const st = useApp.getState()
   const im = st.importing
   if (!im) return
   useApp.setState({ importing: { ...im, working: true } })
-  const added: { file: string; folder: string }[] = []
+  const added: { file: string; folder: string; seed: boolean }[] = []
   const updated: string[] = []
   const problems: string[] = []
   for (const e of im.entries.filter((x) => x.pick)) {
@@ -206,10 +208,11 @@ export async function finishImport(): Promise<void> {
       if (e.name.trim() !== e.title) args.push(`--name=${e.name.trim()}`)
       // the folder as the dialog shows it: the engine adds no install_folder to it
       if (e.folder.trim()) args.push(`--folder=${e.folder.trim()}`, '--as-is')
+      if (e.seed && e.torrent && !im.torrentsRefused) args.push('--seed')
     }
     const r = await st.side(args)
     if (r.ok) {
-      for (const a of r.data.added ?? []) added.push({ file: String(a.file), folder: String(a.install_dir ?? '') })
+      for (const a of r.data.added ?? []) added.push({ file: String(a.file), folder: String(a.install_dir ?? ''), seed: Boolean(a.seed) })
       for (const u of r.data.updated ?? []) updated.push(String(u.file))
     } else {
       problems.push(`${e.title}: ${r.message}`)
@@ -217,6 +220,8 @@ export async function finishImport(): Promise<void> {
   }
   useApp.setState({ importing: null })
   await st.loadProjects()
+  // a project added to seed: the seed run takes it, or starts
+  if (added.some((a) => a.seed)) void seedSettingsChanged(['seed'])
   if (added.length) await useApp.getState().selectProject(added[0].file)
   else if (updated.length) await useApp.getState().selectProject(updated[0])
   for (const file of updated) useApp.getState().settlePrompt(file)
@@ -317,6 +322,22 @@ export async function notNowPublisher(file: string, change: PublisherChange): Pr
   const r = await st.side(acceptArgs(file, change, true))
   if (!r.ok && r.code !== 'changed-since') return failed('Not saved', sentences(String(r.message ?? '')))
   useApp.getState().settlePrompt(file)
+}
+
+// Seed this project, or Stop seeding (its row's menu): seed = yes or no in its settings. A seed run picks that up
+// within seconds; with none going, one starts.
+export async function setSeed(p: ProjectInfo, on: boolean): Promise<void> {
+  const st = useApp.getState()
+  const r = await st.side(['config', 'set', `seed=${on ? 'yes' : 'no'}`, `--project=${p.file}`])
+  if (!r.ok) return failed(on ? 'Not set to seed' : 'Seeding not stopped', sentences(String(r.message ?? '')))
+  const now = useApp.getState()
+  if (now.project === p.file) useApp.setState({ settings: { ...now.settings, seed: on } })
+  if (!on && now.seedRows[p.file]) {
+    const rows = { ...now.seedRows }
+    delete rows[p.file]
+    useApp.setState({ seedRows: rows })
+  }
+  await seedSettingsChanged(['seed'])
 }
 
 // What changed: the dialog with the release's notes, its files by name and its whole list

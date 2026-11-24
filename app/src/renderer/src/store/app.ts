@@ -9,6 +9,10 @@ import { autoOutcome, madeAt, nextBackup } from './backups'
 import { windowStorage } from './folds'
 import { closeWelcome, welcomeAtStart } from './welcome'
 import { PublisherChange, ReleaseView, settled, withoutPrompt } from './publisher'
+import {
+  afterRun, PLACE_KEYS, RESTART_KEYS, SEED_KEYS, SeedRow, seedingCount, seedOffArgs, TimedRow, torrentsRefused, wantsSeeding,
+  withRow
+} from './seeding'
 
 export type Value = string | number | boolean
 export interface SchemaItem {
@@ -59,6 +63,10 @@ export interface ProjectInfo {
   follow_publisher?: boolean
   share_updates?: boolean
   show_files?: boolean
+  // shared by torrent (by torrent only: it has no address), and set to seed
+  torrent?: boolean
+  torrent_only?: boolean
+  seed?: boolean
 }
 
 // a project of a project file being imported: what the file says, and what the person chose. From an update
@@ -80,6 +88,9 @@ export interface ImportEntry {
   change?: PublisherChange | null
   older?: boolean
   asNew: boolean
+  // how its publisher shares it by torrent, when it does; seed: the person's yes to seeding it, off at first
+  torrent?: { id: string; name: string; seeds: string[] }
+  seed: boolean
 }
 
 export interface Importing {
@@ -89,6 +100,8 @@ export interface Importing {
   fingerprint: string
   // an update capable file: its projects follow their publisher
   updates: boolean
+  // torrents are refused here, and the file shares a project by torrent
+  torrentsRefused: boolean
   entries: ImportEntry[]
   updateNow: boolean
   working: boolean
@@ -232,6 +245,14 @@ interface State {
   stoppedSince: string
   forceStop: () => Promise<void>
   liftStop: () => Promise<void>
+
+  // Seeding (store/seeding.ts): the seed run while it goes, which never makes the window busy; each project's
+  // row from it, by settings file; why seeding is not running ('' when it runs, or nothing asks for it); the
+  // projects the last Force stop turned seeding off for
+  seeding: { jobId: string; since: number } | null
+  seedRows: Record<string, TimedRow>
+  seedWhy: string
+  seedTurnedOff: string[]
 }
 
 let logId = 0
@@ -288,6 +309,7 @@ async function flushSettings(log: (t: string, s?: Style) => void): Promise<void>
   } else if (Object.keys(pending).length) {
     flushSettings(log)
   }
+  if (r.ok) void seedSettingsChanged(Object.keys(batch))
 }
 
 // every change typed so far saved (before another project is shown)
@@ -379,6 +401,10 @@ export const useApp = create<State>((set, get) => {
     stopped: false,
     stoppedSince: '',
     welcome: false,
+    seeding: null,
+    seedRows: {},
+    seedWhy: '',
+    seedTurnedOff: [],
 
     setNotes: (file, text) => set({ notes: { ...get().notes, [file]: text } }),
 
@@ -694,7 +720,8 @@ export const useApp = create<State>((set, get) => {
     },
 
     // The panic button: the window greys out at once, the dialogs close, and the main process ends every run
-    // (each one then says it was stopped) and starts none until the stop is lifted.
+    // (each one then says it was stopped, the seed run too) and starts none until the stop is lifted. Seeding is
+    // turned off for every project that had it.
     forceStop: async () => {
       useModal.getState().block(true)
       set({ stopped: true, importing: null, exporting: null, changesView: null })
@@ -703,6 +730,7 @@ export const useApp = create<State>((set, get) => {
       const what = r.stopped ? `${r.stopped} running ${r.stopped === 1 ? 'job' : 'jobs'} stopped` : 'nothing was running'
       get().log(`== Force stop: ${what}. Nothing runs until the stop is lifted.`, 'warn')
       if (r.problem) get().log(`Force stop holds until DeltaPatcher closes, not after a restart: ${r.problem}`, 'err')
+      await turnSeedingOff()
     },
 
     // Lifted: nothing that was stopped starts again, and the automatic checks and backups count from now
@@ -712,7 +740,7 @@ export const useApp = create<State>((set, get) => {
       restartSchedules(now)
       restartBackups(get().projects, now)
       useModal.getState().block(false)
-      set({ stopped: false, stoppedSince: '', status: 'Force stop lifted. Nothing that was stopped starts again by itself.', statusKind: 'idle' })
+      set({ stopped: false, stoppedSince: '', seedTurnedOff: [], status: 'Force stop lifted. Nothing that was stopped starts again by itself.', statusKind: 'idle' })
       get().log('== Force stop lifted', 'head')
       if (r.problem) get().log(`Force stop comes back at the next start: ${r.problem}`, 'err')
     }
@@ -869,4 +897,166 @@ async function afterAutomatic(check: boolean, ended: Ended[]): Promise<void> {
   if (!lines.length) return
   st.log(lines.join('\n'), failed.length ? 'warn' : 'ok')
   await window.api.notify('DeltaPatcher', lines.join('\n'), false)
+}
+
+// ---- seeding (store/seeding.ts)
+
+// Outside the store: the window stopped the seed run to start it again; how many runs in a row ended by themselves;
+// the timers of a start again; why seeding does not run, as last said in the console; the tray's count.
+let seedRestarting = false
+let seedRetries = 0
+let seedRetryTimer: ReturnType<typeof setTimeout> | null = null
+let seedRestartTimer: ReturnType<typeof setTimeout> | null = null
+let seedSaid = ''
+let trayCount = 0
+
+function clearSeedTimers(): void {
+  if (seedRetryTimer) clearTimeout(seedRetryTimer)
+  if (seedRestartTimer) clearTimeout(seedRestartTimer)
+  seedRetryTimer = null
+  seedRestartTimer = null
+}
+
+// why seeding does not run: on the rows of the projects set to seed, and in the console once
+function seedSay(why: string): void {
+  useApp.setState({ seedWhy: why })
+  if (why && why !== seedSaid) useApp.getState().log(why, 'warn')
+  seedSaid = why
+}
+
+// the tray's tooltip: how many projects are seeded now
+function seedCount(rows: Record<string, SeedRow>): void {
+  const n = seedingCount(rows)
+  if (n === trayCount) return
+  trayCount = n
+  void window.api.setSeeding(n)
+}
+
+// Seeding starts when it is wanted and no run goes: seed --all --json, one engine run beside everything else that
+// never makes the window busy (as the local server). Its "seeding" events are each project's row. It reads the
+// settings again by itself: seed = no drops a project, seed = yes adds one, refused torrents end it. Once it has
+// ended, afterRun() says what comes next.
+export async function startSeeding(): Promise<void> {
+  const st = useApp.getState()
+  if (st.seeding || !wantsSeeding(st.projects, st.effective('torrents'), st.stopped)) return
+  clearSeedTimers()
+  // unique beyond this window: a run that a window before it started (on macOS the window can close and open again
+  // while DeltaPatcher runs) keeps an id of its own, so Force stop still reaches it
+  const jobId = `seed-${Date.now().toString(36)}-${++jobSeq}`
+  const since = Date.now()
+  handlers.set(jobId, (e) => {
+    if (e.event !== 'seeding') return
+    const rows = withRow(useApp.getState().seedRows, e, Date.now())
+    useApp.setState({ seedRows: rows })
+    seedCount(rows)
+  })
+  seedSaid = ''
+  useApp.setState({ seeding: { jobId, since }, seedWhy: '' })
+  let r: EngineOutcome
+  try {
+    r = await window.api.run({ jobId, args: ['seed', '--all'] })
+  } catch (err) {
+    r = failure(err)
+  }
+  handlers.delete(jobId)
+  useApp.setState({ seeding: null, seedRows: {} })
+  seedCount({})
+  const restarting = seedRestarting
+  seedRestarting = false
+  // the seed flags as they are now: the run may have ended because of them
+  if (!useApp.getState().stopped && r.code !== FORCE_STOPPED) await useApp.getState().loadProjects()
+  const now = useApp.getState()
+  const next = afterRun(r, {
+    restarting,
+    stopped: now.stopped,
+    wanted: wantsSeeding(now.projects, now.effective('torrents'), now.stopped),
+    refused: torrentsRefused(now.effective('torrents')),
+    ranFor: Date.now() - since,
+    retries: seedRetries
+  })
+  if (next.next === 'start') {
+    void startSeeding()
+  } else if (next.next === 'wait') {
+    seedRetries = 0
+    seedSay(next.why)
+  } else if (next.next === 'retry') {
+    seedRetries = next.retries
+    seedSay(next.why)
+    seedRetryTimer = setTimeout(() => {
+      seedRetryTimer = null
+      void startSeeding()
+    }, next.after)
+  }
+}
+
+// The seed run starts again, a moment after the last call: a port typed digit by digit starts it again once.
+function restartSeeding(why: string, delay = 3000): void {
+  if (seedRestartTimer) clearTimeout(seedRestartTimer)
+  seedRestartTimer = setTimeout(() => {
+    seedRestartTimer = null
+    const s = useApp.getState().seeding
+    if (!s || useApp.getState().stopped) return
+    seedRestarting = true
+    useApp.getState().log(why)
+    void window.api.stop(s.jobId)
+  }, delay)
+}
+
+// A setting of seeding was saved (the Settings page, a row's menu, the import dialog, the Release page). A run
+// picks up seed and torrents by itself; one that reads a setting only as it starts (the port, the upload limit, port
+// mapping, and where the shown project's files are when it is set to seed) starts again a moment after the last
+// change. With no run going, one starts when it is wanted now.
+export async function seedSettingsChanged(keys: string[]): Promise<void> {
+  const seedKey = keys.some((k) => SEED_KEYS.includes(k))
+  const placeKey = useApp.getState().settings.seed === true && keys.some((k) => PLACE_KEYS.includes(k))
+  const restartKey = placeKey || keys.some((k) => RESTART_KEYS.includes(k))
+  if (!seedKey && !restartKey) return
+  seedRetries = 0
+  const st = useApp.getState()
+  if (st.seeding) {
+    if (restartKey) restartSeeding('Seeding starts again with the new settings.')
+    return
+  }
+  if (seedRetryTimer) clearTimeout(seedRetryTimer)
+  seedRetryTimer = null
+  seedSaid = ''
+  useApp.setState({ seedWhy: '' })
+  await st.loadProjects()
+  void startSeeding()
+}
+
+// A release made the torrent of the shown project, set to seed: a run seeds a store only once the store has a
+// torrent, so one that began before seeds it once it starts again; with no run going, one starts.
+export function seedAfterPublish(file: string): void {
+  const st = useApp.getState()
+  if (st.project !== file || st.settings.seed !== true || st.stopped) return
+  if (!st.seeding) {
+    void seedSettingsChanged(['seed'])
+    return
+  }
+  if (st.seedRows[file]?.kind !== 'store') restartSeeding('Seeding starts again, to seed the new release from its store.', 0)
+}
+
+// Force stop turns seeding off: seed = no for every project set to seed (config set runs while the stop holds), so
+// nothing seeds once the stop is lifted until the person turns it on again. A seed = yes typed a moment before is
+// not saved after it.
+async function turnSeedingOff(): Promise<void> {
+  clearSeedTimers()
+  delete pending.seed
+  const st = useApp.getState()
+  if (st.settings.seed === true) useApp.setState({ settings: { ...useApp.getState().settings, seed: false } })
+  const list = await st.side(['projects'])
+  const projects = (list.ok ? list.data.projects ?? [] : st.projects) as ProjectInfo[]
+  const off: string[] = []
+  for (const args of seedOffArgs(projects)) {
+    const p = projects.find((x) => args[3] === `--project=${x.file}`)
+    const r = await st.side(args)
+    if (r.ok) off.push(p?.title ?? args[3])
+    else st.log(`Seeding could not be turned off for ${p?.title ?? args[3]}: ${r.message}`, 'err')
+  }
+  if (off.length) {
+    useApp.setState({ seedTurnedOff: off })
+    st.log(`Seeding was turned off for ${joinNames(off)}: it stays off until you turn it on again.`, 'warn')
+  }
+  await useApp.getState().loadProjects()
 }

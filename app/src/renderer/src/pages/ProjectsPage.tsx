@@ -2,20 +2,24 @@
 // (several at the same time, each with its own progress); open one on the other pages; make, add, import,
 // export, rename and remove projects. Each project shows its main action (Update, or Open while it has no
 // folder to update) and a "..." menu with every other one, What changed among them. A project its publisher
-// changed says so, with Apply and Not now. A long list gets compact rows; the filter finds one.
+// changed says so, with Apply and Not now. A project shared by torrent is marked so; while it is seeded, one quiet
+// line says how (or why it is not), and its menu seeds it or stops seeding it. A long list gets compact rows; the
+// filter finds one.
 import { ReactNode, useEffect, useState } from 'react'
 import {
   ArrowRight, BellRing, Boxes, Check, CircleAlert, CircleCheck, Clock, Download, FileDiff, FilePlus, FileSearch,
-  FolderKanban, Pencil, Plus, Search, Share2, Square, Trash2
+  FolderKanban, Magnet, Pencil, Plus, Search, Share2, Square, Trash2
 } from 'lucide-react'
 import { ProjectInfo, ProjectRun, Progress, UpdateResult, running, useApp } from '../store/app'
 import { ask } from '../store/modal'
 import {
-  applyPublisher, newProject, notNowPublisher, openProjectFile, removeAll, removeProject, renameProject, showChanges,
-  startExport
+  applyPublisher, newProject, notNowPublisher, openProjectFile, removeAll, removeProject, renameProject, setSeed,
+  showChanges, startExport
 } from '../store/projectActions'
 import { hasWhatChanged, promptLine, promptOf } from '../store/publisher'
+import { projectSeedLine, torrentMark, torrentsRefused } from '../store/seeding'
 import { Banner, Button, Card, Chip, InfoTip, Menu, MenuItem, human } from '../components/ui'
+import { TorrentMark } from '../components/ProjectFileDialogs'
 import PublisherPrompt from '../components/PublisherPrompt'
 import { insecure } from './UpdatePage'
 import { anotherRun } from '../store/schedule'
@@ -72,6 +76,15 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
   const shown = useApp((s) => s.project === p.file)
   const busy = useApp((s) => s.busy)
   const active = running(r)
+  // seeding: the seed run's row of it, and its line (or why it is not seeded)
+  const seedRow = useApp((s) => s.seedRows[p.file])
+  const refused = useApp((s) => torrentsRefused(s.effective('torrents')))
+  const seedText = useApp((s) => projectSeedLine(p, s.seedRows[p.file], {
+    refused: torrentsRefused(s.effective('torrents')), running: Boolean(s.seeding), why: s.seedWhy, stopped: s.stopped
+  }))
+  const seeding = Boolean(p.seed && seedRow?.state === 'seeding')
+  const seedHint = p.seed && seedRow && (seeding || seedRow.sent > 0)
+    ? `${seedRow.release || 'Its release'}: ${human(seedRow.sent)} sent since seeding started` : undefined
   // its own check or update, its turn in Update all, or a job on the other pages while it is the one shown
   const held = active || p.missing || (shown && Boolean(busy))
 
@@ -110,6 +123,15 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
     { label: 'Rename', icon: Pencil, title: 'Rename', disabled: p.missing, onClick: () => void renameProject(p) },
     { label: 'Show file', icon: FileSearch, title: 'Show its settings file', disabled: p.missing, onClick: () => void window.api.show(p.file) }
   ]
+  // a project shared by torrent: seed it, or stop seeding it
+  if (p.torrent) {
+    items.splice(items.findIndex((i) => i.label === 'Export...'), 0, p.seed
+      ? { label: 'Stop seeding', icon: Magnet, title: 'Stop sharing its files with other players', disabled: p.missing,
+          onClick: () => void setSeed(p, false) }
+      : { label: 'Seed this project', icon: Magnet, disabled: p.missing || refused,
+          title: refused ? 'Torrents are refused in the settings (Settings, Torrents)' : 'Share its files with other players while DeltaPatcher runs',
+          onClick: () => void setSeed(p, true) })
+  }
   if (change && props.compact) {
     items.splice(2, 0,
       { label: "Apply the publisher's change...", icon: Check, title: promptLine(change), disabled: Boolean(busy),
@@ -142,6 +164,12 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
         <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-ink-400" title={p.install_dir || p.publish_src}>
           {p.install_dir || p.publish_src || 'not set up yet'}
         </span>
+        {p.torrent && (
+          <span className="shrink-0" title={[torrentMark(Boolean(p.torrent_only)).text, seedText].filter(Boolean).join('. ')}
+            aria-label={[torrentMark(Boolean(p.torrent_only)).text, seedText].filter(Boolean).join('. ')}>
+            <Magnet size={14} className={seeding ? 'text-delta' : 'text-ink-400'} />
+          </span>
+        )}
         {change && <span className="flex min-w-0 shrink-0" title={promptLine(change)}><Chip kind="info" icon={BellRing}>Changed by its publisher</Chip></span>}
         <span className="flex min-w-0 shrink justify-end"><StateChip p={p} r={r} /></span>
         <div className="flex shrink-0 items-center gap-1">{actions}</div>
@@ -155,6 +183,7 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
         <>
           {shown && <span className="shrink-0 text-[11px] font-normal text-delta-light">selected</span>}
           {p.kind === 'added' && <span className="shrink-0 text-[11px] font-normal text-ink-400">added settings file</span>}
+          {p.torrent && <TorrentMark only={Boolean(p.torrent_only)} />}
         </>
       }
       actions={<><span className="flex min-w-0 shrink"><StateChip p={p} r={r} /></span>{actions}</>}>
@@ -191,6 +220,12 @@ function ProjectRow(props: { p: ProjectInfo; compact: boolean }): JSX.Element {
             {!p.install_dir && !p.publish_src && (
               <p className="whitespace-pre-line text-ink-400">
                 {'Nothing set up yet.\nOpen it, then choose the folder to keep up to date, or the folder to release.'}
+              </p>
+            )}
+            {seedText && (
+              <p className="flex items-center gap-1.5 text-xs text-ink-400" title={seedHint}>
+                <Magnet size={12} className={`shrink-0 ${seeding ? 'text-delta' : ''}`} />
+                {seedText}
               </p>
             )}
           </>

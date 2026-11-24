@@ -2000,8 +2000,8 @@ def cmd_seed(a, cfg):
                 OUT._emit(dict({"event": "seeding"}, **row))
             else:
                 say("%s: %s" % (row["project"], seeding_words(row)))
-    say("Seeding %s; %s stops it." % (", ".join(p.title for p, _c in chosen),
-                                      "\"cancel\" or the end of standard input" if OUT.json else "Ctrl+C"), "head")
+    names = ", ".join(p.title for p, _c in chosen)
+    say(("Seeding %s." % names) if OUT.json else ("Seeding %s; Ctrl+C stops it." % names), "head")
     run = seeding.Run(chosen, cfg, log, status, stop, every_project=bool(a.all))
     try:
         rows = run.run()

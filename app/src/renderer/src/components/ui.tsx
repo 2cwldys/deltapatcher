@@ -27,6 +27,8 @@ export function Card(props: {
   titleHint?: string
   // a ring around it (the project shown on the other pages)
   ring?: boolean
+  // its id on the page, for a link that leads to it
+  anchor?: string
 }): JSX.Element {
   const [folded, setFolded] = useFold(props.fold, props.startsFolded)
   const body = useId()
@@ -36,7 +38,7 @@ export function Card(props: {
   const frame = danger ? 'border-rose-500/30 bg-rose-500/5' : props.ring ? 'border-delta/40 bg-ink-850/80 ring-1 ring-delta/30' : 'border-ink-700 bg-ink-850/80'
   const line = danger ? 'border-rose-500/20' : 'border-ink-700/70'
   return (
-    <section className={`rounded-xl border shadow-lg shadow-black/20 ${frame} ${props.className ?? ''}`}>
+    <section id={props.anchor} className={`rounded-xl border shadow-lg shadow-black/20 ${frame} ${props.className ?? ''}`}>
       <header className="flex min-h-[3.25rem] items-center gap-3 px-5 py-2.5">
         <h2 className="flex min-w-0 items-center gap-2.5 text-sm font-semibold text-slate-100">
           <button type="button" onClick={toggle} aria-expanded={!folded} aria-controls={body} title={props.titleHint}
@@ -333,7 +335,7 @@ export function Field(props: {
             if (props.check) {
               if (props.check(v)) return setDraft(v)
               setDraft(null)
-              return set(props.setting, v)
+              return set(props.setting, props.type === 'number' ? Number(v) : v)
             }
             if (props.type !== 'number') return set(props.setting, v)
             // whole numbers only: anything else stays on screen until it is one, and is never saved as 0
@@ -407,6 +409,27 @@ export function SettingToggle(props: { setting: string; label: string; hint?: st
     <Toggle checked={false} disabled onChange={() => undefined} label={props.label} hint={props.blocked} setting={own} />
   ) : (
     <Toggle checked={value} onChange={(v) => set(props.setting, v)} label={props.label} hint={props.hint} line={props.line} setting={own} />
+  )
+}
+
+// a setting that takes one of a few words (torrents: allow or refuse), as buttons side by side, never typed
+export function SettingChoice(props: {
+  setting: string
+  label: string
+  options: { value: string; label: string }[]
+  hint?: string
+  line?: string
+  showSetting?: boolean
+}): JSX.Element {
+  const value = useApp((s) => String(s.settings[props.setting] ?? s.schema.find((x) => x.key === props.setting)?.default ?? ''))
+  const set = useApp((s) => s.set)
+  const [line, info] = lineAndInfo(props.hint, props.line)
+  return (
+    <div className="min-w-0">
+      <FieldLabel label={props.label} setting={props.showSetting ? props.setting : undefined} info={info} />
+      <Segmented value={value} options={props.options} onChange={(v) => set(props.setting, v)} />
+      {line && <p className="hint">{line}</p>}
+    </div>
   )
 }
 

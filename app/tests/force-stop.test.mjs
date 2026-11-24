@@ -11,7 +11,7 @@ const HOUR = 60 * 60 * 1000
 
 test('only drawing the window and keeping settings run while it is on', () => {
   for (const args of [['version'], ['projects'], ['backup', 'list', '--project=a.ini'], ['config', 'get', '--project=a.ini'],
-    ['config', 'set', 'auto_update=no', '--project=a.ini']]) {
+    ['config', 'set', 'auto_update=no', '--project=a.ini'], ['config', 'set', 'seed=no', '--project=a.ini']]) {
     assert.equal(allowedWhileStopped(args), true, args.join(' '))
   }
   for (const args of [
@@ -20,7 +20,7 @@ test('only drawing the window and keeping settings run while it is on', () => {
     ['project', 'import', 'game.deltapatch', '--yes'], ['project', 'export', 'a.ini', '--out=x.html'], ['project', 'new', 'A'],
     ['project', 'remove', '--all', '--yes'], ['reset', '--yes'], ['sign', 'status'], ['ssh', 'status'], ['stats', '--days=30'],
     ['backup'], ['backup', 'now'], ['backup', 'restore', '2026-11-24', '--yes'], ['backup', 'prune'], ['backup', 'schedule', 'daily'],
-    ['config'], ['config', '--show'], []
+    ['config'], ['config', '--show'], ['seed', '--all'], ['version', '--torrent'], []
   ]) {
     assert.equal(allowedWhileStopped(args), false, args.join(' ') || '(no command)')
   }

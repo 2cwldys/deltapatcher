@@ -246,19 +246,21 @@ class Settings(Base):
         for k, v in expect.items():
             self.assertEqual(got[k], v, k)
         self.assertTrue(major.startswith("-DP") and len(major) == 8)
-        # every interface (a seed run, a project with no address): read from the pack, never made on this computer
-        p = self.S.pack(self.S.listen_on("all", 6881), dht=True, dht_read_only=False, lsd=True, upload_kbps=100)
-        self.assertEqual(p["listen_interfaces"], "0.0.0.0:6881,[::]:6881")
-        self.assertEqual((p["enable_dht"], p["dht_read_only"], p["dht_bootstrap_nodes"], p["enable_lsd"]),
-                         (True, False, "", True))
-        self.assertEqual((p["enable_upnp"], p["enable_natpmp"], p["upload_rate_limit"]), (False, False, 102400))
-        p = self.S.pack(self.S.listen_on("all", 0), dht=True, port_mapping=True)
-        self.assertEqual((p["enable_upnp"], p["enable_natpmp"], p["dht_read_only"]), (True, True, True))
-        self.assertFalse(self.S.pack("127.0.0.1:0", port_mapping=True)["enable_upnp"])     # never for 127.0.0.1
-        # local discovery listens on every interface (UDP 6771) whatever the session does: never at 127.0.0.1 or in a
-        # test on one computer
-        self.assertFalse(self.S.pack("127.0.0.1:0", lsd=True)["enable_lsd"])
-        self.assertFalse(self.S.pack("127.0.0.9:0", lsd=True, ip="127.0.0.9")["enable_lsd"])
+        with test_ip(""):
+            os.environ.pop(torrent.TEST_IP_ENV, None)
+            # every interface (a seed run, a project with no address): read from the pack, never made on this computer
+            p = self.S.pack(self.S.listen_on("all", 6881), dht=True, dht_read_only=False, lsd=True, upload_kbps=100)
+            self.assertEqual(p["listen_interfaces"], "0.0.0.0:6881,[::]:6881")
+            self.assertEqual((p["enable_dht"], p["dht_read_only"], p["dht_bootstrap_nodes"], p["enable_lsd"]),
+                             (True, False, "", True))
+            self.assertEqual((p["enable_upnp"], p["enable_natpmp"], p["upload_rate_limit"]), (False, False, 102400))
+            p = self.S.pack(self.S.listen_on("all", 0), dht=True, port_mapping=True)
+            self.assertEqual((p["enable_upnp"], p["enable_natpmp"], p["dht_read_only"]), (True, True, True))
+            self.assertFalse(self.S.pack("127.0.0.1:0", port_mapping=True)["enable_upnp"])     # never for 127.0.0.1
+            # local discovery listens on every interface (UDP 6771) whatever the session does: never at 127.0.0.1 or in
+            # a test on one computer
+            self.assertFalse(self.S.pack("127.0.0.1:0", lsd=True)["enable_lsd"])
+            self.assertFalse(self.S.pack("127.0.0.9:0", lsd=True, ip="127.0.0.9")["enable_lsd"])
 
     def test_the_seed_run_builds_its_session_safe(self):
         made = []

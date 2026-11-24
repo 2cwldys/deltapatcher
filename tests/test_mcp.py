@@ -395,6 +395,54 @@ class Mcp(TempCase):
         self.assertEqual(c.request("tools/call", {"name": "version", "arguments": {}})["result"]["isError"], False)
         self.assertFalse(any(n.get("id") == hung for n in c.notes))
 
+    def test_seed_status_only_reads(self):
+        from deltapatcher import config, projects
+        shared = projects.new("Shared")
+        config.save({"torrent": True, "torrent_id": "ab" * 16, "seed": True, "install_dir": self.p("game"),
+                     "source_url": "https://game.example.com/"}, shared)
+        config.save({"torrent": True, "torrent_id": "cd" * 16}, projects.new("Only"))    # no address, not set to seed
+        projects.new("Plain")
+        # a seed run of this test's own process (alive), as the engine writes it every 5 seconds
+        path = os.path.join(os.path.dirname(os.environ["DELTAPATCHER_CONFIG"]), "seeding.json")
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        row = {"project": "Shared", "file": shared.path, "folder": self.p("game"), "kind": "folder", "state": "seeding",
+               "why": "", "release": "Game 1.0", "peers": 3, "upload_rate": 12288, "sent": 4718592}
+        doc = {"format": "deltapatcher-seeding", "version": 1,
+               "runs": [{"pid": os.getpid(), "started": now, "updated": now, "port": 6881, "projects": [row]}]}
+        write(path, json.dumps(doc))
+        before = read(path)
+        c = Client(self)
+        c.start()
+        tool = next(t for t in c.request("tools/list")["result"]["tools"] if t["name"] == "seed_status")
+        self.assertEqual((tool["annotations"]["readOnlyHint"], tool["annotations"]["destructiveHint"]), (True, False))
+        self.assertEqual(tool["inputSchema"]["properties"], {})                       # nothing to start or stop with
+        self.assertIn("never starts or stops seeding", tool["description"])
+
+        r = c.tool("seed_status")
+        self.assertFalse(r["isError"], r["content"][0]["text"])
+        data = r["structuredContent"]
+        self.assertEqual((data["torrents"], data["seeding"]), ("allow", 1))
+        by = {p["project"]: p for p in data["projects"]}
+        self.assertEqual(sorted(by), ["Only", "Shared"])                                # Plain is not shared by torrent
+        self.assertEqual((by["Shared"]["seed"], by["Shared"]["seeding"]["peers"], by["Shared"]["seeding"]["upload_rate"],
+                          by["Shared"]["seeding"]["sent"], by["Shared"]["seeding"]["pid"]), (True, 3, 12288, 4718592, os.getpid()))
+        self.assertEqual((by["Only"]["torrent_only"], by["Only"]["seed"], by["Only"]["seeding"]), (True, False, None))
+        text = r["content"][0]["text"]
+        self.assertIn("Shared: shared by torrent, set to seed; seeded now: 3 peers, 12.0 KB/s up, 4.5 MB sent", text)
+        self.assertIn("Only: by torrent only, not set to seed; not seeded now", text)
+        self.assertEqual(read(path), before)                                           # it only reads
+
+        # the run's process is gone: nothing is seeded now
+        write(path, json.dumps(dict(doc, runs=[dict(doc["runs"][0], pid=4000000)])))
+        data = c.tool("seed_status")["structuredContent"]
+        self.assertEqual(data["seeding"], 0)
+        self.assertIsNone({p["project"]: p for p in data["projects"]}["Shared"]["seeding"])
+        # torrents refused here: said
+        config.save({"torrents": "refuse"})
+        r = c.tool("seed_status")
+        self.assertEqual(r["structuredContent"]["torrents"], "refuse")
+        self.assertIn("Torrents are refused here (Settings, Torrents): nothing is seeded.", r["content"][0]["text"])
+
 
 if __name__ == "__main__":
     unittest.main()

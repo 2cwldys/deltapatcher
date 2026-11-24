@@ -21,7 +21,7 @@ classifiers = [
 
 [project.optional-dependencies]
 # making SSH keys and signing keys, and signing releases (checking signatures needs nothing extra)
-sign = ["cryptography>=41"]
+sign = ["cryptography>=41", "bcrypt>=4"]
 
 [project.scripts]
 deltapatcher = "deltapatcher.__main__:main"

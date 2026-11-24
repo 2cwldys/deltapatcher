@@ -29,6 +29,7 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `the signing key could not be opened (wrong passphrase?)` | Type the signing key's passphrase again. If it is lost, make a new key and give players the new public key. |
 | `no signing key at ...` | Make one: **New signing key** (Publish page) or `deltapatcher sign keygen`. Or turn off **Sign each release**. |
 | `signing needs the 'cryptography' package` | From source: `pip install cryptography`. The built programs include it. |
+| `a passphrase on a new SSH key needs the bcrypt package` | From source: `pip install bcrypt`. The built programs include it. |
 | `the store must not be inside the folder it publishes` | Choose a store folder outside the release folder. |
 | `X cannot be published: ...` | A file name that cannot be used on every system (a device name like `CON`, a name ending in a dot or space, a `:`). Rename it. |
 | `skipped X (a link or junction)` | Links are never followed. Copy the real files into the release folder. |

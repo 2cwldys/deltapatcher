@@ -1,3 +1,4 @@
 # The engine (publish, serve, update, deploy, checking signatures) needs only Python 3.8 or later.
-# One optional package:
+# Two optional packages, only to make keys and to sign:
 cryptography>=41    # making SSH keys and signing keys, and signing releases
+bcrypt>=4           # a passphrase on a new SSH key (OpenSSH's key format encrypts with bcrypt)

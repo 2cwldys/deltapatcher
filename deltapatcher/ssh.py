@@ -296,6 +296,7 @@ def can_generate():
 def generate_key(path, passphrase, comment="deltapatcher"):
     """Write a new ed25519 key pair at path / path.pub. Never overwrites. `passphrase` may be '' (not
     recommended) and is used once, in this process, to encrypt the key."""
+    from cryptography.exceptions import UnsupportedAlgorithm
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import ed25519
     path = os.path.abspath(os.path.expanduser(path))
@@ -305,7 +306,11 @@ def generate_key(path, passphrase, comment="deltapatcher"):
     key = ed25519.Ed25519PrivateKey.generate()
     enc = (serialization.BestAvailableEncryption(passphrase.encode("utf-8")) if passphrase
            else serialization.NoEncryption())
-    priv = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH, enc)
+    try:
+        priv = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.OpenSSH, enc)
+    except UnsupportedAlgorithm:
+        raise SshError("a passphrase on a new SSH key needs the bcrypt package: pip install bcrypt "
+                       "(the DeltaPatcher app and deltapatcher-cli already carry it)")
     pub = key.public_key().public_bytes(serialization.Encoding.OpenSSH, serialization.PublicFormat.OpenSSH)
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600)
     try:

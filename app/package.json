@@ -1,7 +1,7 @@
 {
   "name": "deltapatcher-app",
   "productName": "DeltaPatcher",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "DeltaPatcher: delta patching with SHA-256 blobs. The window; the engine is the Python package beside it.",
   "author": "DeltaPatcher contributors",
   "license": "MIT",

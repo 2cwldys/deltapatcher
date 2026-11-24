@@ -6,7 +6,7 @@ own folder and downloads only the blobs it lacks. The file type does not matter:
 a texture or an executable is just bytes with a hash.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 APP_NAME = "DeltaPatcher"
 USER_AGENT = "DeltaPatcher/" + __version__
 REPO = "2cwldys/deltapatcher"          # on GitHub: its releases are where DeltaPatcher's own updates come from

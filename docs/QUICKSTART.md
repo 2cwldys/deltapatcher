@@ -52,3 +52,5 @@ in this repository, or `python -m deltapatcher` from source.
 
 - To release to other people, and to sign your releases, see [Publishing a release](PUBLISHING.md).
 - To host it on the internet, see [Setting up a VPS](VPS-SETUP.md).
+- To keep several games, mods or servers apart, each with its own settings, see
+  [Several games](PLAYERS.md#several-games) and [Several projects](PUBLISHING.md#several-projects).

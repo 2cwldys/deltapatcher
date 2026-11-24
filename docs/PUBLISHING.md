@@ -138,6 +138,21 @@ Players need DeltaPatcher and your source address. Common ways:
 Keep the updater outside the folder it updates (`game\` above), so a release never has to replace the
 program that is running.
 
+## Several projects
+
+Each game, mod or pack you release is a project of its own: its release folder, name and version, the
+files left out and the files players keep, and where it goes. Pick it in the project picker at the top
+left (or make one with **New project...**), then use the **Release** page as above. On the command line,
+`--project NAME` does the same:
+
+```
+deltapatcher --project "Map Pack" release --version 1.2
+```
+
+The signing key and the SSH key are DeltaPatcher's, shared by every project unless a project's settings
+name others. Players can keep several of your projects up to date at once: see
+[For players](PLAYERS.md#several-games).
+
 ## Versions
 
 *Version* is shown to players and in the log. It does not decide anything: clients always move to

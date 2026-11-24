@@ -26,6 +26,20 @@ so a small patch is a small download even when the game is large.
 - **Stop** cancels a download. Nothing in your folder changes until every file has arrived and been
   checked.
 
+## Several games
+
+Each game, mod or server you keep up to date is a project, with its own source, folder and publisher key.
+The first one is called Default.
+
+- **Add one**: the project picker at the top left > **New project...**, give it a name, then fill in its
+  *Source*, *Folder* and *Publisher key* on the **Update** page, as above.
+- **Switch**: pick it in the project picker. The Update, Release and Settings pages show that project.
+- **All at once**: the **Projects** page lists every project with its state, such as "Up to date" or
+  "3 new, 1 changed, 700 KB to download". **Check all** runs by itself when you open it. **Update all**
+  brings every project up to date, three at the same time (the setting *parallel_updates*). One project
+  failing never stops the others, and **Stop** stops them all, each folder as it was.
+- **Remove one**: **Remove** on its card on the Projects page. Its settings go; its folder and files stay.
+
 ## What it will and will not touch
 
 - It never deletes files you added yourself, or files that were in the folder before DeltaPatcher

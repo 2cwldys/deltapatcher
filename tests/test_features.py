@@ -233,6 +233,12 @@ class Wrappers(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout)
         self.assertIn(b"DeltaPatcher", r.stdout)
 
+    def test_bat_passes_the_exit_code_on(self):
+        # a mistake in the arguments is exit code 2: the .bat must hand it to whoever ran it
+        r = subprocess.run(["cmd", "/c", os.path.join(ROOT, "cli", "deltapatcher.bat"), "nonsense"],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        self.assertEqual(r.returncode, 2, r.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,6 +17,7 @@ import argparse
 import getpass
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -28,20 +29,21 @@ from .color import paint, plain
 from .manifest import ManifestError
 from .source import DEFAULT_URL, SourceError, insecure_remote
 
+# %(prog)s is the name to type (see prog_name); argparse fills it in
 EPILOG = """examples:
-  deltapatcher publish ./game ./store --name "My Game" --version 1.0 --sign
-  deltapatcher serve ./store                         (http://localhost:8000/)
-  deltapatcher update ./my-install --source http://localhost:8000/
-  deltapatcher sign keygen                           (a signing key for your releases)
-  deltapatcher ssh keygen                            (a new ed25519 key, with a passphrase)
-  deltapatcher ssh trust --host example.com          (check and keep the server's host key)
-  deltapatcher ssh pubkey                            (the line for the server's authorized_keys)
-  deltapatcher deploy ./store --host example.com --user deploy --remote-root /var/www/game
-  deltapatcher deploy ./store --to-folder D:/www/game
-  deltapatcher config                                (where the settings file and the log are)
+  %%(prog)s publish ./game ./store --name "My Game" --version 1.0 --sign
+  %%(prog)s serve ./store                         (http://localhost:8000/)
+  %%(prog)s update ./my-install --source http://localhost:8000/
+  %%(prog)s sign keygen                           (a signing key for your releases)
+  %%(prog)s ssh keygen                            (a new ed25519 key, with a passphrase)
+  %%(prog)s ssh trust --host example.com          (check and keep the server's host key)
+  %%(prog)s ssh pubkey                            (the line for the server's authorized_keys)
+  %%(prog)s deploy ./store --host example.com --user deploy --remote-root /var/www/game
+  %%(prog)s deploy ./store --to-folder D:/www/game
+  %%(prog)s config                                (where the settings file and the log are)
 
 The log: %s (--log FILE elsewhere, --no-log for none).
-""" % logs.default_path()
+""" % logs.default_path().replace("%", "%%")
 
 # which lines get which colour, by how they start: the library's messages are plain text
 STYLE_BY_START = (
@@ -488,14 +490,115 @@ def cmd_version(a, cfg):
 
 # ---- arguments ----------------------------------------------------------------------------------
 
+def prog_name():
+    """The name to type: the built program's own file name (deltapatcher-cli-<version>-windows-x64, say), else deltapatcher."""
+    if getattr(sys, "frozen", False):
+        return os.path.splitext(os.path.basename(sys.executable))[0]
+    return "deltapatcher"
+
+
+def colorize_help(text):
+    """The help in colour, painted after argparse has laid it out (so its columns stay aligned):
+    headings white, commands, options and examples purple. Unchanged when colour is off."""
+    out = []
+    for line in text.splitlines(True):
+        s = line.rstrip("\r\n")
+        end = line[len(s):]
+        if s.startswith("usage:"):
+            s = paint("usage:", "head") + s[len("usage:"):]
+        elif s and not s[0].isspace() and (s.endswith(":") or s.startswith(APP_NAME + " ")):
+            s = paint(s, "head")                       # a section heading, or the title line
+        else:
+            m = (re.match(r"^( {2})(\S.*?)( {2,}\(.*\))?$", s) if s.startswith("  " + prog_name() + " ") else
+                 re.match(r"^( {2}| {4})(\{[^}]*\}|-[^ ,]+(?: [A-Z_.\[\]]+)?(?:, -[^ ,]+(?: [A-Z_.\[\]]+)?)*|[a-z][\w-]*)(?=  |$)(.*)$", s))
+            if m:
+                s = m.group(1) + paint(m.group(2), "code") + (m.group(3) or "")
+        out.append(s + end)
+    return "".join(out)
+
+
+class _Parser(argparse.ArgumentParser):
+    def format_help(self):
+        return colorize_help(argparse.ArgumentParser.format_help(self))
+
+
+def _own_console():
+    """True on Windows when this program has its console window to itself: it was started from Explorer
+    (a double-click) or a shortcut, not typed in a terminal, and its window closes the moment it ends."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetConsoleProcessList.argtypes = [ctypes.POINTER(wintypes.DWORD), wintypes.DWORD]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                                   ctypes.POINTER(wintypes.DWORD)]
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        pids = (wintypes.DWORD * 16)()
+        n = k32.GetConsoleProcessList(pids, 16)
+        if not 0 < n <= 16:
+            return False
+        # Every process on this console is this program (a built one runs as a launcher and its child), the
+        # py launcher that started it from source, or the cmd.exe of a double-clicked cli\deltapatcher.bat
+        # (the .bat says so: DELTAPATCHER_WINDOW=1). Anything else is a shell someone types in.
+        bat_window = os.environ.get("DELTAPATCHER_WINDOW") == "1"
+        for pid in pids[:n]:
+            h = k32.OpenProcess(0x1000, False, pid)           # PROCESS_QUERY_LIMITED_INFORMATION
+            if not h:
+                return False
+            try:
+                buf = ctypes.create_unicode_buffer(1024)
+                size = wintypes.DWORD(1024)
+                if not k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    return False
+                name = os.path.basename(buf.value).lower()
+                if os.path.samefile(buf.value, sys.executable):
+                    continue
+                if name in ("py.exe", "pyw.exe") and not getattr(sys, "frozen", False):
+                    continue
+                if name == "cmd.exe" and bat_window:
+                    continue
+                return False
+            finally:
+                k32.CloseHandle(h)
+        return True
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def window_of_its_own():
+    """A console window this program has to itself and a person reads: double-clicked, or started from a
+    shortcut or a launcher's own window. Not a terminal (it stays open anyway), and never when another
+    program reads the output (it would wait for an Enter nobody can press)."""
+    try:
+        if not (sys.stdin.isatty() and sys.stdout.isatty()):
+            return False
+    except (AttributeError, ValueError):
+        return False
+    return _own_console()
+
+
+def wait_to_close():
+    try:
+        input("\n" + paint("Press Enter to close.", "head") + " (--close closes it without waiting.)")
+    except (EOFError, KeyboardInterrupt):
+        pass
+
+
 def build_parser():
-    p = argparse.ArgumentParser(prog="deltapatcher", description="%s %s: delta patching with SHA-256 blobs." % (APP_NAME, __version__),
-                                epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter)
+    extra = {"color": False} if sys.version_info >= (3, 14) else {}     # 3.14's own colours: colorize_help does it
+    p = _Parser(prog=prog_name(), description="%s %s: delta patching with SHA-256 blobs." % (APP_NAME, __version__),
+                epilog=EPILOG, formatter_class=argparse.RawDescriptionHelpFormatter, **extra)
     p.add_argument("--version", action="version", version="%s %s" % (APP_NAME, __version__))
     p.add_argument("--log", metavar="FILE", help="write the log here (default: %s)" % logs.default_path())
     p.add_argument("--no-log", action="store_true", help="write no log file")
     p.add_argument("--no-color", action="store_true", help="plain text (colour is used only in a terminal that shows it)")
     p.add_argument("--json", action="store_true", help="JSON lines on standard output, for programs (the DeltaPatcher app)")
+    p.add_argument("--close", action="store_true", help="close as soon as the command is done: a window of its own "
+                                                        "(double-clicked, a shortcut) otherwise waits for Enter")
     sub = p.add_subparsers(dest="cmd")
 
     def pass_stdin(sp):
@@ -594,18 +697,92 @@ HANDLERS = {"publish": cmd_publish, "serve": cmd_serve, "update": cmd_update, "r
             "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign, "config": cmd_config, "version": cmd_version}
 
 
-def main(argv=None):
+def split_line(line):
+    """A typed command line as a program receives it: quotes keep a path with spaces together, and on
+    Windows a backslash is part of the path, as it is for any Windows program."""
+    if os.name != "nt":
+        import shlex
+        return shlex.split(line)
+    import ctypes
+    from ctypes import wintypes
+    shell32 = ctypes.WinDLL("shell32")
+    kernel32 = ctypes.WinDLL("kernel32")
+    shell32.CommandLineToArgvW.restype = ctypes.POINTER(wintypes.LPWSTR)
+    shell32.CommandLineToArgvW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+    n = ctypes.c_int()
+    words = shell32.CommandLineToArgvW("x " + line, ctypes.byref(n))   # its first word is read as a program
+    if not words:
+        raise ValueError("that line could not be read")
+    try:
+        return [words[i] for i in range(1, n.value)]
+    finally:
+        kernel32.LocalFree(ctypes.cast(words, ctypes.c_void_p))
+
+
+def prompt_loop():
+    """Double-clicked on Windows: a prompt that takes one command after another, so the window stays
+    open until exit (or until it is closed)."""
+    print()
+    print(paint("Type a command and press Enter, for example:", "head"))
+    print("  " + paint('update "D:\\My Game" --source https://example.com/game/', "code"))
+    print("help lists the commands, help update explains one, exit closes this window.")
+    names = {prog_name().lower(), "deltapatcher", "deltapatcher-cli"}
+    while True:
+        try:
+            line = input("\n" + paint("deltapatcher>", "code") + " ")
+        except EOFError:
+            return
+        except KeyboardInterrupt:
+            print()
+            continue
+        try:
+            argv = split_line(line.strip()) if line.strip() else []
+        except ValueError as e:
+            print(paint(str(e), "err"))
+            continue
+        if argv and os.path.splitext(argv[0])[0].lower() in names:
+            argv = argv[1:]                                 # copied from an example: the program's name first
+        if not argv:
+            continue
+        if argv[0].lower() in ("exit", "quit"):
+            return
+        if argv[0].lower() == "help":
+            argv = argv[1:] + ["--help"]
+        if "--json" in argv:
+            print(paint("--json is for programs (the DeltaPatcher app), not for typing here.", "warn"))
+            continue
+        try:
+            main(argv, prompt=False)
+        except SystemExit:
+            pass                                            # the help was printed, or a mistake explained
+        except KeyboardInterrupt:
+            print()
+
+
+def main(argv=None, prompt=True):
+    """The command line. prompt=False: a command typed at the prompt, whose window already stays open."""
     global OUT
     argv = sys.argv[1:] if argv is None else argv
+    color_enable(not {"--no-color", "--json"} & set(argv))     # the help is printed while the arguments are read
+    # in a window of its own the output would vanish with the window: it waits for Enter, unless --close
+    stay = prompt and not {"--close", "--json"} & set(argv) and window_of_its_own()
     p = build_parser()
-    a = p.parse_args(argv)
+    try:
+        a = p.parse_args(argv)
+        if a.cmd == "ssh" and not a.ssh_cmd:
+            p.parse_args(["ssh", "--help"])
+        if a.cmd == "sign" and not a.sign_cmd:
+            p.parse_args(["sign", "--help"])
+    except SystemExit:
+        if stay:
+            wait_to_close()                # the help was printed, or a mistake explained: let it be read
+        raise
     if not a.cmd:
         p.print_help()
+        if stay:
+            prompt_loop()                  # double-clicked: one command after another, until exit
         return 0
-    if a.cmd == "ssh" and not a.ssh_cmd:
-        p.parse_args(["ssh", "--help"])
-    if a.cmd == "sign" and not a.sign_cmd:
-        p.parse_args(["sign", "--help"])
     OUT = Output(json_mode=a.json)
     CANCEL.clear()
     USER_CANCEL.clear()
@@ -641,4 +818,6 @@ def main(argv=None):
         rc = 1
     logs.write("== exit %d" % rc)
     logs.close()
+    if stay:
+        wait_to_close()
     return rc

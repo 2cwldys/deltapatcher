@@ -7,11 +7,24 @@ deltapatcher <command> [options]
 `deltapatcher` is any of:
 - `cli\deltapatcher.bat` / `cli/deltapatcher.sh` in the repository ([cli/README.md](../cli/README.md)): the
   built program when there is one, else Python from source
-- `deltapatcher-cli.exe` from a release
+- the command line from a release: `deltapatcher-cli-<version>-windows-x64.exe` (rename it
+  `deltapatcher-cli.exe` if you like: the examples here use that name), or `deltapatcher-cli` from the Linux
+  or macOS `.tar.gz`
 - `python -m deltapatcher` from source, or the `deltapatcher` command after `pip install .`
 
-With no command it prints the help. The window is the DeltaPatcher app (`app/`): it runs this same
-command line in its machine mode (`--json`, below).
+With no command it prints the help.
+
+**Its window.** In a terminal it runs and returns, as any command does. In a window of its own on Windows
+it keeps that window open, so nothing vanishes before it is read:
+- double-clicked (the `.exe`, or `cli\deltapatcher.bat`): the help, then a prompt, `deltapatcher>`, that
+  takes one command after another (`help`, `help update`, `update ...`) until `exit`
+- started with a command from a shortcut or a launcher's own window: it waits for Enter when it is done
+- `--close`: it closes as soon as it is done, with no prompt and no waiting. Use it in shortcuts and
+  launchers that should not wait for anyone.
+
+It never waits when a program reads its output (a pipe, a file, `--json`).
+
+The DeltaPatcher app (`app/`) runs this same command line, in its machine mode (`--json`, below).
 
 The settings file (`deltapatcher.ini`, see [Settings and logs](#settings-and-logs)) fills in `--source`,
 `--trust-key`, the signing key and the SSH options when you leave them out.
@@ -23,6 +36,7 @@ The settings file (`deltapatcher.ini`, see [Settings and logs](#settings-and-log
 | `--log FILE` | Write the log here instead of the usual place |
 | `--no-log` | Write no log file |
 | `--no-color` | Plain text. Colour is used only in a terminal that shows it, never in files or pipes; `NO_COLOR=1` works too. |
+| `--close` | Close as soon as the command is done: no prompt, no waiting for Enter in a window of its own (see above) |
 
 In a terminal the output uses three colours: white for what was done, orange for what needs your
 attention (and for errors, in bold), purple for things to copy or compare (keys, fingerprints, commands).

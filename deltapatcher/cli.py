@@ -32,25 +32,26 @@ from .source import DEFAULT_URL, SourceError, insecure_remote
 # %(prog)s is the name to type (see prog_name); argparse fills it in
 EPILOG = """examples:
 
-put releases on your VPS (the first four lines once; then publish and deploy for every release):
-  %%(prog)s config set ssh_host=game.example.com ssh_user=deploy remote_root=/var/www/game
+put releases on your VPS (the first lines once; then one line for every version):
+  %%(prog)s config set publish_src=./game ssh_host=game.example.com ssh_user=deploy remote_root=/var/www/game
+  %%(prog)s config set public_url=https://game.example.com/   (where players update from)
   %%(prog)s ssh keygen                  (a key for the server, with a passphrase)
   %%(prog)s ssh pubkey                  (the line for the server's ~/.ssh/authorized_keys)
   %%(prog)s ssh trust                   (check the server's host key, and keep it)
-  %%(prog)s publish ./game ./store --name "My Game" --version 1.0
-  %%(prog)s deploy ./store              (sends only what the server does not have yet)
+  %%(prog)s release --version 1.0       (publishes ./game, sends the server only what changed)
 
-players update from it (the web server serves /var/www/game at https://game.example.com/):
+players update from it:
   %%(prog)s update ./MyGame --source https://game.example.com/
 
 try a release on this computer first:
-  %%(prog)s serve ./store               (http://localhost:8000/)
+  %%(prog)s release --to local          (publishes, then serves it at http://localhost:8000/)
   %%(prog)s update ./MyGame --source http://localhost:8000/
 
 more:
   %%(prog)s ssh test                    (can it log in to the server?)
-  %%(prog)s sign keygen                 (once: a signing key; then publish with --sign)
-  %%(prog)s deploy ./store --to-folder D:/www/game
+  %%(prog)s sign keygen                 (once: a signing key; then release with --sign)
+  %%(prog)s release --to folder --to-folder D:/www/game
+  %%(prog)s publish ./game ./store      (only the release's files, sent nowhere)
   %%(prog)s config                      (where the settings file and the log are)
 
 The log: %s (--log FILE elsewhere, --no-log for none).
@@ -264,17 +265,42 @@ def path_list(given, saved):
     return [x for x in (i.strip() for i in items) if x]
 
 
+def release_folder(a, cfg):
+    """The folder to release: given, else the saved one."""
+    src = getattr(a, "src", None) or cfg["publish_src"]
+    if not src:
+        raise CliError("give the folder to release, or save it once:  deltapatcher config set publish_src=FOLDER",
+                       "no-folder")
+    return src
+
+
+def store_of(a, cfg, src=None):
+    """The store: given, else the saved one, else DeltaPatcher's own folder for the folder released."""
+    store = getattr(a, "store", None) or cfg["store_dir"]
+    if store:
+        return store
+    src = src or cfg["publish_src"]
+    if not src:
+        raise CliError("give the store, or save the folder to release (its store then lives in DeltaPatcher's own "
+                       "folder):  deltapatcher config set publish_src=FOLDER", "no-store")
+    return config.default_store(src)
+
+
 def cmd_publish(a, cfg):
+    src = release_folder(a, cfg)
+    store = store_of(a, cfg, src)
     rules = {}
     for kind, given, saved in (("protect", a.protect, cfg["protect"]), ("leave out", a.leave_out, cfg["leave_out"])):
-        rules[kind] = [r for r in (rule_for(a.src, p) for p in path_list(given, saved)) if r]
+        rules[kind] = [r for r in (rule_for(src, p) for p in path_list(given, saved)) if r]
         for r in rules[kind]:
-            if r.startswith("/") and not os.path.exists(os.path.join(a.src, *r.strip("/").split("/"))):
-                say("%s: %s is not in %s (yet)" % (kind, r.strip("/"), os.path.abspath(a.src)), "warn")
+            if r.startswith("/") and not os.path.exists(os.path.join(src, *r.strip("/").split("/"))):
+                say("%s: %s is not in %s (yet)" % (kind, r.strip("/"), os.path.abspath(src)), "warn")
     signer = None
     if a.sign is not None:
         signer = load_signer(a, a.sign or cfg["signing_key"] or signing.default_key_path())
-    res = publish.publish(a.src, a.store, a.name, a.version, rules["protect"], prune=not a.no_prune,
+    name = a.name if a.name is not None else cfg["name"]
+    version = a.version if a.version is not None else cfg["version"]
+    res = publish.publish(src, store, name, version, rules["protect"], prune=not a.no_prune,
                           progress=OUT.progress, log=say, signer=signer, htaccess=not a.no_htaccess,
                           leave_out=rules["leave out"])
     OUT.end()
@@ -282,13 +308,46 @@ def cmd_publish(a, cfg):
         say("Not signed. Players can check who made a release when you publish with --sign.", "warn")
     return {"files": res.files, "bytes": res.bytes, "blobs": res.blobs, "new_blobs": res.new_blobs,
             "new_bytes": res.new_bytes, "pruned": res.pruned, "signed": signer is not None,
-            "left_out": res.left_out, "summary": res.summary()}
+            "left_out": res.left_out, "store": os.path.abspath(store), "summary": res.summary()}
+
+
+def cmd_release(a, cfg):
+    """Publish the folder, then send it where players download it from (or serve it from here)."""
+    out = {"publish": cmd_publish(a, cfg)}
+    store = out["publish"]["store"]
+    mode = a.to or cfg["deploy_mode"] or "sftp"
+    if mode == "local":
+        port = int(cfg["serve_port"] or 8000)
+        out["players_url"] = "http://localhost:%d/" % port
+        say("Players on this computer update from %s" % paint(out["players_url"], "code"), "head")
+        out["serve"] = cmd_serve(argparse.Namespace(store=store, bind="127.0.0.1", port=port, verbose=False), cfg)
+        return out
+    a.store = store
+    if mode == "folder":
+        a.to_folder = a.to_folder or cfg["deploy_folder"]
+        if not a.to_folder:
+            raise CliError("give the folder to send it to (--to-folder), or save it once:  "
+                           "deltapatcher config set deploy_folder=FOLDER", "no-target")
+    else:
+        a.to_folder = None
+        if not (a.host or cfg["ssh_host"]) or not (a.remote_root or cfg["remote_root"]):
+            raise CliError("save the server once:  deltapatcher config set ssh_host=HOST ssh_user=USER "
+                           "remote_root=/var/www/game", "no-target")
+    out["deploy"] = cmd_deploy(a, cfg)
+    out["players_url"] = cfg["public_url"]
+    if cfg["public_url"]:
+        say("Players update from %s" % paint(cfg["public_url"], "code"), "head")
+    else:
+        say("Save the address players update from to see it here:  deltapatcher config set public_url=https://...")
+    return out
 
 
 def cmd_serve(a, cfg):
-    srv = serve.make_server(a.store, a.bind, a.port, quiet=not a.verbose)
+    store = store_of(a, cfg)
+    port = a.port if a.port is not None else int(cfg["serve_port"] or 8000)
+    srv = serve.make_server(store, a.bind, port, quiet=not a.verbose)
     url = "http://%s:%d/" % (a.bind if a.bind != "0.0.0.0" else "localhost", srv.server_address[1])
-    say("Serving %s at %s  (Ctrl+C stops it)" % (os.path.abspath(a.store), paint(url, "code")))
+    say("Serving %s at %s  (Ctrl+C stops it)" % (os.path.abspath(store), paint(url, "code")))
     if OUT.json:
         OUT._emit({"event": "serving", "url": url})
     if a.bind not in ("127.0.0.1", "localhost", "::1"):
@@ -338,6 +397,7 @@ def cmd_rollback(a, cfg):
 
 
 def cmd_deploy(a, cfg):
+    store = store_of(a, cfg)
     if a.to_folder:
         tgt = deploy.FolderTarget(a.to_folder)
     else:
@@ -352,7 +412,7 @@ def cmd_deploy(a, cfg):
                 ssh.fix_permissions(t.key)
         confirm_host(t)
         tgt = deploy.SftpTarget(t)
-    res = deploy.deploy(a.store, tgt, prune=not a.no_prune, dry_run=a.dry_run, progress=OUT.progress, log=say)
+    res = deploy.deploy(store, tgt, prune=not a.no_prune, dry_run=a.dry_run, progress=OUT.progress, log=say)
     OUT.end()
     return {"named": res.named, "had": res.had, "sent": res.sent, "sent_bytes": res.sent_bytes,
             "removed": res.removed, "atomic": res.atomic, "dry_run": res.dry_run, "summary": res.summary()}
@@ -649,27 +709,52 @@ def build_parser():
     def pass_stdin(sp):
         sp.add_argument("--passphrase-stdin", action="store_true", help="read the passphrase from the first line of standard input")
 
-    s = sub.add_parser("publish", help="turn a folder into a store (manifest.json + blobs/)")
-    s.add_argument("src")
-    s.add_argument("store")
-    s.add_argument("--name", default="")
-    s.add_argument("--version", dest="version", default="")
-    s.add_argument("--protect", action="append", metavar="PATH",
-                   help="a file or folder players keep once they have it, such as their settings: a path inside SRC, "
-                        "or a pattern like *.ini (repeatable; default: the saved list)")
-    s.add_argument("--leave-out", action="append", metavar="PATH",
-                   help="a file or folder to leave out of the release: a path inside SRC, or a pattern like *.log "
-                        "(repeatable; default: the saved list)")
-    s.add_argument("--sign", nargs="?", const="", metavar="KEYFILE",
-                   help="sign the release (optional; default key: the saved one, else %s)" % signing.default_key_path())
-    s.add_argument("--no-htaccess", action="store_true", help="do not write the .htaccess for Apache")
-    s.add_argument("--no-prune", action="store_true", help="keep blobs no release names")
-    pass_stdin(s)
+    def ssh_args(sp, root=True):
+        sp.add_argument("--host")
+        sp.add_argument("--user")
+        sp.add_argument("--port", type=int)
+        sp.add_argument("--key", help="private key file (default: the saved one, else %s)" % ssh.default_key_path())
+        if root:
+            sp.add_argument("--remote-root", help="the folder on the server the web server serves")
+
+    def release_args(sp):
+        sp.add_argument("--name", help="the release's name, shown to players (default: the saved one)")
+        sp.add_argument("--version", dest="version", help="the release's version, shown to players (default: the saved "
+                                                          "one); the same version again is fine (a shadow patch)")
+        sp.add_argument("--protect", action="append", metavar="PATH",
+                        help="a file or folder players keep once they have it, such as their settings: a path inside "
+                             "SRC, or a pattern like *.ini (repeatable; default: the saved list)")
+        sp.add_argument("--leave-out", action="append", metavar="PATH",
+                        help="a file or folder to leave out of the release: a path inside SRC, or a pattern like "
+                             "*.log (repeatable; default: the saved list)")
+        sp.add_argument("--sign", nargs="?", const="", metavar="KEYFILE",
+                        help="sign the release (optional; default key: the saved one, else %s)"
+                             % signing.default_key_path())
+        sp.add_argument("--no-htaccess", action="store_true", help="do not write the .htaccess for Apache")
+        sp.add_argument("--no-prune", action="store_true", help="keep blobs no release names")
+        pass_stdin(sp)
+
+    s = sub.add_parser("release", help="publish a folder and send it where players download it from (the saved "
+                                       "server, a folder, or this computer)")
+    s.add_argument("src", nargs="?", help="the folder to release (default: the saved one)")
+    release_args(s)
+    s.add_argument("--to", choices=("sftp", "folder", "local"),
+                   help="sftp: the saved server; folder: --to-folder or the saved one; local: serve it here for "
+                        "testing (default: the saved choice)")
+    s.add_argument("--to-folder", help="with --to folder: the folder to copy it to")
+    ssh_args(s)
+    s.add_argument("--dry-run", action="store_true", help="say what would be sent; send nothing")
+
+    s = sub.add_parser("publish", help="turn a folder into a store (manifest.json + blobs/), sent nowhere")
+    s.add_argument("src", nargs="?", help="the folder to release (default: the saved one)")
+    s.add_argument("store", nargs="?", help="where to write it (default: the saved store, else DeltaPatcher's own "
+                                            "folder)")
+    release_args(s)
 
     s = sub.add_parser("serve", help="serve a store over http (default http://127.0.0.1:8000/)")
-    s.add_argument("store")
+    s.add_argument("store", nargs="?", help="default: the saved store, else the saved folder's")
     s.add_argument("--bind", default="127.0.0.1")
-    s.add_argument("--port", type=int, default=8000)
+    s.add_argument("--port", type=int, help="default: the saved serve_port, else 8000")
     s.add_argument("--verbose", action="store_true")
 
     s = sub.add_parser("update", help="bring a folder up to the source's release")
@@ -684,16 +769,8 @@ def build_parser():
     s = sub.add_parser("rollback", help="undo the last update of a folder")
     s.add_argument("install")
 
-    def ssh_args(sp, root=True):
-        sp.add_argument("--host")
-        sp.add_argument("--user")
-        sp.add_argument("--port", type=int)
-        sp.add_argument("--key", help="private key file (default: the saved one, else %s)" % ssh.default_key_path())
-        if root:
-            sp.add_argument("--remote-root", help="the folder on the server the web server serves")
-
     s = sub.add_parser("deploy", help="send a store to a server (sftp) or a folder, only the missing blobs")
-    s.add_argument("store")
+    s.add_argument("store", nargs="?", help="default: the saved store, else the saved folder's")
     s.add_argument("--to-folder", help="deploy to this folder instead of a server")
     ssh_args(s)
     s.add_argument("--dry-run", action="store_true")
@@ -743,8 +820,9 @@ def build_parser():
     return p
 
 
-HANDLERS = {"publish": cmd_publish, "serve": cmd_serve, "update": cmd_update, "rollback": cmd_rollback,
-            "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign, "config": cmd_config, "version": cmd_version}
+HANDLERS = {"publish": cmd_publish, "release": cmd_release, "serve": cmd_serve, "update": cmd_update,
+            "rollback": cmd_rollback, "deploy": cmd_deploy, "ssh": cmd_ssh, "sign": cmd_sign, "config": cmd_config,
+            "version": cmd_version}
 
 
 def split_line(line):

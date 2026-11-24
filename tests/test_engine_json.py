@@ -104,7 +104,7 @@ class JsonMode(TempCase):
         rc, ev = run_json(["config", "set", "deploy_mode=Folder"])
         s = ev[-1]["data"]["settings"]
         self.assertEqual((s["name"], s["deploy_mode"]), ("Kept", "folder"))
-        rc, ev = run_json(["config", "set", "deploy_mode=local"])
+        rc, ev = run_json(["config", "set", "deploy_mode=moon"])        # not one of its choices: the default
         self.assertEqual(ev[-1]["data"]["settings"]["deploy_mode"], "sftp")
         self.assertIn("; a note of mine", read(p).decode())
         run_json(["config", "set", "name=", "deploy_mode=sftp"])

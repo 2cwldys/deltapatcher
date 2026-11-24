@@ -16,6 +16,7 @@ here: keys are named by their file path.
 """
 
 import configparser
+import hashlib
 import os
 import re
 import sys
@@ -36,7 +37,8 @@ SCHEMA = [
                                 "of the first signed release is trusted, and only that key after it. off: never check."),
     ("update", "workers", 4, "How many files download at the same time."),
     ("publish", "publish_src", "", "The folder to release."),
-    ("publish", "store_dir", "", "Where the release is written (manifest.json, blobs/, sigs/): what gets served."),
+    ("publish", "store_dir", "", "Where the release is prepared before it is sent (manifest.json, blobs/, sigs/). Empty: "
+                                 "DeltaPatcher's own folder, one for each folder released."),
     ("publish", "name", "", "The release's name, shown to players."),
     ("publish", "version", "", "The release's version, shown to players."),
     ("publish", "protect", "", "Files and folders players keep once they have them (their settings): paths inside the "
@@ -47,13 +49,16 @@ SCHEMA = [
     ("publish", "signing_key", default_signing_key(), "The signing key's file (the file's path, never the key)."),
     ("publish", "htaccess", True, "Write a .htaccess for Apache into the store (yes/no)."),
     ("publish", "serve_port", 8000, "The port of 'Serve locally'."),
-    ("server", "deploy_mode", "sftp", "Where Deploy sends the release: sftp (a server over SSH) or folder."),
+    ("server", "deploy_mode", "sftp", "Where Release sends the release: sftp (a server over SSH), folder, or local "
+                                      "(served from this computer, for testing)."),
     ("server", "ssh_host", "", "The server's address."),
     ("server", "ssh_user", "", "The user deploys log in as."),
     ("server", "ssh_port", 22, "The server's SSH port."),
     ("server", "ssh_key", default_key_path(), "The SSH key's file (the file's path, never the key)."),
     ("server", "remote_root", "", "The folder on the server its web server serves, with forward slashes."),
-    ("server", "deploy_folder", "", "The folder Deploy copies the release to, in folder mode."),
+    ("server", "deploy_folder", "", "The folder Release copies the release to, in folder mode."),
+    ("server", "public_url", "", "The address players update from: what the web server gives the remote folder or the "
+                                 "folder (https://game.example.com/). Shown after each release."),
     ("window", "close_to_tray", False, "Closing the window keeps DeltaPatcher in the tray (yes/no)."),
 ]
 DEFAULTS = {key: default for _s, key, default, _w in SCHEMA}
@@ -63,6 +68,16 @@ HEADER = """; DeltaPatcher settings. Edit with any text editor; a line starting 
 ; The window saves its fields here too (comments and order stay). An empty value means the default.
 ; Never put a passphrase or a private key in this file: keys are named by their file path only.
 """
+
+
+def default_store(src):
+    """Where a folder's release is prepared when store_dir is empty: a stores folder beside the settings
+    file (DeltaPatcher's own folder, or a portable copy's), one store for each folder released, named
+    after it with a short hash of its full path so two folders of the same name stay apart."""
+    full = os.path.normcase(os.path.abspath(src)).rstrip("\\/")
+    name = re.sub(r"[^A-Za-z0-9._-]+", "-", os.path.basename(full)).strip("-.") or "release"
+    digest = hashlib.sha256(full.encode("utf-8")).hexdigest()[:8]
+    return os.path.join(os.path.dirname(path()), "stores", "%s-%s" % (name[:40], digest))
 
 
 def path():
@@ -107,7 +122,7 @@ def ensure():
     return p
 
 
-CHOICES = {"deploy_mode": ("sftp", "folder")}
+CHOICES = {"deploy_mode": ("sftp", "folder", "local")}
 
 
 def _convert(key, raw):

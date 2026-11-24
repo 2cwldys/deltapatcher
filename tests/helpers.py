@@ -36,10 +36,19 @@ def snapshot(folder):
 
 
 class TempCase(unittest.TestCase):
+    """A folder of its own for each test, with its own settings file: what one test saves, the next
+    never sees."""
+
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="dp-test-")
+        self._settings = os.environ.get("DELTAPATCHER_CONFIG")
+        os.environ["DELTAPATCHER_CONFIG"] = os.path.join(self.tmp, "settings", "deltapatcher.ini")
 
     def tearDown(self):
+        if self._settings is None:
+            os.environ.pop("DELTAPATCHER_CONFIG", None)
+        else:
+            os.environ["DELTAPATCHER_CONFIG"] = self._settings
         shutil.rmtree(self.tmp, ignore_errors=True)
 
     def p(self, *parts):

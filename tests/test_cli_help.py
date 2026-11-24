@@ -44,8 +44,8 @@ class Help(unittest.TestCase):
         self.assertTrue(options.startswith("\x1b[1;97m"))           # a heading: bold white
         publish = next(line for p, line in lines.items() if p.lstrip().startswith("publish "))
         self.assertIn(CODE % "publish", publish)                    # a command: the app's blue
-        example = next(line for p, line in lines.items() if p.lstrip().startswith(cli.prog_name() + " serve"))
-        self.assertIn(CODE % (cli.prog_name() + " serve ./store"), example)
+        example = next(line for p, line in lines.items() if p.lstrip().startswith(cli.prog_name() + " release --to local"))
+        self.assertIn(CODE % (cli.prog_name() + " release --to local"), example)  # the command, not its (comment)
 
     def test_every_example_is_a_real_command(self):
         import shlex
@@ -53,7 +53,7 @@ class Help(unittest.TestCase):
         examples = [line.strip() for line in cli.build_parser().format_help().splitlines()
                     if line.startswith("  " + prog + " ")]
         self.assertGreaterEqual(len(examples), 10)
-        self.assertTrue(any(" deploy ./store" in e for e in examples))              # the VPS route is shown
+        self.assertTrue(any(" release --version" in e for e in examples))           # the VPS route is shown
         self.assertTrue(any("--source https://" in e for e in examples))
         for line in examples:
             command = line.split("  (")[0]                                            # without its (comment)

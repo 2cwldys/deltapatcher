@@ -28,8 +28,10 @@ It never waits when a program reads its output (a pipe, a file, `--json`).
 
 The DeltaPatcher app (`app/`) runs this same command line, in its machine mode (`--json`, below).
 
-The settings file (`deltapatcher.ini`, see [Settings and logs](#settings-and-logs)) fills in `--source`,
-`--trust-key`, the signing key and the SSH options when you leave them out.
+The settings file (`deltapatcher.ini`, see [Settings and logs](#settings-and-logs)) fills in whatever you
+leave out: the folder to release, its name and version, what to leave out and what players keep, where
+releases go (the server, a folder, or this computer), `--source`, `--trust-key`, the signing key and the SSH
+options. The app and the command line share it.
 
 ## Options for every command
 

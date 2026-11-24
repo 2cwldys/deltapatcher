@@ -30,7 +30,11 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `no signing key at ...` | Make one: **New signing key** (Release page) or `deltapatcher sign keygen`. Or turn off **Sign each release**. |
 | `signing needs the 'cryptography' package` | From source: `pip install cryptography`. The built programs include it. |
 | `a passphrase on a new SSH key needs the bcrypt package` | From source: `pip install bcrypt`. The built programs include it. |
-| `the store must not be inside the folder it publishes` | Choose a store folder outside the release folder. |
+| `the store must not be inside the folder it publishes` | Leave Settings' `store_dir` empty (DeltaPatcher then keeps the store in its own folder), or choose one outside the release folder. |
+| `give the folder to release, or save it once` | Choose *Folder to release* (Release page, step 1), or `deltapatcher config set publish_src=FOLDER`. |
+| `save the server once` / `give the folder to send it to` | Fill in step 2 of the Release page (or the menu's *Set up where releases go*): the server's host, user and remote folder, or the folder to copy to. |
+| `X: Y is not in Z (yet)` | A file or folder in *Leave out* or *Players keep their own copy* is not in the release folder. Harmless; remove it from the list if it is gone for good. |
+| `X is not inside the folder you publish` | `--leave-out` and `--protect` take paths inside the release folder (or a pattern such as `*.log`). |
 | `X cannot be published: ...` | A file name that cannot be used on every system (a device name like `CON`, a name ending in a dot or space, a `:`). Rename it. |
 | `skipped X (a link or junction)` | Links are never followed. Copy the real files into the release folder. |
 | `nothing changed since the last publish` | Not an error: the manifest stays as it was. |
@@ -42,6 +46,10 @@ Messages are shown in the window's log and, from the command line, on the screen
 | `ssh-keyscan was not found` (or sftp, ssh-keygen, ssh-add) | Install the OpenSSH client. Windows: Settings > Apps > Optional features > OpenSSH Client. |
 | `The OpenSSH Authentication Agent is not running` | Windows, administrator PowerShell, once: `Get-Service ssh-agent \| Set-Service -StartupType Automatic` then `Start-Service ssh-agent`. |
 | `the server refused the key` | The key's server line is not in `~/.ssh/authorized_keys` of that user on the server, or the key is not unlocked. Copy the server line again (**Copy server line**) and click **Unlock key**. On the server, `.ssh` must be mode 700 and `authorized_keys` 600, owned by the user. |
+| `the server's host key is not trusted yet: check it first` | **Check host key** (or `deltapatcher ssh trust`) before **Put key on server**: the password goes only to a server you trust. |
+| `... refused the password for ...` | The user or the password is wrong, or the server lets this user log in with a key only. Then add the key's line yourself (**Copy server line**). |
+| `... does not take a password for ...` | The server has passwords switched off: add the key's line yourself (**Copy server line**, then into `~/.ssh/authorized_keys` on the server). |
+| `putting a key on a server needs the paramiko package` | From source: `pip install paramiko`. The built programs include it. |
 | `the server's host key is not the one you confirmed` | Either the server was reinstalled (check its new fingerprint, then `deltapatcher ssh trust --host HOST --forget` and confirm again), or something is intercepting the connection. In that case, do not deploy. |
 | `the private key can be read by other users` | Click **Fix permissions** (or answer yes on the command line). OpenSSH refuses keys that others can read. |
 | `ssh-keygen cannot read ...` | The key file is damaged or not an SSH key. Make a new one with **New key** (Release page, step 2). |
@@ -57,4 +65,8 @@ Messages are shown in the window's log and, from the command line, on the screen
 | --- | --- |
 | The antivirus quarantines the DeltaPatcher app or `deltapatcher-cli` | New, unsigned programs are flagged by reputation checks. Restore it and add an exception, run from source, or (for publishers) sign the programs. |
 | No tray icon on Linux | The desktop needs a tray (AppIndicator or an X tray). Everything else works without one. |
+| `could not ask GitHub: ...` (Update DeltaPatcher) | No connection to github.com, or GitHub limits how often one address may ask (60 times an hour): try again later. |
+| `... does not match the SHA-256 GitHub gives for it: not used` | The download was damaged or changed on the way; nothing was installed. Try again, or download it from the release page. |
+| `this DeltaPatcher runs from source` (self-update) | Update the repository instead: `git pull`. |
+| The build says `The build needs Python 3.11 or later` | Install a newer Python, delete `.venv`, and run `build.ps1` / `build.sh` again (on Linux: `PYTHON=python3.12 ./build.sh`). |
 | `Cannot serve: ... address already in use` | Another program uses the port. Pick another port (Release page, step 2, **This computer**), or `--port`. |

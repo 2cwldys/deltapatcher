@@ -28,9 +28,14 @@ identical files are stored once.
     <td width="33%" valign="top"><b>Signed releases</b><br>Optional Ed25519 signatures: players' updaters refuse a release that is not signed by your key, even on a compromised server.</td>
   </tr>
   <tr>
-    <td valign="top"><b>Deploy over SSH</b><br>Send a release to your VPS with SFTP, uploading only missing blobs and switching the manifest in last. Host keys are confirmed once and checked strictly after.</td>
+    <td valign="top"><b>One button to your VPS</b><br><i>Release</i> publishes and sends your server only the missing blobs over SFTP, switching the manifest in last. <i>Put key on server</i> sets up the login with its password, once; host keys are confirmed once and checked strictly after.</td>
     <td valign="top"><b>Host it anywhere</b><br>The release is plain static files: Caddy, nginx, Apache or XAMPP (an <code>.htaccess</code> is written for you), any static host, a share, or the built-in server.</td>
-    <td valign="top"><b>App and command line</b><br>A clean window for people and a command line for scripts and launchers. Self-contained: no Python or Node needed to run either.</td>
+    <td valign="top"><b>App and command line</b><br>A clean window, and a command line with a menu of plain questions for beginners and commands for scripts and launchers. Self-contained, and both keep themselves up to date.</td>
+  </tr>
+  <tr>
+    <td valign="top"><b>Pick, do not type</b><br>Leave out folders and files, or let players keep their own copy (settings, saves), by picking them. No patterns to learn.</td>
+    <td valign="top"><b>Same version, new files</b><br>Publishing the same version again with fixes (a shadow patch) works like any update: only the changed files travel.</td>
+    <td valign="top"><b>In your containers</b><br>Docker images and Pterodactyl eggs keep their files at a release's version, brought up to date at every start.</td>
   </tr>
 </table>
 
@@ -122,8 +127,10 @@ here, not the wiki.
 
 Releases can be signed, and players' updaters then refuse anything not signed by your key. Every file
 is checked against its SHA-256 before it is used, and manifests are treated as untrusted input. SSH
-keys are read only by OpenSSH, and passphrases are never stored or put on a command line. Server host
-keys are confirmed once and checked strictly after. The details are in **[SECURITY.md](SECURITY.md)**.
+keys are read only by OpenSSH, and passphrases and server passwords are never stored or put on a command
+line; a password goes only to a server whose host key you trusted. Server host keys are confirmed once and
+checked strictly after. DeltaPatcher's own updates are checked against the SHA-256 GitHub gives before they
+are used. The details are in **[SECURITY.md](SECURITY.md)**.
 
 ## Building from source
 
@@ -195,13 +202,15 @@ The app's files carry the version in their names; the command line's do not.
 
 | Part | At run time | To build |
 | --- | --- | --- |
-| Engine | Python's standard library; `cryptography` and `bcrypt` only to make keys and sign (checking signatures needs nothing) | PyInstaller, Pillow (the icon) |
+| Engine | Python's standard library; `cryptography` and `bcrypt` only to make keys and sign (checking signatures needs nothing), `paramiko` only to put your key on a server with its password | PyInstaller, Pillow (the icon) |
 | App | Electron | electron-vite, React, Tailwind CSS, lucide-react, zustand, TypeScript, electron-builder |
 | Deploys | the system's OpenSSH client (`ssh`, `sftp`, `ssh-keygen`, `ssh-add`), built into Windows 10+, Linux and macOS | |
 
 **Tests**: `python -m unittest discover -s tests`. They publish, serve, update and roll back real
 folders over HTTP, and refuse damaged blobs, missing blobs and malicious manifests. They sign and check
-releases, deploy through a stand-in SFTP server, and drive the engine's JSON mode the way the app does.
+releases, release the same version again with changed files, deploy through a stand-in SFTP server, put
+a key on a stand-in SSH server, update DeltaPatcher from a stand-in for GitHub, walk the menu, and drive
+the engine's JSON mode the way the app does.
 
 ## Contributing
 

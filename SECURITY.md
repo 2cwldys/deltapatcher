@@ -1,7 +1,8 @@
 # Security
 
 DeltaPatcher moves files onto people's computers and logs in to servers with SSH keys, so it is
-built to fail closed. This page says what it protects, how, and what it leaves to you.
+built to fail closed. This page says what it protects, how, what it leaves to you, and who answers for
+what it installs.
 
 ## Reporting a vulnerability
 
@@ -49,3 +50,24 @@ Only the latest release gets security fixes.
   SFTP and to one deploy user that owns only the web folder.
 - **Antivirus reputation checks** may flag new, unsigned builds of the programs. Signing the programs
   themselves (Authenticode) is up to whoever distributes them.
+
+## Who answers for what is installed
+
+DeltaPatcher is a tool for moving files. It installs exactly what a publisher released, checked byte by
+byte against that publisher's manifest, and nothing else. It never looks inside a file, so it cannot tell
+whether a release is safe, lawful, properly licensed, or what anyone expected.
+
+- **A publisher answers for what they release**: the files, the right to share them, and what they do on
+  the computers they reach. DeltaPatcher only carries them.
+- **A player chooses whom to trust.** Adding a source address, a publisher key or a project preset lets that
+  publisher put files on your computer. Add only publishers you trust, as you would before running a
+  program they sent you. A signature proves who released something, not that it is harmless.
+- **Nobody reviews releases.** DeltaPatcher has no central server, store or approval step: anyone can host a
+  release, and DeltaPatcher's authors never see, check or control what is published or installed with it.
+- **DeltaPatcher's authors and contributors are not responsible** for what anyone releases, hosts or
+  installs with it, nor for any harm, loss or damage that follows from it. DeltaPatcher is provided "as is",
+  without warranty of any kind, under the MIT licence; the [LICENSE](LICENSE) file holds the binding terms.
+
+A harmful release is a matter for its publisher and whoever hosts it: DeltaPatcher's authors cannot reach
+or remove it. A security problem in DeltaPatcher itself goes to the private report described at the top of
+this page.

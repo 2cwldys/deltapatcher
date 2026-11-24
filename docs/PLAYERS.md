@@ -1,7 +1,7 @@
 # For players: keeping a game folder up to date
 
 The game's maker gives you two things: **the DeltaPatcher app** and a **source
-address**, for example `https://game.example.com/`.
+address**, for example `https://game.example.com/` or `http://203.0.113.10/`.
 
 ## First time
 
@@ -58,7 +58,9 @@ window or quit.
   the same folder. Wait for it, or close it.
 - **The update failed and says a file is in use**: close the game and try again. The failed update
   was already undone, so your folder is as it was.
-- **"plain http to another machine"** warning: the address starts with `http://`, not `https://`. Ask
-  the game's maker for an `https://` address. On a home network you trust, it is fine to continue.
+- **"plain http to another machine"** warning: the address starts with `http://`, not `https://`. That
+  is fine with the game's publisher key in *Publisher key*: only releases they signed are installed. Without
+  a key, ask the game's maker for it, or for an `https://` address. On a home network you trust, it is fine
+  to continue.
 
 More messages are explained in [Troubleshooting](TROUBLESHOOTING.md).

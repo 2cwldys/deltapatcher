@@ -1,15 +1,20 @@
 # Setting up a VPS
 
-The end result is a web server on your VPS serving the store over HTTPS, and a deploy user that
-DeltaPatcher reaches with an SSH key limited to SFTP. Each deploy sends only the blobs the server
-does not have yet.
+The end result is a web server on your VPS serving the store (over HTTPS when you have a domain name),
+and a deploy user that DeltaPatcher reaches with an SSH key limited to SFTP. Each deploy sends only the
+blobs the server does not have yet.
 
 You need:
 - a VPS with a public address and SSH (any Linux distribution; Windows Server works too, see the end)
-- a domain name pointing at it, for HTTPS (for example `game.example.com`)
 - the OpenSSH client on your PC (built into Windows 10 and later, Linux and macOS)
 
-The examples use Ubuntu or Debian and Caddy, which gets its HTTPS certificate by itself.
+A domain name is optional. With one pointing at the VPS, the web server gets an HTTPS certificate by
+itself. Without one, players download from the server's IP address over plain http, for example
+`http://203.0.113.10/`: see [No domain name](#no-domain-name). The examples say `game.example.com`;
+without a domain name, put the IP address in its place.
+
+The examples use Ubuntu or Debian and Caddy, which gets its HTTPS certificate by itself when it has a
+domain name.
 
 ## Part 1: on the VPS
 
@@ -87,6 +92,21 @@ the usual default on shared hosting). A virtual host, for your own Apache:
 </VirtualHost>
 ```
 
+### No domain name
+
+Players then download over plain http from the server's IP address, for example
+`http://203.0.113.10/`:
+
+- **Caddy**: begin the block with `:80` instead of `game.example.com`.
+- **nginx**: put `listen 80 default_server;` in place of the `server_name` line, remove the default site
+  (`sudo rm /etc/nginx/sites-enabled/default`), and skip certbot.
+- **Apache**: use `<VirtualHost *:80>`, leave out `ServerName` and the SSL line, and switch the default
+  site off (`sudo a2dissite 000-default`).
+
+Over plain http, someone between the server and a player could change what is sent. DeltaPatcher refuses
+any file whose SHA-256 is not the one in the manifest; to protect the manifest as well, sign your releases
+and give players your public key (see [Sign your releases](PUBLISHING.md#3b-sign-your-releases-optional)).
+
 ## Part 2: a key on your PC
 
 In DeltaPatcher, open the **Release** page, pick **Your server (SSH)** in step 2, and click **New key**:
@@ -123,8 +143,9 @@ off, needs this second way.)
 
 On the **Release** page, step 2, **Your server (SSH)**:
 
-1. *Host* `game.example.com`, *User* `deploy`, *Port* `22`, *Remote folder* `/var/www/game`, and
-   *Players download from* `https://game.example.com/`.
+1. *Host* `game.example.com` (or the IP address), *User* `deploy`, *Port* `22`, *Remote folder*
+   `/var/www/game`, and *Players download from* `https://game.example.com/` (without a domain name:
+   `http://203.0.113.10/`).
 2. **Unlock key**: type the passphrase once. `ssh-agent` keeps the key unlocked until you log out.
    - On Windows the agent service is off by default. In an administrator PowerShell, once:
      ```
@@ -156,7 +177,7 @@ leave it out. After that, every new version is one `deltapatcher release`.
 curl -I https://game.example.com/manifest.json
 ```
 
-`200` is good. Players now use `https://game.example.com/` as their source.
+`200` is good. Players now use `https://game.example.com/` (or `http://203.0.113.10/`) as their source.
 
 ## How a deploy keeps players safe
 

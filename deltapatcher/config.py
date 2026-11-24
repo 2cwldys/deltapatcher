@@ -79,8 +79,10 @@ SCHEMA = [
                                  "Apache, or Caddy's JSON log): its path on the server, read over SFTP like a "
                                  "release is sent, or for a folder or local release a path on this computer. Only "
                                  "counts are kept, never an address."),
-    ("backup", "backup_dir", "", "The folder backups of the live release are kept in. Empty: backups/<this project's "
-                                 "file name> beside the main settings file."),
+    ("backup", "backup_dir", "", "The folder backups of the live release go in, a folder for each project inside it. "
+                                 "A relative path starts at the main settings file's folder. Empty: backups beside "
+                                 "the main settings file. Never a project's store or a folder it releases, copies to "
+                                 "or keeps up to date."),
     ("backup", "backup_every_hours", 0, "The app backs up the live release every this many hours while it runs, window "
                                         "shown or in the tray (0: never; 24: once a day). For a computer without the app "
                                         "open: deltapatcher backup schedule daily."),
@@ -90,8 +92,8 @@ SCHEMA = [
                                         "have one."),
     ("backup", "backup_keep_monthly", 0, "Backups kept one a month: the newest of each of the last this many months that "
                                          "have one."),
-    ("backup", "backup_max_size", "", "The most the backup folder may hold, for example 10 GB: the oldest backups go "
-                                      "first, the newest always stays. Empty: no limit."),
+    ("backup", "backup_max_size", "", "The most the project's backup folder may hold, for example 10 GB: the oldest "
+                                      "backups go first; the one just made always stays. Empty: no limit."),
     ("window", "close_to_tray", False, "Closing the window keeps DeltaPatcher in the tray (yes/no)."),
     ("window", "minimize_to_tray", False, "Minimizing the window hides it in the tray, off the taskbar; a click on the "
                                           "tray icon brings it back (yes/no)."),

@@ -372,8 +372,8 @@ RELEASE = dict(name=s_str("The release's name, shown to players (left out: the s
                htaccess=s_bool("Write the .htaccess for Apache (default yes)."))
 
 RO = {"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
-# reads the destination and writes only on this computer
-BACKS_UP = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": True}
+# reads the destination and writes only on this computer, where the limits it applies can remove old backups
+BACKS_UP = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True}
 RO_NET = dict(RO, openWorldHint=True)
 WRITES = {"readOnlyHint": False, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False}
 CHANGES = {"readOnlyHint": False, "destructiveHint": True, "idempotentHint": False, "openWorldHint": False}
@@ -724,16 +724,19 @@ TOOLS_LIST = [
          "with the checks a release makes, or the deploy folder), each blob checked against its SHA-256 as it arrives. "
          "Nothing at the destination changes. A release unchanged since the last backup makes no new one; a second "
          "backup the same day replaces that day's. The limits (backup_keep_daily, backup_keep_weekly, "
-         "backup_keep_monthly, backup_max_size) are applied after it.",
+         "backup_keep_monthly, backup_max_size) are applied after it: older backups they do not keep are removed "
+         "from this computer.",
          schema(project=PROJECT), BACKS_UP, build=lambda a: project_first(a, ["backup", "now"])),
     Tool("backup_list", "List the backups",
-         "A project's backups of its live release, the newest first: each one's date (its name), the release it holds "
-         "(name, version, files, size), and the folder they are in with its size and the limits.",
+         "A project's backups of its live release, the newest first: each one's date (its name, a day in UTC), the "
+         "release it holds (name, version, files, size), the folder they are in with its size and the limits, the "
+         "backups that cannot be read, and how the system scheduler's last run went (backup schedule).",
          schema(project=PROJECT), RO, build=simple("backup", "list")),
     Tool("backup_restore", "Restore a backup",
          "Put a backup back where players download from, as a release goes: the blobs the destination lacks first, "
-         "the manifest last. Players get that release from then on; nothing at the destination is removed. "
-         "dry_run=true only says what would be sent.",
+         "the manifest last, after every blob of it is checked against its SHA-256. Players get that release from "
+         "then on; nothing at the destination is removed, except a file of the same name and the wrong size, which "
+         "is replaced. dry_run=true only says what would be sent.",
          schema(["name"], name=s_str("The backup: its date, YYYY-MM-DD (backup_list names them)."),
                 dry_run=s_bool("Say what would be sent; send nothing."), project=PROJECT),
          CHANGES_NET, build=b_backup_restore),

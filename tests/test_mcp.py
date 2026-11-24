@@ -283,7 +283,7 @@ class Mcp(TempCase):
         by = {t["name"]: t for t in c.request("tools/list")["result"]["tools"]}
         self.assertTrue(by["backup_list"]["annotations"]["readOnlyHint"])
         self.assertEqual((by["backup_now"]["annotations"]["readOnlyHint"], by["backup_now"]["annotations"]["destructiveHint"]),
-                         (False, False))                                       # it writes on this computer only
+                         (False, True))                                        # the limits it applies can remove backups
         self.assertTrue(by["backup_restore"]["annotations"]["destructiveHint"])  # a client asks before it
         self.assertFalse([n for n in by if n.startswith("backup_") and n not in ("backup_now", "backup_list",
                                                                                  "backup_restore")])

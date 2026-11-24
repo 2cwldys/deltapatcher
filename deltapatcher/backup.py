@@ -1,49 +1,79 @@
 """Backups of a project's live release: what players download now, read from where it is deployed (the
 project's server over SFTP, or its deploy folder) and kept on this computer. A backup only reads at the
-destination; a restore is a release of the backup, its blobs first and its manifest last, that removes
-nothing there.
+destination. A restore is a release of the backup, its blobs first and its manifest last: it removes nothing
+there, except a file of the same name and the wrong size, which it replaces.
 
-    <backup folder>/blobs/<sha256>     the pool: each blob once, however many backups name it, checked
-                                       against its SHA-256 as it arrives
-    <backup folder>/<YYYY-MM-DD>/      one backup a day (UTC): manifest.json, manifest.previous.json when the
-                                       destination has one, sigs/<sha256>.sig, backup.json
+    <base>/<its settings file's name>-<project id>/
+                                     a project's backup folder, one for every project, Default too; <base> is
+                                     backup_dir (a relative one is read from the main settings file's folder),
+                                     else backups beside the main settings file
+        project.json                 the project the folder belongs to
+        blobs/<sha256>               the pool: each blob once, however many backups name it, checked against
+                                     its SHA-256 as it arrives
+        <YYYY-MM-DD>/                one backup a day (UTC): manifest.json, manifest.previous.json and
+                                     .htaccess when the destination has them, sigs/<sha256>.sig, and
+                                     backup.json (the project, when, from where)
+        scheduled.json               the system scheduler's last run: when, and what it did
 
-The backup folder is backup_dir, else backups/<the project's file name> beside the main settings file. A
-backup of a release unchanged since the last backup makes no new one, and a second backup the same day
-replaces that day's. After each backup the limits are applied (limits(), apply_limits()), and blobs no backup
-names any more leave the pool.
+A folder, or a backup in it, that belongs to another project is never written, pruned or restored. The
+backup folder never shares a folder with the project's store, the folder it releases, the folder releases
+are copied to or the folder it keeps up to date (folder_problem()).
 
-schedule() has the operating system run `deltapatcher-cli --close backup` daily or hourly (Windows: Task
-Scheduler through schtasks; elsewhere the user's crontab), for a computer that does not keep the app open.
+A backup of a release unchanged since the newest backup makes no new one, but tops that one up when the pool
+lacks some of its blobs; a second backup the same day replaces that day's. After each backup the limits are
+applied (limits(), apply_limits()) and blobs no backup names any more leave the pool. The backup just made
+always stays. Nothing is removed while a dated folder cannot be read, and no backup is removed by date when
+the one just made is dated before another (the computer's clock is behind, or was ahead).
+
+schedule() has the operating system run `deltapatcher-cli --unattended --project FILE backup now --scheduled
+daily|hourly` every hour: on Windows a Task Scheduler task that starts it through conhost --headless, so no
+console window opens over a game; elsewhere a line in the user's crontab. The run skips while the newest
+backup, or the scheduler's last run that worked, is younger than a day (daily) or an hour (hourly), so a
+computer that was off or asleep catches up within the hour. It notes how it went in scheduled.json.
 """
 
+import calendar
+import codecs
 import contextlib
-import csv
 import datetime
 import hashlib
-import io
 import json
+import locale
+import ntpath
 import os
 import re
 import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from xml.sax.saxutils import escape
 
-from . import client, config, deploy, hashing
+from . import client, config, deploy, hashing, ssh
 from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PREVIOUS_NAME, Manifest, ManifestError
-from .publish import human
+from .publish import HTACCESS, human
 from .signing import SIG_DIR, sig_name
 
 FORMAT = "deltapatcher-backup"
 VERSION = 1
 INFO_NAME = "backup.json"
+MARKER_NAME = "project.json"
+MARKER_FORMAT = "deltapatcher-backup-folder"
+SCHEDULED_NAME = "scheduled.json"
 NAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-TASK = "DeltaPatcher backup"          # Windows: every task this makes starts with it
-CRON_MARK = "# deltapatcher-backup "  # the user's crontab: every line this makes ends with it and the project's id
+OLD_RE = re.compile(r"^\.old-(\d{4}-\d{2}-\d{2})-\d+$")
+TASK = "DeltaPatcher backup"          # Windows: a project's task is "DeltaPatcher backup <project id>"
+CRON_MARK = "# deltapatcher-backup "  # the user's crontab: the line this makes ends with it and the project's id
+EVERY = {"daily": 24 * 3600, "hourly": 3600}     # a scheduled run backs up once in this many seconds
+SLACK = 15 * 60                       # an hourly start comes a little early or late: never skipped for that
+TASK_TIME_LIMIT = "PT23H"             # Task Scheduler ends a run that takes longer
+RENAME_TRIES = 20 if os.name == "nt" else 1      # Windows: a virus scanner or the indexer can hold a folder a moment
+RENAME_WAIT = 0.1
 _SIZE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*(bytes|byte|b|kb|mb|gb|tb)\s*$", re.I)
 _UNITS = {"b": 1, "byte": 1, "bytes": 1, "kb": 1 << 10, "mb": 1 << 20, "gb": 1 << 30, "tb": 1 << 40}
+_CONTROL = re.compile(r"[\x00-\x1f\x7f]")
+_TIME = "%Y-%m-%dT%H:%M:%SZ"
 
 
 class BackupError(Exception):
@@ -60,22 +90,96 @@ def now():
     return time.time()
 
 
-def folder_of(project, cfg):
-    """The project's backup folder: backup_dir, else backups/<its file's name> beside the main settings file.
-    The name of a project's file kept elsewhere gets a short hash of its path, so two files of one name stay
-    apart."""
-    given = str(cfg.get("backup_dir") or "").strip()
-    if given:
-        return os.path.abspath(os.path.expanduser(given))
-    name = os.path.splitext(os.path.basename(project.path))[0]
-    if project.kind not in ("main", "folder"):
-        name += "-" + project_id(project)
-    return os.path.join(os.path.dirname(config.path()), "backups", name)
+def _stamp(t):
+    return time.strftime(_TIME, time.gmtime(t))
+
+
+def _seconds(text):
+    """A time as _stamp() writes it, in seconds since the epoch; None when it is not one."""
+    try:
+        return calendar.timegm(time.strptime(str(text), _TIME))
+    except (ValueError, TypeError, OverflowError):
+        return None
 
 
 def project_id(project):
     """A short id of the project's settings file, the same as long as the file stays where it is."""
     return hashlib.sha256(os.path.normcase(os.path.abspath(project.path)).encode("utf-8")).hexdigest()[:8]
+
+
+# ---- where a project's backups are --------------------------------------------------------------------
+
+def base_of(cfg):
+    """The folder the projects' backup folders are in: backup_dir (a relative one is read from the main
+    settings file's folder), else backups beside the main settings file."""
+    here = os.path.dirname(config.path())
+    given = str(cfg.get("backup_dir") or "").strip()
+    if not given:
+        return os.path.join(here, "backups")
+    return os.path.abspath(os.path.join(here, os.path.expanduser(given)))
+
+
+def _project_folders(cfg):
+    """[(what it is, its path)]: the project's folders its backups stay out of."""
+    out = []
+    src = str(cfg.get("publish_src") or "").strip()
+    store = str(cfg.get("store_dir") or "").strip()
+    if store:
+        out.append(("the store of its releases (store_dir)", store))
+    elif src:
+        out.append(("the store of its releases", config.default_store(src)))
+    if src:
+        out.append(("the folder it releases (publish_src)", src))
+    folder = str(cfg.get("deploy_folder") or "").strip()
+    if folder and (cfg.get("deploy_mode") or "sftp") == "folder":
+        out.append(("the folder its releases are copied to (deploy_folder)", folder))
+    install = str(cfg.get("install_dir") or "").strip()
+    if install:
+        out.append(("the folder it keeps up to date (install_dir)", install))
+    return out
+
+
+def _real(path):
+    return os.path.normcase(os.path.realpath(os.path.abspath(os.path.expanduser(path))))
+
+
+def _within(inner, outer):
+    """inner is outer or a folder inside it (both as _real() gives them)."""
+    try:
+        return os.path.commonpath([inner, outer]) == outer
+    except ValueError:                  # on another drive
+        return False
+
+
+def folder_problem(cfg):
+    """What is wrong with where the project's backups would go, '' when nothing: the folder they go in
+    (backup_dir, else the default) must not be, hold, or be inside the project's store, the folder it
+    releases, the folder its releases are copied to, or the folder it keeps up to date."""
+    base = base_of(cfg)
+    b = _real(base)
+    for what, path in _project_folders(cfg):
+        p = _real(path)
+        where = os.path.abspath(os.path.expanduser(path))
+        if b == p:
+            how = "is %s" % what
+        elif _within(b, p):
+            how = "is inside %s, %s" % (what, where)
+        elif _within(p, b):
+            how = "holds %s, %s" % (what, where)
+        else:
+            continue
+        return "backups would go in %s, which %s: give them a folder of their own (backup_dir)" % (base, how)
+    return ""
+
+
+def folder_of(project, cfg):
+    """The project's backup folder: <base_of(cfg)>/<its settings file's name>-<project id>, one for every
+    project, Default too. BackupError when it would share a folder with the project's other folders."""
+    problem = folder_problem(cfg)
+    if problem:
+        raise BackupError(problem, "bad-setting")
+    name = os.path.splitext(os.path.basename(project.path))[0]
+    return os.path.join(base_of(cfg), "%s-%s" % (name, project_id(project)))
 
 
 def parse_size(text):
@@ -114,28 +218,100 @@ def _locked(folder):
         lock.__exit__(None, None, None)
 
 
+def _read_json(path):
+    """The JSON object in a file; None when there is none, it cannot be read, or it is not an object."""
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _write_json(path, data):
+    """A small JSON file, written beside and then put in place."""
+    tmp = "%s.%d.tmp" % (path, os.getpid())
+    with open(tmp, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(data, f, indent=1, sort_keys=True)
+    _rename(tmp, path)
+
+
+def _rename(src, dst):
+    """os.replace, tried again for a moment (RENAME_TRIES, on Windows), as a virus scanner or the search indexer
+    can hold a file or folder briefly."""
+    for attempt in range(RENAME_TRIES):
+        try:
+            os.replace(src, dst)
+            return
+        except PermissionError:
+            if attempt >= RENAME_TRIES - 1:
+                raise
+            time.sleep(RENAME_WAIT)
+
+
+def _check_owner(folder, project):
+    """BackupError when the folder, or a backup in it, belongs to another project."""
+    pid = project_id(project)
+    marker = _read_json(os.path.join(folder, MARKER_NAME))
+    if marker is not None and marker.get("project_id") not in (None, pid):
+        raise BackupError("%s holds the backups of another project (its settings file: %s): nothing is done "
+                          "there" % (folder, marker.get("file") or "not known"), "not-ours")
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for n in sorted(names):
+        if NAME_RE.match(n):
+            info = _read_json(os.path.join(folder, n, INFO_NAME))
+            if info is not None and info.get("project_id") not in (None, pid):
+                raise BackupError("the backup %s in %s is another project's: nothing is done there" % (n, folder),
+                                  "not-ours")
+
+
+def _mark(folder, project):
+    """The folder's note of the project it belongs to, written once."""
+    p = os.path.join(folder, MARKER_NAME)
+    if not os.path.isfile(p):
+        _write_json(p, {"format": MARKER_FORMAT, "version": 1, "project_id": project_id(project),
+                        "file": project.path})
+
+
 # ---- the backups in a folder ------------------------------------------------------------------------
 
 class Backup(object):
-    """One dated backup: its manifests and signatures are in its folder, its blobs in the pool."""
+    """One dated backup: its manifests and signatures are in its folder, its blobs in the pool. `problem`
+    says why it cannot be read ('' when it can)."""
 
     def __init__(self, folder, name):
         self.name = name
         self.path = os.path.join(folder, name)
+        self.problem = ""
         try:
-            with open(os.path.join(self.path, INFO_NAME), "r", encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, ValueError):
-            info = {}
-        self.info = info if isinstance(info, dict) else {}
-        self.manifest = self._manifest(MANIFEST_NAME)
-        self.previous = self._manifest(PREVIOUS_NAME)
+            _week(name)
+        except ValueError:
+            self.problem = "its name is not a date"
+        self.info = _read_json(os.path.join(self.path, INFO_NAME)) or {}
+        self.manifest = self._manifest(MANIFEST_NAME, True)
+        self.previous = self._manifest(PREVIOUS_NAME, False)
 
-    def _manifest(self, name):
+    def _manifest(self, name, needed):
         try:
             with open(os.path.join(self.path, name), "rb") as f:
-                return Manifest.from_json(f.read())
-        except (OSError, ManifestError):
+                data = f.read()
+        except FileNotFoundError:
+            if needed and not self.problem:
+                self.problem = "it has no %s" % name
+            return None
+        except OSError as e:
+            if not self.problem:
+                self.problem = ("its %s cannot be read: %s" % (name, e.strerror)) if e.strerror else \
+                    "its %s cannot be read" % name
+            return None
+        try:
+            return Manifest.from_json(data)
+        except ManifestError:
+            if not self.problem:
+                self.problem = "its %s is damaged" % name
             return None
 
     def raw(self, name):
@@ -170,24 +346,63 @@ class Backup(object):
                 "previous": None if self.previous is None else {"name": self.previous.name, "version": self.previous.version}}
 
 
-def list_backups(folder):
-    """The backups in a folder, the newest first; a folder that is not a readable backup is left out."""
+def scan(folder):
+    """(the backups in a folder, the newest first; [(name, why)] of the dated folders that cannot be read)."""
     try:
-        names = os.listdir(folder)
+        names = sorted(os.listdir(folder), reverse=True)
     except OSError:
-        return []
-    out = [Backup(folder, n) for n in sorted(names, reverse=True) if NAME_RE.match(n) and os.path.isdir(os.path.join(folder, n))]
-    return [b for b in out if b.manifest is not None]
+        return [], []
+    good, bad = [], []
+    for n in names:
+        if NAME_RE.match(n) and os.path.isdir(os.path.join(folder, n)):
+            b = Backup(folder, n)
+            if b.problem:
+                bad.append((n, b.problem))
+            else:
+                good.append(b)
+    return good, bad
+
+
+def list_backups(folder):
+    """The backups in a folder that can be read, the newest first."""
+    return scan(folder)[0]
 
 
 def _pool(folder):
     return os.path.join(folder, BLOB_DIR)
 
 
+def _recover(folder):
+    """A same-day replacement that stopped between its two renames left that day's backup as .old-<day>-<pid>:
+    it goes back in place."""
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    olds = []
+    for n in names:
+        m = OLD_RE.match(n)
+        if m:
+            p = os.path.join(folder, n)
+            try:
+                olds.append((os.path.getmtime(p), m.group(1), p))
+            except OSError:
+                pass
+    for _t, day, p in sorted(olds, reverse=True):          # a day left twice: the one written last
+        if not os.path.exists(os.path.join(folder, day)):
+            try:
+                _rename(p, os.path.join(folder, day))
+            except OSError:
+                pass                                        # tried again next time; never removed while missed
+
+
 def _clean(folder):
-    """What a backup that stopped halfway left: unfinished folders, and blobs half downloaded."""
+    """What a backup that stopped halfway left: a day's backup it was replacing goes back in place; unfinished
+    folders, a replaced day's old folder and blobs half downloaded go."""
+    _recover(folder)
     for n in os.listdir(folder):
-        if n.startswith((".new-", ".old-", ".incoming-")):
+        m = OLD_RE.match(n)
+        if n.startswith((".new-", ".incoming-")) or (m and os.path.isdir(os.path.join(folder, m.group(1)))):
             shutil.rmtree(os.path.join(folder, n), ignore_errors=True)
     pool = _pool(folder)
     for n in os.listdir(pool):
@@ -199,30 +414,33 @@ def _clean(folder):
 
 
 def listing(project, cfg):
-    """The backups of a project, newest first, with what the folder holds."""
+    """The backups of a project, newest first, with what the folder holds, the dated folders that cannot be
+    read, the limits, and the system scheduler's last run."""
     folder = folder_of(project, cfg)
-    backups = list_backups(folder)
-    return {"folder": folder, "backups": [b.describe() for b in backups], "bytes": _folder_bytes(folder),
-            "limits": limits(cfg)}
+    if os.path.isdir(folder):
+        _check_owner(folder, project)
+    backups, bad = scan(folder)
+    return {"folder": folder, "base": base_of(cfg), "backups": [b.describe() for b in backups],
+            "unreadable": [{"name": n, "why": why} for n, why in bad], "bytes": _folder_bytes(folder),
+            "limits": limits(cfg), "scheduled": last_scheduled(folder)}
 
 
 def newest(project, cfg):
-    """When the newest backup was made ("YYYY-MM-DDTHH:MM:SSZ"), '' when there is none. Only backup.json files are
-    read, so a listing of every project stays quick."""
-    folder = folder_of(project, cfg)
+    """When the newest backup was made ("YYYY-MM-DDTHH:MM:SSZ"), '' when there is none: the latest time a
+    backup.json gives that is not still to come (one made while the clock was ahead). Only backup.json files
+    are read, so a listing of every project stays quick."""
     try:
-        names = sorted((n for n in os.listdir(folder) if NAME_RE.match(n)), reverse=True)
-    except OSError:
+        folder = folder_of(project, cfg)
+        names = [n for n in os.listdir(folder) if NAME_RE.match(n)]
+    except (BackupError, OSError):
         return ""
+    at, best = now(), None
     for n in names:
-        try:
-            with open(os.path.join(folder, n, INFO_NAME), "r", encoding="utf-8") as f:
-                info = json.load(f)
-        except (OSError, ValueError):
-            continue
-        if isinstance(info, dict) and info.get("made"):
-            return str(info["made"])
-    return ""
+        info = _read_json(os.path.join(folder, n, INFO_NAME))
+        t = _seconds(info.get("made")) if info is not None else None
+        if t is not None and t <= at and (best is None or t > best):
+            best = t
+    return _stamp(best) if best is not None else ""
 
 
 def _folder_bytes(folder):
@@ -245,25 +463,30 @@ def take(project, cfg, target, log=None, progress=None):
     progress = progress or (lambda d, t, l: None)
     lim = limits(cfg)
     folder = folder_of(project, cfg)
+    if os.path.isdir(folder):
+        _check_owner(folder, project)               # before anything is written there
     pool = _pool(folder)
     os.makedirs(pool, exist_ok=True)
     with _locked(folder):
-        return _take(cfg, target, log, progress, lim, folder, pool)
+        _check_owner(folder, project)
+        _mark(folder, project)
+        return _take(project, target, log, progress, lim, folder, pool)
 
 
-def _take(cfg, target, log, progress, lim, folder, pool):
+def _take(project, target, log, progress, lim, folder, pool):
     _clean(folder)
     try:
         raw = target.get_file(MANIFEST_NAME)
         prev_raw = target.get_file(PREVIOUS_NAME)
+        htaccess = target.get_file(HTACCESS)
     except deploy.DeployError as e:
         raise BackupError(str(e), "read-failed")
     if raw is None:
         raise BackupError("nothing is released at %s yet: there is nothing to back up" % target, "nothing-released")
     try:
         man = Manifest.from_json(raw)
-    except ManifestError as e:
-        raise BackupError("the manifest at %s cannot be read: %s" % (target, e), "bad-manifest")
+    except ManifestError:
+        raise BackupError("the manifest at %s is damaged: there is no release there to back up" % target, "bad-manifest")
     prev = None
     if prev_raw is not None:
         try:
@@ -274,8 +497,20 @@ def _take(cfg, target, log, progress, lim, folder, pool):
     before = list_backups(folder)
     result = {"folder": folder, "from": str(target), "release": {"name": man.name, "version": man.version}}
     if before and before[0].raw(MANIFEST_NAME) == raw:
-        log("the live release is the one the backup of %s holds: no new backup" % before[0].name)
-        result.update({"made": False, "name": before[0].name, "fetched": 0, "fetched_bytes": 0})
+        last = before[0]
+        want = dict(man.blobs())
+        if prev is not None and prev_raw == last.raw(PREVIOUS_NAME):
+            want.update(prev.blobs())
+        need = sorted(sha for sha, size in want.items() if not _have(pool, sha, size))
+        total = sum(want[s] for s in need)
+        if need:                            # the pool lost some of its blobs: read them again
+            log("the backup of %s lacks %d blobs in its pool (%s): reading them again from %s" %
+                (last.name, len(need), human(total), target))
+            _fetch(target, need, want, folder, pool, progress, "the backup of %s was not topped up" % last.name)
+            log("the backup of %s is whole again" % last.name)
+        else:
+            log("the live release is the one the backup of %s holds: no new backup" % last.name)
+        result.update({"made": False, "name": last.name, "fetched": len(need), "fetched_bytes": total})
         result["pruned"] = _apply_limits(folder, lim, log)
         return result
 
@@ -285,6 +520,53 @@ def _take(cfg, target, log, progress, lim, folder, pool):
     need = sorted(sha for sha, size in want.items() if not _have(pool, sha, size))
     total = sum(want[s] for s in need)
     log("%d of %d blobs to read from %s (%s)" % (len(need), len(want), target, human(total)))
+    added = _fetch(target, need, want, folder, pool, progress, "no backup was made")
+    try:
+        sigs = {}
+        for data in (raw, prev_raw):
+            if data is not None:
+                sname = sig_name(hashing.sha256_bytes(data))
+                try:
+                    sig = target.get_file(SIG_DIR + "/" + sname)
+                except deploy.DeployError as e:
+                    raise BackupError(str(e), "read-failed")
+                if sig is not None:
+                    sigs[sname] = sig
+        info = {"format": FORMAT, "version": VERSION, "project_id": project_id(project), "made": _stamp(now()),
+                "from": str(target)}
+        replaced = os.path.isdir(os.path.join(folder, name))
+        _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info)
+    except BaseException:
+        _remove(pool, added)                # nothing half-made is kept: blobs only this backup brought go too
+        raise
+    log("backed up %s %s from %s as %s%s: %d new blobs (%s)" % (man.name or "(unnamed)", man.version, target, name,
+                                                                " (it replaces that day's)" if replaced else "",
+                                                                len(need), human(total)))
+    result.update({"made": True, "name": name, "replaced": replaced, "fetched": len(need), "fetched_bytes": total})
+    result["pruned"] = _apply_limits(folder, lim, log, made=name)
+    return result
+
+
+def _have(pool, sha, size):
+    p = os.path.join(pool, sha)
+    return os.path.isfile(p) and os.path.getsize(p) == size
+
+
+def _remove(pool, shas):
+    for sha in shas:
+        try:
+            os.remove(os.path.join(pool, sha))
+        except OSError:
+            pass
+
+
+def _fetch(target, need, want, folder, pool, progress, unless):
+    """Read the blobs `need` from `target` into the pool, each checked against its SHA-256 as it arrives.
+    Returns the ones added. BackupError when one cannot be read or is damaged (`unless` says what was then
+    not done), and then none of them stays."""
+    if not need:
+        return []
+    total = sum(want[s] for s in need)
     incoming = os.path.join(folder, ".incoming-%d" % os.getpid())
     os.makedirs(incoming)
     added = []
@@ -303,67 +585,58 @@ def _take(cfg, target, log, progress, lim, folder, pool):
         for sha in need:
             got = os.path.join(incoming, sha)
             if not os.path.isfile(got) or hashing.sha256_file(got) != (sha, want[sha]):
-                raise BackupError("the blob %s at %s is damaged (its content is not what its name says): no backup "
-                                  "was made" % (sha[:12], target), "damaged")
-            os.replace(got, os.path.join(pool, sha))
+                raise BackupError("the blob %s at %s is damaged (its content is not what its name says): %s"
+                                  % (sha[:12], target, unless), "damaged")
+            _rename(got, os.path.join(pool, sha))
             added.append(sha)
-        sigs = {}
-        for data in (raw, prev_raw):
-            if data is not None:
-                sname = sig_name(hashing.sha256_bytes(data))
-                sig = target.get_file(SIG_DIR + "/" + sname)
-                if sig is not None:
-                    sigs[sname] = sig
-        info = {"format": FORMAT, "version": VERSION, "made": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now())),
-                "from": str(target)}
-        _write_backup(folder, name, raw, prev_raw, sigs, info)
     except BaseException:
-        for sha in added:                     # nothing half-made is kept: blobs only this backup brought go too
-            try:
-                os.remove(os.path.join(pool, sha))
-            except OSError:
-                pass
+        _remove(pool, added)
         raise
     finally:
         shutil.rmtree(incoming, ignore_errors=True)
-    replaced = bool(before) and before[0].name == name
-    log("backed up %s %s from %s as %s%s: %d new blobs (%s)" % (man.name or "(unnamed)", man.version, target, name,
-                                                                " (it replaces that day's)" if replaced else "",
-                                                                len(need), human(total)))
-    result.update({"made": True, "name": name, "replaced": replaced, "fetched": len(need), "fetched_bytes": total})
-    result["pruned"] = _apply_limits(folder, lim, log)
-    return result
+    return added
 
 
-def _have(pool, sha, size):
-    p = os.path.join(pool, sha)
-    return os.path.isfile(p) and os.path.getsize(p) == size
-
-
-def _write_backup(folder, name, raw, prev_raw, sigs, info):
-    """The dated folder, written beside and then put in place; a backup the same day is replaced."""
+def _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info):
+    """The dated folder, written beside and then put in place. A backup the same day replaces that day's: the
+    old folder steps aside, the new one takes its place, and when that fails the old one goes back (else the
+    next run puts it back)."""
     tmp = os.path.join(folder, ".new-%s-%d" % (name, os.getpid()))
     os.makedirs(tmp)
-    with open(os.path.join(tmp, MANIFEST_NAME), "wb") as f:
-        f.write(raw)
-    if prev_raw is not None:
-        with open(os.path.join(tmp, PREVIOUS_NAME), "wb") as f:
-            f.write(prev_raw)
-    if sigs:
-        os.makedirs(os.path.join(tmp, SIG_DIR))
-        for sname, data in sigs.items():
-            with open(os.path.join(tmp, SIG_DIR, sname), "wb") as f:
-                f.write(data)
-    with open(os.path.join(tmp, INFO_NAME), "w", encoding="utf-8", newline="\n") as f:
-        json.dump(info, f, indent=1, sort_keys=True)
-    final = os.path.join(folder, name)
-    if os.path.isdir(final):
-        old = os.path.join(folder, ".old-%s-%d" % (name, os.getpid()))
-        os.replace(final, old)
-        os.replace(tmp, final)
-        shutil.rmtree(old, ignore_errors=True)
-    else:
-        os.replace(tmp, final)
+    try:
+        with open(os.path.join(tmp, MANIFEST_NAME), "wb") as f:
+            f.write(raw)
+        if prev_raw is not None:
+            with open(os.path.join(tmp, PREVIOUS_NAME), "wb") as f:
+                f.write(prev_raw)
+        if htaccess is not None:
+            with open(os.path.join(tmp, HTACCESS), "wb") as f:
+                f.write(htaccess)
+        if sigs:
+            os.makedirs(os.path.join(tmp, SIG_DIR))
+            for sname, data in sigs.items():
+                with open(os.path.join(tmp, SIG_DIR, sname), "wb") as f:
+                    f.write(data)
+        with open(os.path.join(tmp, INFO_NAME), "w", encoding="utf-8", newline="\n") as f:
+            json.dump(info, f, indent=1, sort_keys=True)
+        final = os.path.join(folder, name)
+        if os.path.isdir(final):
+            old = os.path.join(folder, ".old-%s-%d" % (name, os.getpid()))
+            _rename(final, old)
+            try:
+                _rename(tmp, final)
+            except BaseException:
+                try:
+                    _rename(old, final)
+                except OSError:
+                    pass                    # _recover() puts it back on the next run
+                raise
+            shutil.rmtree(old, ignore_errors=True)
+        else:
+            _rename(tmp, final)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
 
 
 # ---- the limits -----------------------------------------------------------------------------------------
@@ -407,20 +680,45 @@ def apply_limits(project, cfg, log=None):
     if not os.path.isdir(folder):
         return {"removed": [], "kept": [], "blobs_removed": 0, "bytes": 0, "over": False}
     with _locked(folder):
+        _recover(folder)
+        _check_owner(folder, project)
         return _apply_limits(folder, lim, log)
 
 
-def _apply_limits(folder, lim, log):
-    backups = list_backups(folder)
+def _apply_limits(folder, lim, log, made=None):
+    """The limits, applied; `made` is the backup just made, which always stays. Nothing is removed while a
+    dated folder cannot be read (the blobs it names are not known), and no backup is removed by date when
+    `made` is dated before another backup."""
+    backups, bad = scan(folder)
+    out = {"removed": [], "kept": [b.name for b in backups], "blobs_removed": 0, "bytes": 0, "over": False}
+    if bad:
+        for n, why in bad:
+            log("the backup %s cannot be read: %s" % (n, why))
+        log("no backup or blob was removed this time: one that cannot be read may need them")
+        out["unreadable"] = [{"name": n, "why": why} for n, why in bad]
+        out["bytes"] = _size_of(backups)
+        return out
     if not backups:
-        return {"removed": [], "kept": [], "blobs_removed": 0, "bytes": 0, "over": False}
-    kept = keep_names([b.name for b in backups], lim["daily"], lim["weekly"], lim["monthly"])
+        return out
+    names = [b.name for b in backups]
+    later = [n for n in names if made is not None and n > made]
+    if later:
+        log("the backup just made, %s, is dated before %s: this computer's clock is behind, or it was ahead when "
+            "%s made. No backup is removed by date while that is so" % (made, ", ".join(sorted(later)),
+                                                                         "that one was" if len(later) == 1 else
+                                                                         "those were"))
+        out["dated_after"] = sorted(later)
+        kept = set(names)
+    else:
+        kept = keep_names(names, lim["daily"], lim["weekly"], lim["monthly"])
+        if made is not None:
+            kept.add(made)
     remaining = [b for b in backups if b.name in kept]
     size = _size_of(remaining)
     over = False
-    if lim["max_size"] is not None:
+    if lim["max_size"] is not None and not later:
         while len(remaining) > 1 and size > lim["max_size"]:
-            remaining.pop()                                       # the oldest goes first
+            remaining.pop()                                       # the oldest goes first; the newest is `made`
             size = _size_of(remaining)
         if size > lim["max_size"]:
             over = True
@@ -444,33 +742,77 @@ def _apply_limits(folder, lim, log):
                     gone += 1 if not n.endswith(".part") else 0
                 except OSError:
                     pass
-    return {"removed": [b.name for b in removed], "kept": [b.name for b in remaining], "blobs_removed": gone,
-            "bytes": size, "over": over}
+    out.update({"removed": [b.name for b in removed], "kept": [b.name for b in remaining], "blobs_removed": gone,
+                "bytes": size, "over": over})
+    return out
 
 
 # ---- restoring one --------------------------------------------------------------------------------------
 
-def find(project, cfg, name):
-    backups = list_backups(folder_of(project, cfg))
+def _pick(backups, bad, name):
     for b in backups:
         if b.name == name:
             return b
+    for n, why in bad:
+        if n == name:
+            raise BackupError("the backup %s cannot be read: %s" % (name, why), "unreadable")
     raise BackupError("there is no backup %s: %s" % (name, ", ".join(b.name for b in backups) or "there are none yet"),
                       "no-such-backup")
 
 
+def find(project, cfg, name):
+    """The backup `name` of a project; BackupError when there is none, or it cannot be read."""
+    backups, bad = scan(folder_of(project, cfg))
+    return _pick(backups, bad, name)
+
+
+def _check_blobs(b, pool, progress):
+    """Every blob the backup's release names is in the pool and whole: each one is hashed. A damaged one leaves
+    the pool, so the next backup reads it again while the live release has it. BackupError when one is
+    missing, damaged or cannot be read."""
+    want = b.manifest.blobs()
+    total = sum(want.values())
+    done = 0
+    missing, damaged, unread = [], [], []
+    progress(0, total, "checking")
+    for sha in sorted(want):
+        p = os.path.join(pool, sha)
+        if not _have(pool, sha, want[sha]):
+            missing.append(sha)
+        else:
+            try:
+                if hashing.sha256_file(p) != (sha, want[sha]):
+                    damaged.append(sha)
+            except OSError:
+                unread.append(sha)
+        done += want[sha]
+        progress(done, total, "checking")
+    _remove(pool, damaged)
+    if missing or damaged or unread:
+        parts = (["%d missing" % len(missing)] if missing else []) + \
+                (["%d damaged (taken out of the pool: the next backup reads them again while the live release "
+                  "has them)" % len(damaged)] if damaged else []) + \
+                (["%d that could not be read" % len(unread)] if unread else [])
+        raise BackupError("the backup %s cannot be put back: of the %d blobs of its release in %s, %s" %
+                          (b.name, len(want), pool, "; ".join(parts)), "damaged" if damaged else "incomplete")
+
+
 def restore(project, cfg, name, target, dry_run=False, log=None, progress=None, cancel=None):
-    """Put the backup `name` back at `target`, as a release goes: the blobs it lacks first, the manifest last.
-    Nothing at the destination is removed. `cancel` (a threading.Event) stops it before the manifest goes up.
-    Returns the deploy.DeployResult."""
-    b = find(project, cfg, name)
+    """Put the backup `name` back at `target`, as a release goes: every blob of it checked against its SHA-256
+    first (with dry_run too), then the blobs the destination lacks, the manifest last. Nothing at the
+    destination is removed, except a file of the same name and the wrong size, which is replaced. `cancel` (a
+    threading.Event) stops it before the manifest goes up. Returns the deploy.DeployResult."""
+    progress = progress or (lambda d, t, l: None)
     folder = folder_of(project, cfg)
+    if not os.path.isdir(folder):
+        raise BackupError("there is no backup %s: there are none yet" % name, "no-such-backup")
     pool = _pool(folder)
     with _locked(folder):
-        short = [sha for sha, size in b.manifest.blobs().items() if not _have(pool, sha, size)]
-        if short:
-            raise BackupError("the backup %s lacks %d of its blobs in %s: it cannot be put back" % (name, len(short), pool),
-                              "incomplete")
+        _recover(folder)
+        _check_owner(folder, project)
+        backups, bad = scan(folder)
+        b = _pick(backups, bad, name)
+        _check_blobs(b, pool, progress)
         try:
             return deploy.deploy(b.path, target, prune=False, dry_run=dry_run, progress=progress, log=log, blob_dir=pool,
                                  cancel=cancel)
@@ -480,12 +822,75 @@ def restore(project, cfg, name, target, dry_run=False, log=None, progress=None, 
 
 # ---- the operating system's scheduler ------------------------------------------------------------------
 
+def last_scheduled(folder):
+    """The system scheduler's last run of a project's backups, as record_scheduled() noted it; None when none
+    was noted."""
+    return _read_json(os.path.join(folder, SCHEDULED_NAME))
+
+
+def record_scheduled(project, cfg, how, ok, made=False, name="", code="", message=""):
+    """Note a scheduled run in the project's backup folder: when, and what it did or why it failed (backup
+    list and the app show it). A run that cannot be noted is not a failure of its own."""
+    try:
+        folder = folder_of(project, cfg)
+        if os.path.isdir(folder):
+            _check_owner(folder, project)
+        os.makedirs(folder, exist_ok=True)
+        _mark(folder, project)
+        _write_json(os.path.join(folder, SCHEDULED_NAME),
+                    {"time": _stamp(now()), "schedule": how, "ok": bool(ok), "made": bool(made), "name": name,
+                     "code": code, "message": message})
+    except (BackupError, OSError):
+        pass
+
+
+def scheduled_due(project, cfg, how):
+    """(due, why not): a scheduled run backs up only when neither the newest backup nor the scheduler's last
+    run that worked is younger than a day (daily) or an hour (hourly). A time still to come (a clock put
+    back) does not count."""
+    folder = folder_of(project, cfg)
+    at = now()
+    last = last_scheduled(folder) or {}
+    times = [t for t in (_seconds(newest(project, cfg)), _seconds(last.get("time")) if last.get("ok") else None)
+             if t is not None and 0 <= at - t]
+    if times and at - max(times) < EVERY[how] - SLACK:
+        return False, ("backed up or checked at %s: the next scheduled backup is due %s after that" %
+                       (_stamp(max(times)).replace("T", " ").replace("Z", " UTC"), "a day" if how == "daily" else "an hour"))
+    return True, ""
+
+
+def _console_encoding():
+    """The code page Windows' console programs write in when their output is not a console: the OEM one."""
+    try:
+        import ctypes
+        name = "cp%d" % ctypes.windll.kernel32.GetOEMCP()
+        codecs.lookup(name)
+        return name
+    except (AttributeError, OSError, LookupError, ValueError):
+        return "utf-8"
+
+
 def run_tool(argv, stdin_text=None):
-    """Run the system's scheduler tool (schtasks, crontab). The one place the system is touched: a test stands
-    in for it."""
-    creation = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
-    return subprocess.run(argv, input=stdin_text, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                          universal_newlines=True, timeout=60, creationflags=creation)
+    """Run the system's scheduler tool (schtasks, crontab): the one place the system is touched, which a test
+    stands in for. Returns a CompletedProcess with text: schtasks' read in the console's code page, what does
+    not fit replaced; a crontab byte for byte (what is not text in it goes back as it came). BackupError when
+    the tool cannot be run or does not answer within a minute."""
+    if argv[0] == "schtasks":
+        encoding, errors = _console_encoding(), "replace"
+    else:
+        encoding, errors = locale.getpreferredencoding(False) or "utf-8", "surrogateescape"
+    feed = {"stdin": subprocess.DEVNULL} if stdin_text is None else {"input": stdin_text.encode(encoding, errors)}
+    try:
+        r = subprocess.run(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=60,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+                           **feed)
+    except subprocess.TimeoutExpired:
+        raise BackupError("%s did not answer within a minute" % argv[0], "schedule-failed")
+    except OSError as e:
+        raise BackupError("%s could not be run: %s" % (argv[0], e.strerror or "it is not on this system"),
+                          "schedule-failed")
+    return subprocess.CompletedProcess(argv, r.returncode, (r.stdout or b"").decode(encoding, errors),
+                                       (r.stderr or b"").decode(encoding, errors))
 
 
 def program():
@@ -500,63 +905,244 @@ def program():
     return [sys.executable, "-m", "deltapatcher"]
 
 
+def _check_command(command, windows):
+    """A path the scheduler cannot carry safely is refused: a line break or another control character (it
+    would end the crontab line, or the task's), and on Windows a %, which Task Scheduler reads as the start of
+    an environment variable."""
+    for part in command:
+        if _CONTROL.search(part):
+            raise BackupError("%r has a line break or another control character in it: the system's scheduler cannot "
+                              "run it safely; move it to a folder whose name has none" % part, "bad-path")
+        if windows and "%" in part:
+            raise BackupError("%s has a %% in it, which Task Scheduler reads as the start of a variable: move it to a "
+                              "folder whose name has none" % part, "bad-path")
+
+
 def schedule(project, how, platform=None):
     """Have the operating system back the project up daily or hourly, or stop it (off: only DeltaPatcher's own
-    entry for this project goes). Returns what is in place."""
+    entry for this project goes). Either way the scheduler starts a run every hour, with --project naming the
+    project's settings file (Default's too); the run itself decides whether a backup is due. Returns what is
+    in place."""
     if how not in ("daily", "hourly", "off"):
         raise BackupError("schedule daily, hourly or off", "bad-arguments")
     pid = project_id(project)
-    command = program() + ["--close"] + ([] if project.main else ["--project", project.path]) + ["backup"]
+    windows = (platform or sys.platform) == "win32"
+    command = program() + ["--unattended", "--project", project.path, "backup", "now", "--scheduled", how]
+    if how != "off":
+        _check_command(command, windows)
     minute = int(pid[:2], 16) % 60          # projects do not all start at the same minute
-    if (platform or sys.platform) == "win32":
-        return _schtasks(pid, project.title, how, command, minute)
+    if windows:
+        return _schtasks(pid, project.path, how, command, minute)
     return _crontab(pid, how, command, minute)
 
 
-def _schtasks(pid, title, how, command, minute):
-    r = run_tool(["schtasks", "/Query", "/FO", "CSV", "/NH"])
-    names = []
-    if r.returncode == 0:
-        for row in csv.reader(io.StringIO(r.stdout or "")):
-            if row and TASK in row[0] and row[0].rstrip().endswith(" " + pid) and row[0] not in names:
-                names.append(row[0])
-    for n in names:
-        d = run_tool(["schtasks", "/Delete", "/TN", n, "/F"])
-        if d.returncode != 0:
-            raise BackupError("schtasks could not remove %s: %s" % (n, (d.stderr or d.stdout or "").strip()), "schedule-failed")
+def unschedule(project, platform=None):
+    """A project that goes away: its entry in the system's scheduler goes too. Returns (how many went, what
+    went wrong: '' when nothing did)."""
+    try:
+        return schedule(project, "off", platform)["removed"], ""
+    except BackupError as e:
+        return 0, str(e)
+
+
+def _not_found(r):
+    """schtasks failed because there is no such task: it says the system's own words for "the file was not
+    found" (in the system's language, or in English)."""
+    texts = ["The system cannot find the file specified."]
+    try:
+        import ctypes
+        texts.append(ctypes.FormatError(2))
+    except (AttributeError, OSError, ValueError):
+        pass
+    said = " ".join(("%s %s" % (r.stderr or "", r.stdout or "")).split()).lower()
+    return r.returncode != 0 and any(" ".join(t.split()).strip(" .").lower() in said for t in texts if t.strip())
+
+
+def _said(r):
+    return " ".join((r.stderr or r.stdout or "").split()) or "exit %d" % r.returncode
+
+
+def _schtasks(pid, settings_file, how, command, minute):
+    name = "%s %s" % (TASK, pid)
+    q = run_tool(["schtasks", "/Query", "/TN", name])
+    if q.returncode != 0 and not _not_found(q):
+        raise BackupError("schtasks could not look for the task %s: %s" % (name, _said(q)), "schedule-failed")
+    there = q.returncode == 0
     if how == "off":
-        return {"schedule": "off", "removed": len(names)}
-    name = "%s %s %s" % (TASK, title, pid)
-    line = subprocess.list2cmdline(command)
-    if len(line) > 261:
-        raise BackupError("the command is longer than Task Scheduler takes (261 characters): %s" % line, "too-long")
-    when = ["/SC", "DAILY", "/ST", "03:%02d" % minute] if how == "daily" else ["/SC", "HOURLY", "/ST", "00:%02d" % minute]
-    c = run_tool(["schtasks", "/Create", "/TN", name, "/TR", line, "/F"] + when)
+        if there:
+            d = run_tool(["schtasks", "/Delete", "/TN", name, "/F"])
+            if d.returncode != 0 and not _not_found(d):
+                raise BackupError("schtasks could not remove the task %s: %s" % (name, _said(d)), "schedule-failed")
+        return {"schedule": "off", "task": name, "removed": 1 if there else 0}
+    fd, path = tempfile.mkstemp(prefix="dp-task-", suffix=".xml")
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(task_xml(command, minute, settings_file, _user_sid()).encode("utf-16"))
+        c = run_tool(["schtasks", "/Create", "/TN", name, "/XML", path, "/F"])
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
     if c.returncode != 0:
-        raise BackupError("schtasks refused the task: %s" % (c.stderr or c.stdout or "").strip(), "schedule-failed")
-    return {"schedule": how, "task": name, "command": line, "removed": len(names)}
+        raise BackupError("schtasks refused the task %s: %s" % (name, _said(c)), "schedule-failed")
+    return {"schedule": how, "task": name, "command": subprocess.list2cmdline(command), "replaced": there,
+            "removed": 0}
+
+
+def task_xml(command, minute, settings_file, user=""):
+    """Task Scheduler's definition of a project's task: every hour from <minute> past midnight, as the user who
+    made it, only while that user is logged on (no password is kept anywhere), started through conhost
+    --headless so no console window opens. A computer on battery runs it too; a start that was missed runs
+    when the computer can; one that is still going makes the next wait; and a run is ended after
+    TASK_TIME_LIMIT."""
+    conhost = ntpath.join(os.environ.get("SystemRoot") or "C:\\Windows", "System32", "conhost.exe")
+    start = "%sT00:%02d:00" % (time.strftime("%Y-%m-%d"), minute)
+    principal = ("      <UserId>%s</UserId>\n" % escape(user)) if user else ""
+    return """<?xml version="1.0" encoding="UTF-16"?>
+<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>%(description)s</Description>
+  </RegistrationInfo>
+  <Triggers>
+    <TimeTrigger>
+      <Repetition>
+        <Interval>PT1H</Interval>
+        <StopAtDurationEnd>false</StopAtDurationEnd>
+      </Repetition>
+      <StartBoundary>%(start)s</StartBoundary>
+      <Enabled>true</Enabled>
+    </TimeTrigger>
+  </Triggers>
+  <Principals>
+    <Principal id="Author">
+%(principal)s      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
+    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
+    <ExecutionTimeLimit>%(limit)s</ExecutionTimeLimit>
+    <Priority>7</Priority>
+  </Settings>
+  <Actions Context="Author">
+    <Exec>
+      <Command>%(command)s</Command>
+      <Arguments>%(arguments)s</Arguments>
+    </Exec>
+  </Actions>
+</Task>
+""" % {"description": escape("DeltaPatcher backs up the live release of the project %s when a backup is due. "
+                             "Stop it with: deltapatcher --project \"%s\" backup schedule off"
+                             % (settings_file, settings_file)),
+       "start": start, "principal": principal, "limit": TASK_TIME_LIMIT, "command": escape(conhost),
+       "arguments": escape("--headless " + subprocess.list2cmdline(command))}
+
+
+def _user_sid():
+    """The SID of the account this runs as ("S-1-5-21-..."), for the task's principal; '' when it is not
+    known (the task is then the account's that makes it)."""
+    if os.name != "nt":
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+        advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.LocalFree.argtypes = [ctypes.c_void_p]
+        advapi32.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+                                                 ctypes.POINTER(wintypes.DWORD)]
+        advapi32.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+        token = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(kernel32.GetCurrentProcess(), 0x0008, ctypes.byref(token)):   # TOKEN_QUERY
+            return ""
+        try:
+            size = wintypes.DWORD()
+            advapi32.GetTokenInformation(token, 1, None, 0, ctypes.byref(size))                     # TokenUser
+            buf = ctypes.create_string_buffer(size.value)
+            if not size.value or not advapi32.GetTokenInformation(token, 1, buf, size, ctypes.byref(size)):
+                return ""
+            sid = ctypes.cast(buf, ctypes.POINTER(ctypes.c_void_p))[0]                             # TOKEN_USER.User.Sid
+            text = wintypes.LPWSTR()
+            if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+                return ""
+            try:
+                return text.value or ""
+            finally:
+                kernel32.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+        finally:
+            kernel32.CloseHandle(token)
+    except (AttributeError, OSError, ValueError):
+        return ""
+
+
+def _cron_lines(text):
+    """A crontab's lines, split at its line ends only (a carriage return or another character inside a line
+    stays in it)."""
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
 
 
 def _crontab(pid, how, command, minute):
-    try:
-        r = run_tool(["crontab", "-l"])
-    except OSError as e:
-        raise BackupError("this system has no crontab: %s" % e, "schedule-failed")
+    r = run_tool(["crontab", "-l"])
     if r.returncode == 0:
-        lines = (r.stdout or "").splitlines()
+        lines = _cron_lines(r.stdout or "")
     elif "no crontab" in (r.stderr or "").lower():
         lines = []
     else:                                   # never write a crontab that could not be read whole
-        raise BackupError("crontab -l failed: %s" % (r.stderr or r.stdout or "").strip(), "schedule-failed")
+        raise BackupError("crontab -l failed: %s" % _said(r), "schedule-failed")
     mark = CRON_MARK + pid
     keep = [l for l in lines if not l.rstrip().endswith(mark)]
     removed = len(lines) - len(keep)
     entry = None
     if how != "off":
         quoted = " ".join(shlex.quote(c) for c in command).replace("%", "\\%")
-        entry = "%d %s * * * %s %s" % (minute, "3" if how == "daily" else "*", quoted, mark)
+        entry = "%d * * * * %s %s" % (minute, quoted, mark)
         keep.append(entry)
+    elif not removed:
+        return {"schedule": "off", "entry": None, "removed": 0}      # nothing of ours there: nothing is written
     w = run_tool(["crontab", "-"], "\n".join(keep) + "\n" if keep else "")
     if w.returncode != 0:
-        raise BackupError("crontab refused the change: %s" % (w.stderr or w.stdout or "").strip(), "schedule-failed")
-    return {"schedule": how, "entry": entry, "removed": removed}
+        raise BackupError("crontab refused the change: %s" % _said(w), "schedule-failed")
+    if how == "off":
+        return {"schedule": "off", "entry": None, "removed": removed}
+    return {"schedule": how, "entry": entry, "command": " ".join(shlex.quote(c) for c in command),
+            "replaced": bool(removed), "removed": 0}
+
+
+def agent_warning(cfg):
+    """Linux and macOS: why every scheduled backup would fail because cron cannot reach ssh-agent ('' when it
+    would not): the project's SSH key has a passphrase."""
+    if (cfg.get("deploy_mode") or "sftp") != "sftp":
+        return ""
+    key = str(cfg.get("ssh_key") or "").strip()
+    key = os.path.abspath(os.path.expanduser(key)) if key else ""
+    if not key or not os.path.isfile(key):
+        return ""
+    try:
+        if not ssh.key_has_passphrase(key):
+            return ""
+    except ssh.SshError:
+        return ""
+    return ("the SSH key %s has a passphrase, and cron cannot reach ssh-agent: every scheduled backup would stop at "
+            "the locked key. Let the app back up while it runs instead (backup_every_hours), or give the backups a "
+            "key without a passphrase" % key)

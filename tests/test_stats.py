@@ -8,8 +8,11 @@ import contextlib
 import io
 import json
 import os
+import shutil
 import sys
+import tempfile
 import threading
+import time
 import unittest
 import urllib.error
 import urllib.request
@@ -109,6 +112,21 @@ class Releases(TempCase):
             f.write('not json\n{"version": 5}\n[1, 2]\n')                                # lines not publish's: passed over
         self.assertEqual(stats.build(projects.main_project(), config.load(), 7)["sections"]["releases"]["history_total"], 2)
 
+    def test_a_big_history_is_read_from_its_end(self):
+        store = self.p("store")
+        os.makedirs(store)
+        line = ('{"time": "2026-11-%02dT10:00:00Z", "name": "Game", "version": "1.%d", "files": 1, "bytes": 1, '
+                '"new_blobs": 1, "download_bytes": 1}\n')
+        with open(os.path.join(store, publish.HISTORY_NAME), "w", encoding="utf-8", newline="\n") as f:
+            for i in range(200):
+                f.write(line % (i % 28 + 1, i))
+        with mock.patch.object(stats, "HISTORY_LIMIT", 2000):            # about 15 lines of it
+            history, total = stats.read_history(store)
+        self.assertEqual(total, 200)                                     # every line counted
+        self.assertEqual(history[0]["version"], "1.199")                 # the newest, from the end
+        self.assertEqual([h["version"] for h in history[:3]], ["1.199", "1.198", "1.197"])
+        self.assertLess(len(history), 20)
+
     def test_nothing_released_yet_is_said(self):
         doc = stats.build(projects.main_project(), config.load(), 7)
         self.assertNotIn("releases", doc["sections"])
@@ -138,20 +156,22 @@ class AccessLog(TempCase):
             clf("203.0.113.10", NOW - 2 * DAY + 60, blob, UA + " release/1.1", size=5000),
             clf("203.0.113.10", NOW - DAY, "/game/manifest.json", UA + " release/1.2"),   # updated: its last says 1.2
             clf("198.51.100.7", NOW - DAY, "/game/manifest.json", UA),                    # an older updater
-            clf("198.51.100.7", NOW - DAY + 5, blob, UA, status=206, size=700),
+            clf("198.51.100.7", NOW - DAY + 5, blob, UA, status=206, size=700),           # the rest of a download
             clf("192.0.2.33", NOW - 600, "/game/manifest.json", UA + " release/1.1", status=304, size=0),
             clf("192.0.2.33", NOW - 500, "/game/manifest.json", UA + " release/1.1"),
             clf("192.0.2.33", NOW - 400, "/game/sigs/%s.sig" % SHA, UA + " release/1.1", size=90),
+            clf("192.0.2.50", NOW - 300, "/game/manifest.json", "Mozilla/5.0 (a web app's manifest)"),
         ]))
         dl = self.downloads()
         self.assertEqual([d["date"] for d in dl["days"]], ["2026-11-22", "2026-11-23", "2026-11-24"])
         self.assertEqual([(d["checks"], d["downloads"], d["bytes"], d["players"]) for d in dl["days"]],
-                         [(1, 1, 5100, 1), (2, 1, 900, 2), (2, 0, 190, 1)])
-        self.assertEqual(dl["total"], {"checks": 5, "downloads": 2, "bytes": 6190, "players": 3})
+                         [(1, 1, 5100, 1), (2, 0, 900, 2), (2, 0, 190, 1)])
+        self.assertEqual(dl["total"], {"checks": 5, "downloads": 1, "bytes": 6190, "players": 3})
         self.assertEqual(dl["releases"], [{"release": "1.1", "players": 1}, {"release": "1.2", "players": 1},
                                           {"release": None, "players": 1}])
         self.assertEqual((dl["lines"], dl["unreadable"], dl["counted"], dl["path"], dl["read_from"]),
-                         (8, 0, 8, "/game/", "this computer"))
+                         (9, 0, 8, "/game/", "this computer"))
+        self.assertFalse(dl["players_estimated"])
         text = json.dumps(dl)
         for never in ("203.0.113.10", "198.51.100.7", "192.0.2.33", "DeltaPatcher/", "manifest.json HTTP"):
             self.assertNotIn(never, text)                                     # counts only: no address, no agent
@@ -193,10 +213,13 @@ class AccessLog(TempCase):
             '{"ts": 1795000000, "request": "nope"}\n', "[" * 5000 + "]" * 5000 + "\n", '{"unclosed": \n',
             "\x00\x01\x02 \"GET /game/manifest.json\"\n",
             '203.0.113.10 - - [24/Nov/2026:10:00:00 +0000] "GET /game/manifest.json HTTP/1.1\\" 200 1 "-" "' + '\\"' * 3000 + '\n',
+            caddy("203.0.113.10", NOW - 60, "/game/manifest.json", ts=-5.0),               # not a time
+            caddy("203.0.113.10", NOW - 60, "/game/manifest.json", ts=(NOW - 60) * 1000.0),   # Caddy's other formats:
+            caddy("203.0.113.10", NOW - 60, "/game/manifest.json", ts=(NOW - 60) * 10 ** 9),  # milli- and nanoseconds
+            caddy("203.0.113.10", NOW - 60, "/game/manifest.json", ts="2026/11/24 11:59:00"),
         ]
         outside = [clf("203.0.113.10", NOW - 40 * DAY, "/game/manifest.json"),          # before the period
-                   clf("203.0.113.10", NOW + 2 * DAY, "/game/manifest.json"),           # a date still to come
-                   caddy("203.0.113.10", NOW - 60, "/game/manifest.json", ts=-5.0)]
+                   clf("203.0.113.10", NOW + 2 * DAY, "/game/manifest.json")]           # a date still to come
         os.makedirs(os.path.dirname(self.log))
         with open(self.log, "wb") as f:
             f.write(good.encode())
@@ -216,7 +239,8 @@ class AccessLog(TempCase):
         write(self.log, "".join([
             caddy("203.0.113.10", NOW - 100, "/game/manifest.json", UA + " release/2.0"),
             caddy("203.0.113.10", NOW - 90, "/game/blobs/" + SHA, UA + " release/2.0", size=1234),
-            caddy("198.51.100.7", NOW - 80, "/game/manifest.json", None),                 # no user agent: unknown
+            caddy("198.51.100.7", NOW - 80, "/game/manifest.json", UA),                   # an older updater: unknown
+            caddy("198.51.100.9", NOW - 75, "/game/manifest.json", None),                 # no user agent: not an updater
             caddy("198.51.100.7", NOW - 70, "/game/manifest.json", UA, host="other.example.com"),  # another site
             caddy("192.0.2.33", NOW - 60, "/game/manifest.json", UA + " release/2.0", host="GAME.example.com:443",
                   ts="2026-11-24T11:59:00.5+00:00"),
@@ -225,11 +249,37 @@ class AccessLog(TempCase):
         self.assertEqual(dl["total"], {"checks": 3, "downloads": 1, "bytes": 1534, "players": 3})
         self.assertEqual(dl["releases"], [{"release": "2.0", "players": 2}, {"release": None, "players": 1}])
         old = {"ts": NOW - 50, "request": {"remote_addr": "203.0.113.99:51234", "method": "GET",
-                                           "uri": "/game/manifest.json", "headers": {}}, "status": 200, "size": 9}
+                                           "uri": "/game/manifest.json", "headers": {"User-Agent": [UA]}},
+               "status": 200, "size": 9}
         with open(self.log, "a") as f:
             f.write(json.dumps(old) + "\n" + json.dumps(dict(old, ts=NOW - 40, request=dict(old["request"],
                                                                      remote_addr="203.0.113.99:60000"))) + "\n")
         self.assertEqual(self.downloads(1)["total"]["players"], 4)        # the port of an address is not a new player
+
+    def test_past_a_limit_players_are_estimated_in_a_fixed_size(self):
+        with mock.patch.object(stats, "EXACT_PLAYERS", 100), mock.patch.object(stats, "EXACT_DAY_PLAYERS", 50):
+            c = stats.Counter("/game/", "game.example.com", 2, NOW)
+            for i in range(3000):
+                c.add((NOW - 60, "GET", "/game/manifest.json", 200, 100, "2001:db8::%x" % i,
+                       "%s release/1.%d" % (UA, i % 3), None))
+            self.assertFalse(c.players.exact)
+            self.assertEqual((len(c.players.seen), len(c.players.registers)), (0, 4096))   # a fixed size, no hashes kept
+            self.assertEqual(len(c.last_check), 100)
+            section = c.section()
+        self.assertTrue(section["players_estimated"])
+        self.assertLess(abs(section["total"]["players"] - 3000), 150)               # about 1.6% off: within 5%
+        self.assertLess(abs(section["days"][-1]["players"] - 3000), 150)
+        self.assertEqual(sorted(r["release"] for r in section["releases"]), ["1.0", "1.1", "1.2"])
+        for r in section["releases"]:
+            self.assertLess(abs(r["players"] - 1000), 100, r)
+        lines = "".join(clf("2001:db8::%x" % i, NOW - 60, "/game/manifest.json", UA + " release/2.0") for i in range(300))
+        write(self.log, lines)
+        with mock.patch.object(stats, "EXACT_PLAYERS", 100):
+            doc = stats.build(projects.main_project(), config.load(), 1)
+        self.assertTrue(doc["sections"]["downloads"]["players_estimated"])
+        said = "\n".join(line for line, _style in stats.text(doc))
+        self.assertIn("about 3", said)
+        self.assertIn("players are on (about): 2.0", said)
 
     def test_many_releases_and_a_compressed_log(self):
         write(self.log, "".join(clf("203.0.113.%d" % i, NOW - 60, "/game/manifest.json", UA + " release/1.%d" % (i % 25))
@@ -272,6 +322,20 @@ class AccessLog(TempCase):
             self.assertNotIn("DeltaPatcher/0.3.0 release", text)
 
 
+class Copies(TempCase):
+    def test_a_copy_of_a_log_that_a_stopped_run_left_is_removed(self):
+        left, reading = tempfile.mkdtemp(prefix=stats.COPY_PREFIX), tempfile.mkdtemp(prefix=stats.COPY_PREFIX)
+        for d in (left, reading):
+            self.addCleanup(shutil.rmtree, d, True)
+            write(os.path.join(d, "access.log"), clf("203.0.113.10", NOW, "/manifest.json"))
+        past = time.time() - stats.STALE_COPY - 60
+        os.utime(os.path.join(left, "access.log"), (past, past))
+        os.utime(left, (past, past))
+        stats.build(projects.main_project(), config.load(), 1)
+        self.assertFalse(os.path.exists(left))                           # it held addresses: gone
+        self.assertTrue(os.path.isfile(os.path.join(reading, "access.log")))   # a run reading it now keeps it
+
+
 class Collectors(TempCase):
     def test_one_failing_never_stops_the_others(self):
         before = list(stats.COLLECTORS)
@@ -307,8 +371,9 @@ class Command(TempCase):
                          ("deltapatcher-stats", 1, 7, "Default"))
         self.assertRegex(doc["made"], r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
         self.assertEqual(len(doc["sections"]["downloads"]["days"]), 7)
-        self.assertEqual(sorted(doc["sections"]["downloads"]), ["counted", "days", "lines", "log", "path", "read_from",
-                                                                "releases", "releases_more", "total", "unreadable"])
+        self.assertEqual(sorted(doc["sections"]["downloads"]), ["counted", "days", "lines", "log", "path",
+                                                                "players_estimated", "read_from", "releases",
+                                                                "releases_more", "total", "unreadable"])
         self.assertIn("releases", doc["problems"])
         mod = projects.new("Mod")
         rc, ev = run_json(["--project", "Mod", "stats"])

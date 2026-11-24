@@ -2,8 +2,10 @@ import atexit
 import hashlib
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 # the tests never touch the real settings or the real log: both go to a folder of their own, removed after
 _SANDBOX = tempfile.mkdtemp(prefix="dp-test-config-")
@@ -35,14 +37,31 @@ def snapshot(folder):
     return out
 
 
+NOT_FOUND = "ERROR: The system cannot find the file specified.\r\r\n"
+
+
+def empty_scheduler(argv, stdin_text=None):
+    """The system's scheduler as a test sees it: no task and no crontab. Anything that would change it fails
+    the test: a test never reaches the real one."""
+    if list(argv[:2]) == ["schtasks", "/Query"]:
+        return subprocess.CompletedProcess(argv, 1, "", NOT_FOUND)
+    if list(argv[:2]) == ["crontab", "-l"]:
+        return subprocess.CompletedProcess(argv, 1, "", "no crontab for tester\n")
+    raise AssertionError("a test reached the system's scheduler: %r" % (argv,))
+
+
 class TempCase(unittest.TestCase):
     """A folder of its own for each test, with its own settings file: what one test saves, the next
-    never sees."""
+    never sees. The system's scheduler is never reached: backup.run_tool answers as an empty one."""
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="dp-test-")
         self._settings = os.environ.get("DELTAPATCHER_CONFIG")
         os.environ["DELTAPATCHER_CONFIG"] = os.path.join(self.tmp, "settings", "deltapatcher.ini")
+        from deltapatcher import backup
+        patcher = mock.patch.object(backup, "run_tool", side_effect=empty_scheduler)
+        patcher.start()
+        self.addCleanup(patcher.stop)
 
     def tearDown(self):
         if self._settings is None:

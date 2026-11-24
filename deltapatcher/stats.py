@@ -20,9 +20,14 @@ with a reason the person can act on; then call register("name", collect). Collec
 were registered, and one that fails never stops the others: its reason goes to "problems".
 
 Privacy: counts only. No address, user agent or line of a log is stored, logged, returned or sent
-anywhere. A log on the server is read from a temporary copy that is removed as soon as it is read; players
-are told apart in memory only, by a salted hash that exists while the log is read, and only how many there
-were is kept. Of a User-Agent only the release version is used.
+anywhere. A log on the server is read from a temporary copy that is removed as soon as it is read (and one a
+stopped run left is removed by the next run); players are told apart in memory only, by a salted hash that
+exists while the log is read, and only how many there were is kept. Of a User-Agent only the release
+version is used.
+
+Memory stays bounded however big the log: players are counted exactly up to EXACT_PLAYERS (EXACT_DAY_PLAYERS
+on one day), and past that estimated in a fixed size (HyperLogLog, about 1.6% off); the section then says
+"players_estimated": true, and its player counts are "about".
 """
 
 import calendar
@@ -51,6 +56,12 @@ HISTORY_LIMIT = 16 << 20    # a history.jsonl is read up to this size
 LOG_LIMIT = 512 << 20       # an access log bigger than this is not read
 MAX_LINE = 16 << 10         # a longer line of a log is passed over, as one it cannot read
 MAX_RELEASES = 20           # the releases players are on that are listed, the most used first
+EXACT_PLAYERS = 50000       # players counted exactly in the whole period; past it, estimated
+EXACT_DAY_PLAYERS = 5000    # players counted exactly on one day; past it, estimated
+MAX_ESTIMATED_RELEASES = 100    # releases estimated one by one past EXACT_PLAYERS; the rest together
+LAST_SECOND = 253402300800  # 10000-01-01: a Caddy time of more seconds is not in seconds
+STALE_COPY = 6 * 3600       # a temporary copy of a log unchanged this long was left by a stopped run
+COPY_PREFIX = "dp-log-"
 DAY = 86400
 
 COLLECTORS = []             # [(name, collect)], in the order they run
@@ -76,6 +87,7 @@ def now():
 def build(project, cfg, days=DAYS):
     """The statistics of `project` (a projects.Project, with its settings `cfg`) over the last `days` days."""
     days = max(1, min(MAX_DAYS, int(days)))
+    remove_stale_copies()
     doc = {"format": FORMAT, "version": VERSION, "project": project.tag(),
            "made": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now())), "days": days,
            "sections": {}, "problems": {}}
@@ -133,13 +145,30 @@ _HISTORY_TYPES = (("time", str), ("name", str), ("version", str), ("files", int)
 
 
 def read_history(store):
-    """(the releases in <store>/history.jsonl, newest first, at most HISTORY_SHOWN; how many it holds). A line
-    that is not one of publish's is passed over."""
+    """(the releases in <store>/history.jsonl, newest first, at most HISTORY_SHOWN; how many it holds). Of a file
+    bigger than HISTORY_LIMIT its end is read (the newest releases), and the lines before it are only counted.
+    A line that is not one of publish's is passed over."""
+    before = 0
     try:
         with open(os.path.join(store, HISTORY_NAME), "rb") as f:
+            f.seek(0, os.SEEK_END)
+            start = max(0, f.tell() - HISTORY_LIMIT)
+            f.seek(0)
+            left = start
+            while left > 0:
+                chunk = f.read(min(1 << 20, left))
+                if not chunk:
+                    break
+                before += chunk.count(b"\n")
+                left -= len(chunk)
+            f.seek(start)
             raw = f.read(HISTORY_LIMIT)
     except OSError:
         return [], 0
+    if start:                               # the end begins inside a line: that line is counted, not read
+        cut = raw.find(b"\n")
+        raw = raw[cut + 1:] if cut >= 0 else b""
+        before += 1 if cut >= 0 else 0
     out = []
     for line in raw.decode("utf-8", "replace").splitlines():
         try:
@@ -151,7 +180,7 @@ def read_history(store):
         entry = {k: doc.get(k) for k, _t in _HISTORY_TYPES}
         if all(isinstance(entry[k], t) and not isinstance(entry[k], bool) for k, t in _HISTORY_TYPES):
             out.append(entry)
-    return out[::-1][:HISTORY_SHOWN], len(out)
+    return out[::-1][:HISTORY_SHOWN], len(out) + before
 
 
 def collect_releases(project, cfg, days):
@@ -243,8 +272,9 @@ def _caddy(text):
     if not isinstance(req, dict):
         return None
     ts = doc.get("ts")
-    if isinstance(ts, (int, float)) and not isinstance(ts, bool) and math.isfinite(ts):
-        when = float(ts)
+    if isinstance(ts, (int, float)) and not isinstance(ts, bool):
+        # seconds; a time in milliseconds or nanoseconds (Caddy's other time_format) is a line this cannot read
+        when = float(ts) if math.isfinite(ts) and 0 <= ts < LAST_SECOND else None
     elif isinstance(ts, str):
         when = _iso_time(ts)
     else:
@@ -288,6 +318,9 @@ def release_in(agent):
     return m.group(1) if m else None
 
 
+_OTHERS = object()                  # the releases estimated together, past MAX_ESTIMATED_RELEASES
+
+
 def _host_name(host):
     """A Host header's name: no port, no brackets, lower case."""
     host = host.strip().lower()
@@ -296,18 +329,66 @@ def _host_name(host):
     return host.rsplit(":", 1)[0] if host.count(":") == 1 else host
 
 
+class Distinct(object):
+    """How many different players: exactly while there are at most `limit`, then estimated in a fixed size, a
+    HyperLogLog of 4096 one-byte registers (about 1.6% off). A player is a 64-bit salted hash."""
+
+    BITS = 12
+
+    def __init__(self, limit):
+        self.limit = limit
+        self.seen = set()
+        self.registers = None
+
+    @property
+    def exact(self):
+        return self.registers is None
+
+    def add(self, who):
+        if self.registers is None:
+            self.seen.add(who)
+            if len(self.seen) > self.limit:
+                self.registers = bytearray(1 << self.BITS)
+                for h in self.seen:
+                    self._put(h)
+                self.seen = set()
+        else:
+            self._put(who)
+
+    def _put(self, who):
+        rest_bits = 64 - self.BITS
+        rest = who & ((1 << rest_bits) - 1)
+        rank = rest_bits - rest.bit_length() + 1
+        i = who >> rest_bits
+        if rank > self.registers[i]:
+            self.registers[i] = rank
+
+    def count(self):
+        if self.registers is None:
+            return len(self.seen)
+        m = len(self.registers)
+        estimate = 0.7213 / (1 + 1.079 / m) * m * m / sum(2.0 ** -r for r in self.registers)
+        zeros = self.registers.count(0)
+        if estimate <= 2.5 * m and zeros:
+            estimate = m * math.log(float(m) / zeros)
+        return int(round(estimate))
+
+
 class Counter(object):
     """One project's requests in an access log, counted per day for the last `days` days. A player is a
-    salted hash of an address, in memory only, while the log is read; no address is ever kept."""
+    salted hash of an address, in memory only, while the log is read; no address is ever kept. Past
+    EXACT_PLAYERS players, those not seen before are counted in fixed-size estimates (Distinct), per release
+    too, so memory stays bounded however many players the log has."""
 
     def __init__(self, prefix, host, days, at):
         self.prefix, self.host = prefix, host
         self.last = int(at // DAY)
         self.first = self.last - days + 1
         self.checks, self.downloads, self.bytes = [0] * days, [0] * days, [0] * days
-        self.day_players = [set() for _ in range(days)]
-        self.players = set()
-        self.last_check = {}              # player -> (time, release) of its last update check
+        self.day_players = [Distinct(EXACT_DAY_PLAYERS) for _ in range(days)]
+        self.players = Distinct(EXACT_PLAYERS)
+        self.last_check = {}              # player -> (time, release) of its last update check, EXACT_PLAYERS at most
+        self.more_checks = {}             # release -> Distinct of the players past those, whose checks carried it
         self._salt = os.urandom(16)
         self.lines = self.unreadable = self.counted = 0
 
@@ -334,6 +415,8 @@ class Counter(object):
         if method != "GET" or (host and _host_name(host) != self.host):
             return
         kind = self.kind(path)
+        if kind == "check" and not str(agent or "").startswith("DeltaPatcher/"):
+            return                      # a manifest.json no updater asked for (a web app's, on a shared site)
         if kind is None or not (200 <= status < 300 or (status == 304 and kind == "check")):
             return
         day = int(when // DAY)
@@ -343,10 +426,18 @@ class Counter(object):
         who = self._player(address)
         if kind == "check":
             self.checks[i] += 1
+            release = release_in(agent)
             before = self.last_check.get(who)
-            if before is None or when >= before[0]:
-                self.last_check[who] = (when, release_in(agent))
-        elif kind == "download":
+            if before is not None:
+                if when >= before[0]:
+                    self.last_check[who] = (when, release)
+            elif len(self.last_check) < EXACT_PLAYERS:
+                self.last_check[who] = (when, release)
+            else:
+                key = release if release in self.more_checks or len(self.more_checks) < MAX_ESTIMATED_RELEASES \
+                    else _OTHERS
+                self.more_checks.setdefault(key, Distinct(0)).add(who)
+        elif kind == "download" and status != 206:  # 206: the rest of a download that was cut, not a new one
             self.downloads[i] += 1
         self.bytes[i] += size
         self.day_players[i].add(who)
@@ -372,17 +463,25 @@ class Counter(object):
 
     def section(self):
         days = [{"date": time.strftime("%Y-%m-%d", time.gmtime((self.first + i) * DAY)), "checks": self.checks[i],
-                 "downloads": self.downloads[i], "bytes": self.bytes[i], "players": len(self.day_players[i])}
+                 "downloads": self.downloads[i], "bytes": self.bytes[i], "players": self.day_players[i].count()}
                 for i in range(len(self.checks))]
         on = {}
         for _when, release in self.last_check.values():
             on[release] = on.get(release, 0) + 1
+        more = 0
+        for release, players in self.more_checks.items():
+            if release is _OTHERS:
+                more += players.count()
+            else:
+                on[release] = on.get(release, 0) + players.count()
         ranked = sorted(on.items(), key=lambda kv: (-kv[1], kv[0] is None, kv[0] or ""))
+        estimated = bool(self.more_checks) or not self.players.exact or not all(d.exact for d in self.day_players)
         return {"days": days,
                 "total": {"checks": sum(self.checks), "downloads": sum(self.downloads), "bytes": sum(self.bytes),
-                          "players": len(self.players)},
+                          "players": self.players.count()},
                 "releases": [{"release": r, "players": n} for r, n in ranked[:MAX_RELEASES]],
-                "releases_more": sum(n for _r, n in ranked[MAX_RELEASES:]),
+                "releases_more": sum(n for _r, n in ranked[MAX_RELEASES:]) + more,
+                "players_estimated": estimated,
                 "lines": self.lines, "unreadable": self.unreadable, "counted": self.counted}
 
 
@@ -476,7 +575,7 @@ def _read_over_sftp(cfg, path, counter):
     if size > LOG_LIMIT:
         raise StatsUnavailable("the access log %s is %s, more than %s: rotate it more often" %
                                (remote, human(size), human(LOG_LIMIT)))
-    d = tempfile.mkdtemp(prefix="dp-log-")
+    d = tempfile.mkdtemp(prefix=COPY_PREFIX)
     try:
         r = ssh.sftp(t, ["get %s %s" % (get, ssh.q("access.log"))], cwd=d, timeout=600 + size // (50 * 1024))
         local = os.path.join(d, "access.log")
@@ -490,6 +589,29 @@ def _read_over_sftp(cfg, path, counter):
             counter.read(f)
     finally:
         shutil.rmtree(d, ignore_errors=True)       # the copy of the log goes at once
+
+
+def remove_stale_copies():
+    """The copies of a server's access log that a stopped run left in the temporary folder (dp-log-*), nothing in
+    them changed for STALE_COPY seconds: removed, as they hold addresses. One a run is reading now is younger."""
+    base = tempfile.gettempdir()
+    try:
+        names = os.listdir(base)
+    except OSError:
+        return 0
+    gone = 0
+    for n in names:
+        p = os.path.join(base, n)
+        if not n.startswith(COPY_PREFIX) or os.path.islink(p) or not os.path.isdir(p):
+            continue
+        try:
+            changed = max([os.path.getmtime(p)] + [os.path.getmtime(os.path.join(p, f)) for f in os.listdir(p)])
+        except OSError:
+            continue
+        if time.time() - changed >= STALE_COPY:
+            shutil.rmtree(p, ignore_errors=True)
+            gone += 1
+    return gone
 
 
 def collect_downloads(project, cfg, days):
@@ -544,17 +666,18 @@ def text(doc):
     dl = doc["sections"].get("downloads")
     if dl:
         t = dl["total"]
-        out.append(("Downloads, from %s (%s): %s, %s (%s), %s" % (
+        about = "about " if dl.get("players_estimated") else ""
+        out.append(("Downloads, from %s (%s): %s, %s (%s), %s%s" % (
             dl["log"], dl["read_from"], _n(t["checks"], "update check"), _n(t["downloads"], "download"),
-            human(t["bytes"]), _n(t["players"], "player")), None))
+            human(t["bytes"]), about, _n(t["players"], "player")), None))
         if dl["releases"]:
-            out.append(("  players are on: " + ", ".join("%s (%d)" % (r["release"] or "unknown", r["players"])
-                                                       for r in dl["releases"]) +
+            out.append(("  players are on%s: " % (" (about)" if about else "") +
+                        ", ".join("%s (%d)" % (r["release"] or "unknown", r["players"]) for r in dl["releases"]) +
                         (", others (%d)" % dl["releases_more"] if dl["releases_more"] else ""), None))
         busiest = max(dl["days"], key=lambda d: (d["checks"], d["date"]))
         if busiest["checks"]:
-            out.append(("  the busiest day: %s, %s from %s" % (
-                busiest["date"], _n(busiest["checks"], "update check"), _n(busiest["players"], "player")), None))
+            out.append(("  the busiest day: %s, %s from %s%s" % (
+                busiest["date"], _n(busiest["checks"], "update check"), about, _n(busiest["players"], "player")), None))
         if dl["unreadable"]:
             out.append(("  %d of %d lines of the log could not be read" % (dl["unreadable"], dl["lines"]), "warn"))
     for name, why in doc["problems"].items():

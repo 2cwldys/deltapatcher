@@ -259,6 +259,7 @@ class ProjectOutput(object):
 
 
 OUT = Output()
+UNATTENDED = False                   # --unattended: nobody is there to answer (the system's scheduler runs it)
 CANCEL = threading.Event()           # stops a download: set by the person (USER_CANCEL) or by a failed download
 USER_CANCEL = threading.Event()      # the person asked to stop ("cancel" on standard input)
 STDIN_CLOSED = threading.Event()     # --json: the app closed our standard input (asked us to stop, or went away)
@@ -288,7 +289,7 @@ def say(text, style=None):
 
 
 def interactive():
-    return not OUT.json and sys.stdin is not None and sys.stdin.isatty()
+    return not OUT.json and not UNATTENDED and sys.stdin is not None and sys.stdin.isatty()
 
 
 def ask_yes(question, default=False):
@@ -715,12 +716,13 @@ def cmd_rollback(a, cfg):
 
 
 def key_ready(t):
-    """A deploy's check of the private key: readable by this account only (in a terminal, asked to fix it)."""
+    """A deploy's check of the private key: readable by this account only (in a terminal, asked to fix it;
+    with --unattended, nobody is asked and it fails)."""
     if t.key and os.path.isfile(t.key):
         probs = ssh.permission_problems(t.key)
         if probs:
-            if OUT.json or not ask_yes("Your private key %s is readable by others (%s). Restrict it to your account now"
-                                      % (t.key, "; ".join(probs)), default=True):
+            if OUT.json or UNATTENDED or not ask_yes("Your private key %s is readable by others (%s). Restrict it to "
+                                                     "your account now" % (t.key, "; ".join(probs)), default=True):
                 raise CliError("the private key %s can be read by other accounts: %s" % (t.key, "; ".join(probs)),
                                "key-permissions", {"key": t.key, "problems": probs})
             ssh.fix_permissions(t.key)
@@ -772,20 +774,29 @@ def backup_target(cfg):
 
 
 def live_release(target):
-    """The release `target` serves now: its name, version and files; None when there is none."""
+    """(the release `target` serves now: its name, version and files, None when there is none; why it could
+    not be read, '' when it could)."""
     try:
         raw = target.get_file(MANIFEST_NAME)
-        man = Manifest.from_json(raw) if raw is not None else None
-    except (deploy.DeployError, ManifestError):
-        man = None
-    if man is None:
-        return None
+        if raw is None:
+            return None, ""
+        man = Manifest.from_json(raw)
+    except deploy.DeployError as e:
+        return None, str(e)
+    except ManifestError:
+        return None, "its manifest is damaged"
     return {"name": man.name, "version": man.version, "published": man.published, "files": len(man.files),
-            "bytes": man.bytes}
+            "bytes": man.bytes}, ""
 
 
 def _release_words(r):
     return ("%s %s" % (r.get("name") or "(unnamed)", r.get("version") or "")).strip() if r else "nothing"
+
+
+def _scheduled_words(s):
+    """The system scheduler's last run, as backup list says it."""
+    when = str(s.get("time") or "").replace("T", " ").replace("Z", " UTC")
+    return "%s: %s" % (when, s.get("message") or ("it worked" if s.get("ok") else "it failed"))
 
 
 def cmd_backup(a, cfg):
@@ -796,16 +807,23 @@ def cmd_backup(a, cfg):
     if c == "list":
         data = backup.listing(proj, cfg)
         if not OUT.json:
-            if not data["backups"]:
+            if not data["backups"] and not data["unreadable"]:
                 say("No backups of %s yet. One now:  %s" % (proj.title, paint(prog_name() + " backup", "code")))
+            else:
+                say("The backups of %s, each named by its day in UTC:" % proj.title)
             for b in data["backups"]:
                 r = b["release"]
                 say("  %s  %s, %d files, %s" % (b["name"], _release_words(r), r["files"], publish.human(r["bytes"])))
+            for u in data["unreadable"]:
+                say("  %s  cannot be read: %s" % (u["name"], u["why"]), "warn")
             say("They are in %s, %s together." % (paint(data["folder"], "code"), publish.human(data["bytes"])))
+            if data["scheduled"]:
+                say("The system's last scheduled run: %s" % _scheduled_words(data["scheduled"]),
+                    None if data["scheduled"].get("ok") else "warn")
         return data
     if c == "prune":
         res = backup.apply_limits(proj, cfg, log=say)
-        if not res["removed"]:
+        if not res["removed"] and not res.get("unreadable"):
             say("The limits keep every backup (%d)." % len(res["kept"]))
         return res
     if c == "schedule":
@@ -815,19 +833,29 @@ def cmd_backup(a, cfg):
         else:
             say("The system backs %s up %s: %s" % (proj.title, "every day" if a.when == "daily" else "every hour",
                                                     paint(res.get("task") or res.get("entry"), "code")), "ok")
+            say("It looks every hour, so a computer that was off or asleep catches up; backup list says how its last "
+                "run went.")
+            warning = backup.agent_warning(cfg) if sys.platform != "win32" else ""
+            if warning:
+                say("Warning: " + warning, "warn")
+                res["warning"] = warning
         return res
-    target = backup_target(cfg)
     if c == "restore":
-        b = backup.find(proj, cfg, a.name)
+        b = backup.find(proj, cfg, a.name)         # a backup that is not there is said before any connection
+        target = backup_target(cfg)
         if not a.dry_run and not a.yes:
-            live = live_release(target)
-            question = {"backup": b.describe(), "live": live, "destination": str(target)}
+            live, unread = live_release(target)
+            question = {"backup": b.describe(), "live": live, "live_problem": unread, "destination": str(target)}
             if not interactive():
                 raise CliError("restoring a backup asks first: add --yes to restore it without asking", "confirm-needed",
                                question)
             say("Restore the backup of %s (%s) to %s?" % (b.name, _release_words(question["backup"]["release"]), target),
                 "warn")
-            say("Players there get it from then on, instead of %s. Nothing there is removed." % _release_words(live))
+            if unread:
+                say("Players there get it from then on. The release there now could not be read (%s)." % unread)
+            else:
+                say("Players there get it from then on, instead of %s." % _release_words(live))
+            say("Nothing there is removed, except a file of the same name and the wrong size, which is replaced.")
             if not ask_sure("Restore it"):
                 raise CliError("nothing was restored", "cancelled")
         res = backup.restore(proj, cfg, a.name, target, dry_run=a.dry_run, log=say, progress=OUT.progress,
@@ -835,8 +863,48 @@ def cmd_backup(a, cfg):
         OUT.end()
         return {"name": a.name, "destination": str(target), "sent": res.sent, "sent_bytes": res.sent_bytes,
                 "dry_run": res.dry_run, "summary": res.summary()}
+    if getattr(a, "scheduled", None):
+        return scheduled_backup(a, cfg, proj)
+    target = backup_target(cfg)
     res = backup.take(proj, cfg, target, log=say, progress=OUT.progress)
     OUT.end()
+    return res
+
+
+def plain_reason(e):
+    """A failure in the words people read: DeltaPatcher's own message; for an error of the system, its reason
+    and the file; never a parser's or Python's own wording (the log has the whole of it)."""
+    if isinstance(e, ManifestError):
+        return "a manifest is damaged"
+    if isinstance(e, OSError) and e.strerror:
+        return "%s: %s" % (e.strerror, e.filename) if e.filename else e.strerror
+    if isinstance(e, (CliError, backup.BackupError) + FAILURES):
+        return str(e) or type(e).__name__
+    return "something went wrong that DeltaPatcher did not expect (%s): the log says more" % type(e).__name__
+
+
+def scheduled_backup(a, cfg, proj):
+    """backup now --scheduled daily|hourly, as the system's scheduler starts it every hour: a backup only when
+    the newest one, or the last scheduled run that worked, is a day (an hour) old; the run is noted in the
+    backup folder, for backup list and the app (Task Scheduler cannot tell: conhost hides the exit code)."""
+    due, why = backup.scheduled_due(proj, cfg, a.scheduled)
+    if not due:
+        say("No backup now: %s." % why)
+        return {"made": False, "skipped": True, "reason": why}
+    try:
+        target = backup_target(cfg)
+        res = backup.take(proj, cfg, target, log=say, progress=OUT.progress)
+    except Exception as e:
+        code = getattr(e, "code", "failed")
+        if code != "busy":                          # another backup of it is running: that one is noted
+            backup.record_scheduled(proj, cfg, a.scheduled, False, code=code, message=plain_reason(e))
+        raise
+    OUT.end()
+    if res["made"]:
+        words = "made the backup of %s (%s)" % (res["name"], _release_words(res["release"]))
+    else:
+        words = "no new backup: the live release is the one the backup of %s holds" % res["name"]
+    backup.record_scheduled(proj, cfg, a.scheduled, True, made=res["made"], name=res["name"], message=words)
     return res
 
 
@@ -1015,6 +1083,10 @@ def project_of(a):
     return getattr(a, "proj", None) or projects.main_project()
 
 
+# the settings that place a project's folders: a change to one is checked against where its backups go
+FOLDER_SETTINGS = ("backup_dir", "store_dir", "publish_src", "deploy_folder", "deploy_mode", "install_dir")
+
+
 def cmd_config(a, cfg):
     project = project_of(a)
     p = config.ensure()
@@ -1038,6 +1110,11 @@ def cmd_config(a, cfg):
                 backup.parse_size(changes["backup_max_size"])
             except ValueError as e:
                 raise CliError(str(e), "bad-setting")
+        if set(changes) & set(FOLDER_SETTINGS):
+            after = dict(config.load(project), **changes)
+            problem = backup.folder_problem(after)
+            if problem:
+                raise CliError(problem, "bad-setting")
         config.save(changes, project)     # only these keys change, each in its own file; everything else stays
         return {"path": own, "settings": config.load(project)}
     data = {"path": own, "main_path": p, "project": dict(project.tag(), kind=project.kind),
@@ -1133,7 +1210,7 @@ def cmd_project(a, cfg):
             say("Removed the project %s and deleted its settings file." % p.title, "ok")
         else:
             say("Took the project %s off the list; its file stays where it is." % p.title, "ok")
-        return dict(p.tag(), removed=done)
+        return dict(p.tag(), removed=done, schedule_removed=stop_schedule(p))
     if c == "export":
         return project_export(a)
     if c == "import":
@@ -1161,6 +1238,17 @@ def removal_word(p):
     return "its settings file is deleted" if p.kind == "folder" else "it only leaves the list; its file stays"
 
 
+def stop_schedule(p):
+    """A project that leaves: the system's scheduled backups of it go too, and that is said. Returns how many
+    went."""
+    removed, problem = backup.unschedule(p)
+    if removed:
+        say("The system's scheduled backups of %s were removed too." % p.title, "ok")
+    elif problem:
+        say("The system's scheduled backups of %s could not be checked: %s" % (p.title, problem), "warn")
+    return removed
+
+
 def remove_all(a):
     """project remove --all: every project but Default leaves, after one question that names them."""
     every = projects.all_projects()[1:]
@@ -1179,7 +1267,7 @@ def remove_all(a):
             raise CliError("nothing was removed", "cancelled")
     done = projects.remove_all()
     say("Removed %d project%s; Default stays." % (len(done), "" if len(done) == 1 else "s"), "ok")
-    return {"removed": [dict(p.tag(), removed=how) for p, how in done]}
+    return {"removed": [dict(p.tag(), removed=how, schedule_removed=stop_schedule(p)) for p, how in done]}
 
 
 def loopback(url):
@@ -1310,14 +1398,17 @@ def cmd_reset(a, cfg):
                                         "an added one only leaves the list)" % names) if names else "no project but Default"))
         say("  Back to defaults: %s" % plan["settings"])
         say("  Cleared:          the cached check for a newer DeltaPatcher (the window clears its own saved state)")
+        say("  Stopped:          the system's scheduled backups of every project, Default's too, when there are any")
         say("  Never touched:    the folders projects update or release and their files, the signing key, SSH keys")
         say("  Kept:             trusted server host keys, the log, prepared releases (stores)")
         say("  A copy of the settings files as they are goes to %s" % paint(plan["copy"], "code"))
         if not ask_sure("Reset now"):
             raise CliError("nothing was reset", "cancelled")
+    every = projects.all_projects()
     done = resetting.reset()
     say("DeltaPatcher is reset: as it was just installed.", "ok")
     say("The settings files as they were are in %s" % paint(done["copy"], "code"))
+    done["schedules_removed"] = [p.title for p in every if stop_schedule(p)]
     return done
 
 
@@ -1463,6 +1554,9 @@ def build_parser():
     p.add_argument("--json", action="store_true", help="JSON lines on standard output, for programs (the DeltaPatcher app)")
     p.add_argument("--close", action="store_true", help="close as soon as the command is done: a window of its own "
                                                         "(double-clicked, a shortcut) otherwise waits for Enter")
+    p.add_argument("--unattended", action="store_true", help="nobody is there (the system's scheduler runs it): never "
+                                                             "ask (what would be asked fails at once, saying why) and "
+                                                             "never wait for Enter")
     p.add_argument("--project", metavar="NAME", help=PROJECT_HELP + "; also DELTAPATCHER_PROJECT")
     sub = p.add_subparsers(dest="cmd")
 
@@ -1560,16 +1654,21 @@ def build_parser():
     s = sub.add_parser("backup", help="back up the live release (where players download from) onto this computer; "
                                       "list, restore, prune or schedule backups")
     bs = s.add_subparsers(dest="backup_cmd")
-    bs.add_parser("now", help="one backup now (also with no word after backup)")
-    bs.add_parser("list", help="the backups: date, release, files, size")
+    k = bs.add_parser("now", help="one backup now (also with no word after backup)")
+    k.add_argument("--scheduled", choices=["daily", "hourly"],
+                   help="as the system's scheduler runs it every hour (backup schedule): a backup only when the "
+                        "newest one is a day (daily) or an hour (hourly) old, and the run noted for backup list")
+    bs.add_parser("list", help="the backups: date (UTC), release, files, size")
     k = bs.add_parser("restore", help="put a backup back where players download from: its blobs first, the manifest "
-                                      "last; nothing there is removed")
+                                      "last; nothing there is removed, except a file of the same name and the wrong "
+                                      "size, which is replaced")
     k.add_argument("name", metavar="NAME", help="the backup: its date, YYYY-MM-DD")
     k.add_argument("--yes", action="store_true", help="do not ask first")
     k.add_argument("--dry-run", action="store_true", help="say what would be sent; send nothing")
     bs.add_parser("prune", help="apply the limits now (backup_keep_daily, _weekly, _monthly, backup_max_size)")
     k = bs.add_parser("schedule", help="the system backs the project up daily or hourly without the app (Windows: Task "
-                                       "Scheduler; elsewhere crontab); off stops it")
+                                       "Scheduler, no window; elsewhere crontab); it looks every hour, so a computer "
+                                       "that was off catches up; off stops it")
     k.add_argument("when", choices=["daily", "hourly", "off"])
 
     s = sub.add_parser("stats", help="statistics of the project: its releases, and from the web server's access log "
@@ -1777,7 +1876,7 @@ def pick_project(a, given=None):
 def main(argv=None, prompt=True, project=None):
     """The command line. prompt=False: a command typed at the prompt, whose window already stays open.
     project: the menu's project, for a command typed at its prompt."""
-    global OUT
+    global OUT, UNATTENDED
     argv = sys.argv[1:] if argv is None else argv
     if len(argv) == 1 and presets.is_project_file(argv[0]) and os.path.isfile(argv[0]):
         argv = ["project", "import", argv[0]]                   # a project file dropped onto the program
@@ -1785,7 +1884,7 @@ def main(argv=None, prompt=True, project=None):
         selfupdate.remove_leftover()                            # the old program a Windows self-update left
     color_enable(not {"--no-color", "--json"} & set(argv))     # the help is printed while the arguments are read
     # in a window of its own the output would vanish with the window: it waits for Enter, unless --close
-    stay = prompt and not {"--close", "--json"} & set(argv) and window_of_its_own()
+    stay = prompt and not {"--close", "--json", "--unattended"} & set(argv) and window_of_its_own()
     p = build_parser()
     try:
         a = p.parse_args(argv)
@@ -1799,6 +1898,7 @@ def main(argv=None, prompt=True, project=None):
         if stay:
             wait_to_close()                # the help was printed, or a mistake explained: let it be read
         raise
+    UNATTENDED = bool(a.unattended)
     if a.cmd == "menu" or (not a.cmd and stay):
         from . import menu
         try:
@@ -1862,7 +1962,7 @@ def main(argv=None, prompt=True, project=None):
         rc = 1
     logs.write("== exit %d" % rc)
     logs.close()
-    if not a.json and a.cmd != "self-update":
+    if not a.json and not a.unattended and a.cmd != "self-update":
         update_notice(cfg)
     if stay:
         wait_to_close()

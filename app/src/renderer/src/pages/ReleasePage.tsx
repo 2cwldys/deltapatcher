@@ -1,15 +1,16 @@
 // The Release page: what to release, where players download it from, and one button that publishes the
-// folder and sends only what changed there (or serves it on this computer, to try it first). Publishing
-// the same version again with changed files is fine: players get the changed files (a shadow patch).
+// folder and sends only what changed there (or serves it on this computer, to try it first); then the
+// statistics of the release players have. Publishing the same version again with changed files is fine:
+// players get the changed files (a shadow patch). The backups of the live release are on the Settings page.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  Archive, ArchiveRestore, ChartColumn, Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw, Rocket,
+  ChartColumn, Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw, Rocket,
   Server as ServerIcon, ShieldAlert, ShieldCheck, Square, Unlock, Upload
 } from 'lucide-react'
+import type { EngineOutcome } from '@shared/types'
 import { useApp } from '../store/app'
 import { sentences } from '../store/projectActions'
-import { BarRow, readStats, StatsView, when } from '../store/stats'
-import { BackupInfo, BackupList, backupRows, ReleaseShort, restoreQuestion, sizeProblem } from '../store/backups'
+import { BarRow, players, statsCounter, StatsState, when } from '../store/stats'
 import { REPO_URL } from '@shared/project'
 import { ask, HostKey } from '../store/modal'
 import { Banner, Button, Card, Chip, Field, Segmented, SettingToggle, Stat, Toggle, human } from '../components/ui'
@@ -59,7 +60,7 @@ function hostArgs(): string[] {
 
 // Confirm a server's host key with the person: a first contact shows the keys; a changed key is a
 // warning, and the old key is forgotten only if they say the server really was reinstalled.
-async function confirmHost(host: string, keys: HostKey[], changed: boolean): Promise<boolean> {
+export async function confirmHost(host: string, keys: HostKey[], changed: boolean): Promise<boolean> {
   const st = useApp.getState()
   if (changed) {
     const really = await ask.confirm(
@@ -79,8 +80,9 @@ async function confirmHost(host: string, keys: HostKey[], changed: boolean): Pro
   return t.ok
 }
 
-// run an SSH step; on an unknown host or a key others can read, ask, fix, and run it again
-async function withHostTrust(label: string, args: string[], passphrase?: string): Promise<Data | null> {
+// run an SSH step; on an unknown host or a key others can read, ask, fix, and run it again. `failed` hears of
+// a run that ended in a failure (not one the person said no to)
+export async function withHostTrust(label: string, args: string[], passphrase?: string, failed?: (r: EngineOutcome) => void): Promise<Data | null> {
   const st = useApp.getState()
   for (let attempt = 0; attempt < 3; attempt++) {
     const r = await st.run(label, args, { passphrase })
@@ -96,6 +98,7 @@ async function withHostTrust(label: string, args: string[], passphrase?: string)
       if (!f.ok) return null
       continue
     }
+    failed?.(r)
     return null
   }
   return null
@@ -107,7 +110,7 @@ export async function publishRelease(): Promise<Data | null> {
   const s = st.settings
   const src = String(s.publish_src || '')
   if (!src) {
-    await ask.info('Choose the folder to release', 'Step 1: the folder with the files exactly as players should have them.')
+    await ask.info('Choose the folder to release', 'The folder with the files exactly as players should have them.')
     return null
   }
   const args = ['publish', src]
@@ -145,11 +148,11 @@ export async function runRelease(dry = false): Promise<void> {
   const s = st.settings
   const mode = modeOf(s.deploy_mode)
   if (mode === 'sftp' && (!s.ssh_host || !s.remote_root)) {
-    await ask.info('Where is your server?', 'Step 2: fill in the host, and the remote folder: the folder its web server gives players.')
+    await ask.info('Where is your server?', 'Fill in the host, and the remote folder: the folder its web server gives players.')
     return
   }
   if (mode === 'folder' && !s.deploy_folder) {
-    await ask.info('Which folder?', 'Step 2: choose the folder to copy the release to.')
+    await ask.info('Which folder?', 'Choose the folder to copy the release to.')
     return
   }
   const pub = await publishRelease()
@@ -357,8 +360,14 @@ function SigningCard(): JSX.Element {
 
 // the guide's part on statistics, on the wiki
 const STATS_GUIDE = `${REPO_URL}/wiki/Publishing-a-release#statistics`
-// each project's last statistics, kept while another page or project is shown
-const statsOf = new Map<string, StatsView>()
+// the card's counting (store/stats.ts): each project's last statistics are kept while another page or project
+// is shown, and a count's answer goes to the project it was asked for
+let showStats: (card: StatsState) => void = () => undefined
+const counter = statsCounter(
+  (file) => useApp.getState().run('', ['stats', '--days=30', `--project=${file}`], { quiet: true }),
+  () => useApp.getState().project,
+  (card) => showStats(card)
+)
 
 function StatBars(props: { row: BarRow }): JSX.Element {
   const { row } = props
@@ -386,32 +395,19 @@ function StatsCard(): JSX.Element {
   const accessLog = useApp((s) => String(s.settings.access_log ?? ''))
   const mode = useApp((s) => modeOf(s.settings.deploy_mode))
   const released = useApp((s) => s.results.release as Data | undefined)
-  const [view, setView] = useState<StatsView | null>(statsOf.get(project) ?? null)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
-  const asked = useRef(0)
-
-  const load = useCallback(async (): Promise<void> => {
-    const n = ++asked.current
-    const file = useApp.getState().project
-    setLoading(true)
-    const r = await useApp.getState().run('', ['stats', '--days=30'], { quiet: true })
-    if (n !== asked.current) return
-    setLoading(false)
-    if (r.ok) {
-      const v = readStats(r.data)
-      statsOf.set(file, v)
-      setView(v)
-      setError('')
-    } else {
-      setError(String(r.message ?? 'The engine gave no reason.'))
-    }
-  }, [])
+  const [card, setCard] = useState<StatsState>(counter.shown(project))
+  const { view, loading, error } = card
+  const load = useCallback(() => counter.count(), [])
 
   useEffect(() => {
-    setView(statsOf.get(project) ?? null)
-    setError('')
-    if (!statsOf.has(project)) void load()
+    showStats = setCard
+    return () => {
+      showStats = () => undefined
+    }
+  }, [])
+  useEffect(() => {
+    setCard(counter.shown(project))
+    if (!counter.kept.has(project)) void load()
   }, [project, load])
   // a release made while it is shown, or another access log typed: counted again
   const seen = useRef({ project, released, accessLog })
@@ -465,7 +461,7 @@ function StatsCard(): JSX.Element {
             <div className="mt-3 grid grid-cols-3 gap-3">
               <Stat label="Update checks" value={dl.total.checks} />
               <Stat label="Downloads" value={`${dl.total.downloads} (${human(dl.total.bytes)})`} />
-              <Stat label="Players" value={dl.total.players} accent />
+              <Stat label="Players" value={players(dl.total.players, dl.about)} accent />
             </div>
             <div className="mt-4 space-y-3">
               {dl.rows.map((row) => <StatBars key={row.key} row={row} />)}
@@ -473,11 +469,11 @@ function StatsCard(): JSX.Element {
             </div>
             {dl.releases.length > 0 && (
               <div className="mt-4">
-                <p className="label">The releases players are on</p>
+                <p className="label">The releases players are on{dl.about ? ' (about)' : ''}</p>
                 <div className="space-y-1.5">
                   {dl.releases.map((r) => (
-                    <div key={r.label} className="flex items-center gap-3 text-sm">
-                      <span className="w-28 truncate font-mono text-slate-100" title={r.label}>{r.label}</span>
+                    <div key={r.key} className="flex items-center gap-3 text-sm">
+                      <span className={`w-28 truncate text-slate-100 ${r.key.startsWith('release:') ? 'font-mono' : 'italic'}`} title={r.label}>{r.label}</span>
                       <div className="h-2 flex-1 overflow-hidden rounded-full bg-ink-700">
                         <div className="h-full rounded-full bg-delta" style={{ width: `${Math.round(r.share * 100)}%` }} />
                       </div>
@@ -489,6 +485,7 @@ function StatsCard(): JSX.Element {
             )}
             <p className="hint">
               {`Counted from ${dl.log}, ${dl.readFrom === 'server' ? 'on the server' : 'on this computer'}.\nCounts only: never an address.` +
+                (dl.about ? '\nSo many players that they are estimated: the counts of players are about right.' : '') +
                 (dl.unreadable ? `\n${dl.unreadable} of ${dl.lines} lines could not be read.` : '')}
             </p>
           </>
@@ -508,111 +505,6 @@ function StatsCard(): JSX.Element {
             How to set up statistics: the publishing guide
           </a>
         )}
-      </div>
-    </Card>
-  )
-}
-
-// Backups: copies of the live release, read from where players download it and kept on this computer. Back up
-// now, the backups, Restore... (after a question that says what it replaces there), the limits, how often the
-// app backs up by itself, and the folder.
-function BackupsCard(): JSX.Element {
-  const project = useApp((s) => s.project)
-  const busy = useApp((s) => s.busy)
-  const backupJob = useApp((s) => s.backupJob)
-  const mode = useApp((s) => modeOf(s.settings.deploy_mode))
-  const backupDir = useApp((s) => String(s.settings.backup_dir ?? ''))
-  const [list, setList] = useState<BackupList | null>(null)
-  const [problem, setProblem] = useState('')
-  const asked = useRef(0)
-
-  const load = useCallback(async (): Promise<void> => {
-    const n = ++asked.current
-    const r = await useApp.getState().run('', ['backup', 'list'], { quiet: true })
-    if (n !== asked.current) return
-    if (r.ok) {
-      setList(r.data as unknown as BackupList)
-      setProblem('')
-    } else {
-      setList(null)
-      setProblem(String(r.message ?? ''))
-    }
-  }, [])
-  useEffect(() => {
-    void load()
-  }, [project, backupJob, load])
-  // another backup folder typed: listed again once it is saved
-  const dirSeen = useRef({ project, backupDir })
-  useEffect(() => {
-    const before = dirSeen.current
-    dirSeen.current = { project, backupDir }
-    if (before.project !== project || before.backupDir === backupDir) return
-    const t = setTimeout(() => void load(), 1500)
-    return () => clearTimeout(t)
-  }, [project, backupDir, load])
-
-  const now = async (): Promise<void> => {
-    const d = await withHostTrust('Back up', ['backup', 'now'])
-    await load()
-    if (d && !d.made) await ask.info('No new backup', 'The live release has not changed since its last backup.')
-  }
-  const restore = async (name: string): Promise<void> => {
-    const st = useApp.getState()
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const r = await st.run('', ['backup', 'restore', name], { quiet: true })
-      if (r.code === 'host-unknown') {
-        if (!(await confirmHost(String(r.data.host ?? ''), (r.data.keys ?? []) as HostKey[], false))) return
-        continue
-      }
-      if (r.code !== 'confirm-needed') {
-        await ask.info('The backup cannot be restored', sentences(String(r.message ?? 'The engine gave no reason.')))
-        return
-      }
-      const q = restoreQuestion(r.data as { backup?: BackupInfo; live?: ReleaseShort | null; destination?: string })
-      if (!(await ask.confirm(q.title, q.body, 'Restore it', true))) return
-      await withHostTrust('Restore a backup', ['backup', 'restore', name, '--yes'])
-      return
-    }
-  }
-
-  const rows = backupRows(list)
-  return (
-    <Card title="Backups" icon={Archive}
-      actions={<Button small icon={Archive} disabled={Boolean(busy) || Boolean(backupJob) || mode === 'local'} onClick={now}>
-        {backupJob === project ? 'Backing up...' : 'Back up now'}
-      </Button>}>
-      <p className="whitespace-pre-line text-sm text-ink-300">
-        {mode === 'local'
-          ? 'A release served from this computer has nothing to back up: its store is here already.'
-          : 'A copy of the live release, read from where players download it and kept on this computer.\nEach file is kept once, however many backups need it; a backup changes nothing there.'}
-      </p>
-      {problem && <div className="mt-3"><Banner kind="warn">{problem}</Banner></div>}
-      {rows.length > 0 ? (
-        <div className="mt-4 divide-y divide-ink-700/70 rounded-lg border border-ink-700">
-          {rows.map((b) => (
-            <div key={b.name} className="flex flex-wrap items-center gap-3 px-4 py-2.5 text-sm">
-              <span className="w-28 font-mono text-slate-100">{b.name}</span>
-              <span className="min-w-0 flex-1 truncate text-ink-300" title={b.made}>{b.release}</span>
-              <span className="w-20 text-right tabular-nums text-ink-400">{b.files} files</span>
-              <span className="w-24 text-right tabular-nums text-ink-400">{human(b.bytes)}</span>
-              <Button small variant="ghost" icon={ArchiveRestore} disabled={Boolean(busy) || Boolean(backupJob)}
-                onClick={() => restore(b.name)}>Restore...</Button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        !problem && <p className="hint">No backups yet.</p>
-      )}
-      {list && <p className="hint">{`They are in ${list.folder}, ${human(list.bytes)} together.`}</p>}
-      <div className="mt-5 grid gap-5 md:grid-cols-3">
-        <Field label="Keep daily" setting="backup_keep_daily" type="number" hint="The newest of each of the last this many days." />
-        <Field label="Keep weekly" setting="backup_keep_weekly" type="number" hint="The newest of each of the last this many weeks." />
-        <Field label="Keep monthly" setting="backup_keep_monthly" type="number" hint="The newest of each of the last this many months." />
-        <Field label="At most" setting="backup_max_size" check={sizeProblem} placeholder="no limit"
-          hint={'For example 10 GB.\nThe oldest backups go first; the newest always stays.'} />
-        <Field label="Back up every (hours)" setting="backup_every_hours" type="number"
-          hint={'While the app runs, window shown or in the tray.\n0: never.'} />
-        <Field label="Backup folder" setting="backup_dir" browse="folder" mono placeholder={list?.folder ?? ''} />
       </div>
     </Card>
   )
@@ -647,7 +539,7 @@ function ReleaseResult(props: { r: Data }): JSX.Element {
           </div>
         </Banner>
       ) : (
-        <p className="hint">Fill in "Players download from" in step 2 to see here the address players use.</p>
+        <p className="hint">Fill in "Players download from" above to see here the address players use.</p>
       )}
     </div>
   )
@@ -675,7 +567,7 @@ export default function ReleasePage(): JSX.Element {
 
   return (
     <div className="space-y-5">
-      <Card title="1. What to release" icon={Package}>
+      <Card title="What to release" icon={Package}>
         <div className="grid gap-5 md:grid-cols-2">
           <Field className="md:col-span-2" label="Folder to release" setting="publish_src" browse="folder" mono
             hint={'The files exactly as players should have them.\nAny type: zip, pk3, textures, programs.'} />
@@ -689,7 +581,7 @@ export default function ReleasePage(): JSX.Element {
         </div>
       </Card>
 
-      <Card title="2. Where players download it from" icon={Globe}>
+      <Card title="Where players get it" icon={Globe}>
         <Segmented value={mode} onChange={(v) => set('deploy_mode', v)}
           options={[
             { value: 'sftp', label: 'Your server (SSH)', icon: ServerIcon },
@@ -722,7 +614,7 @@ export default function ReleasePage(): JSX.Element {
 
       <SigningCard />
 
-      <Card title="3. Release" icon={Rocket}>
+      <Card title="Send to players" icon={Rocket}>
         <p className="text-sm text-ink-300">
           {mode === 'local'
             ? `Publishes the folder and serves it at ${where}, on this computer only.`
@@ -741,8 +633,6 @@ export default function ReleasePage(): JSX.Element {
       </Card>
 
       <StatsCard />
-
-      <BackupsCard />
     </div>
   )
 }

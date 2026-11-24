@@ -5,7 +5,7 @@ import type { EngineEvent, EngineOutcome, Style } from '@shared/types'
 import { FORCE_STOPPED } from '@shared/forceStop'
 import { ask, useModal } from './modal'
 import { anotherRun, restartSchedules } from './schedule'
-import { backupDue, madeAt } from './backups'
+import { autoOutcome, madeAt, nextBackup } from './backups'
 
 export type Value = string | number | boolean
 export interface SchemaItem {
@@ -184,6 +184,8 @@ interface State {
   allJob: AllJob | null
   // the project the app is backing up by itself (backup_every_hours), while it does
   backupJob: string | null
+  // why the last backup of a project failed, by its file (the Backups card shows it); gone once one works
+  backupProblems: Record<string, string>
   autoChecked: boolean
   runProject: (file: string, check: boolean) => Promise<void>
   // auto: a check (or an update) DeltaPatcher started by itself, which may notify or update on its own
@@ -335,6 +337,7 @@ export const useApp = create<State>((set, get) => {
     runs: {},
     allJob: null,
     backupJob: null,
+    backupProblems: {},
     autoChecked: false,
     importing: null,
     exporting: null,
@@ -713,27 +716,44 @@ export function autoCheck(): 'started' | 'busy' | 'nothing' {
   return 'started'
 }
 
-// when the app last started a backup of each project by itself (milliseconds)
+// when the app last started a backup of each project by itself (milliseconds); the projects whose last one is
+// tried again sooner (it failed, or another backup of it was running); those whose last one failed
 const backupTried = new Map<string, number>()
+const backupRetry = new Set<string>()
+const backupFailing = new Set<string>()
 
-function lastBackup(p: ProjectInfo): number | null {
-  const times = [madeAt(p.backup_last), backupTried.get(p.file) ?? null].filter((t): t is number => t !== null)
-  return times.length ? Math.max(...times) : null
+// when the app backs a project up by itself next; null: never
+function nextAutoBackup(p: ProjectInfo): number | null {
+  return nextBackup(p.backup_every_hours, madeAt(p.backup_last), backupTried.get(p.file) ?? null, backupRetry.has(p.file))
 }
 
 // Force stop lifted: each project's next backup by itself comes backup_every_hours from now
 function restartBackups(projects: ProjectInfo[], now: number): void {
   for (const p of projects) backupTried.set(p.file, now)
+  backupRetry.clear()
+}
+
+// what a backup of a project did: a failure stays on its Backups card (and in the status bar) until one works
+export function noteBackup(file: string, failed: string | null): void {
+  const problems = { ...useApp.getState().backupProblems }
+  if (failed === null) delete problems[file]
+  else problems[file] = failed
+  useApp.setState({ backupProblems: problems })
 }
 
 // A backup the app makes by itself (backup_every_hours), one project at a time and never while another run goes
-// or Force stop is on; said in the console, and in a notification when it fails while the window is not on
-// screen (not when Force stop ended it).
+// or Force stop is on. Said in the console; a failure also in the status bar and on the project's Backups card,
+// and the first failure in a row in a notification (shown while the window is not on screen). A failure, or
+// another backup of the project running (the system's scheduled one), is tried again 15 minutes later; a run
+// Force stop ended is neither.
 export async function autoBackup(): Promise<void> {
   const st = useApp.getState()
   if (st.stopped || anotherRun(st)) return
   const at = Date.now()
-  const p = st.projects.find((x) => !x.missing && x.backup_ready && backupDue(at, lastBackup(x), x.backup_every_hours))
+  const p = st.projects.find((x) => {
+    const next = !x.missing && x.backup_ready ? nextAutoBackup(x) : null
+    return next !== null && at >= next
+  })
   if (!p) return
   backupTried.set(p.file, at)
   const jobId = `bak-${++jobSeq}`
@@ -747,14 +767,19 @@ export async function autoBackup(): Promise<void> {
   }
   jobTitles.delete(jobId)
   useApp.setState({ backupJob: null })
-  if (r.ok) {
-    st.log(`[${p.title}] ${r.data.made ? `Backed up the live release (${String(r.data.name)}).` : 'The live release has not changed since its last backup.'}`, 'ok')
-  } else if (r.code === FORCE_STOPPED) {
-    st.log(`[${p.title}] The backup: ${r.message}`, 'warn')
-  } else {
-    st.log(`[${p.title}] The backup failed: ${r.message}`, 'err')
-    await window.api.notify('DeltaPatcher', `The backup of ${p.title} failed: ${r.message}`, true)
+  const out = autoOutcome(r, backupFailing.has(p.file), r.code === FORCE_STOPPED)
+  st.log(`[${p.title}] ${out.text}`, out.style)
+  if (out.retry) backupRetry.add(p.file)
+  else backupRetry.delete(p.file)
+  if (out.failed) {
+    backupFailing.add(p.file)
+    noteBackup(p.file, r.message ?? 'failed')
+    if (!useApp.getState().busy) useApp.setState({ status: `The backup of ${p.title} failed: ${r.message}`, statusKind: 'err' })
+  } else if (r.ok) {
+    backupFailing.delete(p.file)
+    noteBackup(p.file, null)
   }
+  if (out.notify) await window.api.notify('DeltaPatcher', `The backup of ${p.title} failed: ${r.message}`, true)
   await useApp.getState().loadProjects()
 }
 

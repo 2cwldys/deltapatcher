@@ -3,6 +3,8 @@ import { FileText, FolderKanban, FolderOpen, Info, RotateCcw, Settings2, Sliders
 import { running, SchemaItem, useApp, Value } from '../store/app'
 import { removeProject, resetAll, sentences } from '../store/projectActions'
 import { folderNameProblem } from '../store/folders'
+import { sizeProblem } from '../store/backups'
+import BackupsSection from '../components/BackupsSection'
 import { Button, Card, Chip, Field, SettingToggle } from '../components/ui'
 import type { AppInfo } from '@shared/types'
 
@@ -27,22 +29,30 @@ function Setting(props: { s: SchemaItem; blocked?: string }): JSX.Element {
     <SettingToggle setting={s.key} label={s.key} hint={sentences(s.what)} blocked={props.blocked} />
   ) : (
     <Field label={s.key} setting={s.key} hint={sentences(s.what)} mono type={typeof (s.default as Value) === 'number' ? 'number' : 'text'}
-      check={s.key === 'install_folder' ? folderNameProblem : undefined} />
+      browse={FOLDERS.includes(s.key) ? 'folder' : undefined}
+      check={s.key === 'install_folder' ? folderNameProblem : s.key === 'backup_max_size' ? sizeProblem : undefined} />
   )
 }
 
+// a folder chosen with Browse here: these settings are typed on no other page
+const FOLDERS = ['backup_dir']
+
+// each section's settings in a card; the Backups section's card also holds the backups themselves
 function Sections(props: { names: string[]; schema: SchemaItem[]; blocked?: Record<string, string> }): JSX.Element {
   return (
     <>
-      {props.names.map((sec) => (
-        <Card key={sec} title={SECTIONS[sec] ?? sec} icon={SlidersHorizontal}>
-          <div className="grid gap-5 md:grid-cols-2">
-            {props.schema
-              .filter((s) => s.section === sec && !HIDDEN.includes(s.key))
-              .map((s) => <Setting key={s.key} s={s} blocked={props.blocked?.[s.key]} />)}
-          </div>
-        </Card>
-      ))}
+      {props.names.map((sec) => {
+        const fields = props.schema
+          .filter((s) => s.section === sec && !HIDDEN.includes(s.key))
+          .map((s) => <Setting key={s.key} s={s} blocked={props.blocked?.[s.key]} />)
+        return sec === 'backup' ? (
+          <BackupsSection key={sec}>{fields}</BackupsSection>
+        ) : (
+          <Card key={sec} title={SECTIONS[sec] ?? sec} icon={SlidersHorizontal}>
+            <div className="grid gap-5 md:grid-cols-2">{fields}</div>
+          </Card>
+        )
+      })}
     </>
   )
 }

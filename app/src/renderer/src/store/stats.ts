@@ -1,6 +1,6 @@
 // The Statistics card's view of the engine's statistics document (format deltapatcher-stats, version 1): the
-// numbers it shows, and each day's bar as a fraction of the busiest day. Nothing here uses the window, so a
-// test can run it as it is.
+// numbers it shows, each day's bar as a fraction of the busiest day, and the card's counting (statsCounter).
+// Nothing here uses the window, so a test can run it as it is.
 
 export interface ReleaseInfo {
   name: string
@@ -33,10 +33,20 @@ export interface DownloadsSection {
   total: { checks: number; downloads: number; bytes: number; players: number }
   releases: { release: string | null; players: number }[]
   releases_more: number
+  // past a number of players the engine estimates them: its player counts are then "about"
+  players_estimated?: boolean
   lines: number
   unreadable: number
   log: string
   read_from: string
+}
+
+// one row of the releases players are on: `key` is its own, never a release's name
+export interface Share {
+  key: string
+  label: string
+  players: number
+  share: number
 }
 
 export interface Bar {
@@ -66,7 +76,9 @@ export interface StatsView {
     rows: BarRow[]
     first: string
     last: string
-    releases: { label: string; players: number; share: number }[]
+    releases: Share[]
+    // the player counts are estimates
+    about: boolean
     lines: number
     unreadable: number
     log: string
@@ -87,12 +99,20 @@ export function bars(days: DayCount[], key: BarRow['key']): { bars: Bar[]; max: 
   return { max, bars: days.map((d) => ({ date: d.date, value: Number(d[key]) || 0, height: max > 0 ? (Number(d[key]) || 0) / max : 0 })) }
 }
 
-// the releases players are on, each with its share of them; an updater that did not say is "unknown"
-export function shares(releases: DownloadsSection['releases'], more: number): { label: string; players: number; share: number }[] {
-  const all = releases.map((r) => ({ label: r.release ?? 'unknown', players: r.players }))
-  if (more > 0) all.push({ label: 'others', players: more })
+// the releases players are on, each with its share of them; an updater that did not say is "unknown", the
+// releases past the listed ones are "others". A release may be named "unknown" or "others" too: each row's
+// key is its own, a release's starting with "release:".
+export function shares(releases: DownloadsSection['releases'], more: number): Share[] {
+  const all = releases.map((r) =>
+    r.release === null ? { key: 'unknown', label: 'unknown', players: r.players } : { key: `release:${r.release}`, label: r.release, players: r.players })
+  if (more > 0) all.push({ key: 'others', label: 'others', players: more })
   const total = all.reduce((n, r) => n + r.players, 0)
   return all.map((r) => ({ ...r, share: total > 0 ? r.players / total : 0 }))
+}
+
+// a count of players as the card says it: "about" when the engine estimated it
+export function players(n: number, about: boolean): string {
+  return `${about ? 'about ' : ''}${n}`
 }
 
 export function when(text: string): string {
@@ -124,6 +144,7 @@ export function readStats(doc: unknown): StatsView {
       first: dl.days[0]?.date ?? '',
       last: dl.days[dl.days.length - 1]?.date ?? '',
       releases: shares(dl.releases, dl.releases_more),
+      about: Boolean(dl.players_estimated),
       lines: dl.lines,
       unreadable: dl.unreadable,
       log: dl.log,
@@ -133,4 +154,45 @@ export function readStats(doc: unknown): StatsView {
     view.downloadsProblem = String(problems.downloads ?? '')
   }
   return view
+}
+
+export interface StatsAnswer {
+  ok: boolean
+  data?: unknown
+  message?: string
+}
+
+// what the card shows: the statistics, why they could not be counted, and whether a count is going
+export interface StatsState {
+  view: StatsView | null
+  error: string
+  loading: boolean
+}
+
+// The card's counting. Each project's last statistics are kept while another is shown. A count goes to the
+// project that was on screen when it was asked for: its answer is kept for that project (unless a newer count's
+// is kept already), and shown only while that project is still on screen and no newer count was asked for
+// since (a slow count never shows one project's numbers on another's card).
+export function statsCounter(
+  run: (file: string) => Promise<StatsAnswer>,
+  onScreen: () => string,
+  show: (card: StatsState) => void
+): { kept: Map<string, StatsView>; count: () => Promise<void>; shown: (file: string) => StatsState } {
+  const kept = new Map<string, StatsView>()
+  const keptFrom = new Map<string, number>()
+  let asked = 0
+  const shown = (file: string): StatsState => ({ view: kept.get(file) ?? null, error: '', loading: false })
+  const count = async (): Promise<void> => {
+    const n = ++asked
+    const file = onScreen()
+    show({ ...shown(file), loading: true })
+    const r = await run(file)
+    if (r.ok && n > (keptFrom.get(file) ?? 0)) {
+      kept.set(file, readStats(r.data))
+      keptFrom.set(file, n)
+    }
+    if (n !== asked || onScreen() !== file) return
+    show(r.ok ? shown(file) : { view: kept.get(file) ?? null, error: String(r.message || 'The engine gave no reason.'), loading: false })
+  }
+  return { kept, count, shown }
 }

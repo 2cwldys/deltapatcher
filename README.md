@@ -124,8 +124,8 @@ is the checklist for changing it, for people and for Claude Code alike.
 
 `deltapatcher mcp` runs DeltaPatcher as an MCP server, so Claude Code, Claude Desktop, VS Code or any other
 MCP client can check, update, publish and release projects, read the guides, and run a self-test of the
-whole cycle. It never handles a passphrase or a password. How to connect one, and every tool:
-[mcp/README.md](mcp/README.md).
+whole cycle. It never handles a passphrase or a password. Claude Code opened in this repository offers it by
+itself (`.mcp.json`). How to connect another assistant, and every tool: [mcp/README.md](mcp/README.md).
 
 </details>
 

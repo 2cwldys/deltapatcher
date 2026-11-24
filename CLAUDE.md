@@ -21,7 +21,7 @@ From the repository's root. The build makes `.venv`; use its Python.
 | The wiki | `python tools/wiki.py <a clone of the wiki>`, then commit and push there |
 | Preview a guide | `node tools/readme_preview/render.mjs [FILE.md] [--light]` (`npm ci` in that folder once) |
 | Secret scan | `python tools/secret_scan.py` |
-| The MCP server | `python mcp/server.py` from a clone (built: `deltapatcher mcp`); its tests: `python -m unittest tests.test_mcp` |
+| The MCP server | Claude Code opened in this repository offers it by itself (`.mcp.json`; it asks once). Else `python mcp/server.py` (built: `deltapatcher mcp`); its tests: `python -m unittest tests.test_mcp` |
 
 ## A change, start to finish
 

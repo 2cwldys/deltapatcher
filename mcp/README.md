@@ -100,7 +100,9 @@ Connected to an assistant in your game's or mod's repository, DeltaPatcher becom
 
 ## Working on DeltaPatcher with it
 
-`selftest` checks the whole cycle on your computer in a few seconds, which makes it a quick way to see that
-a change to the engine still works end to end. The server itself is `deltapatcher/mcp_server.py`: Python's
+Open this repository in Claude Code and it offers the server by itself: the repository's `.mcp.json` names
+it (`python mcp/server.py`), and Claude Code asks once before starting it. `selftest` then checks the whole
+cycle on your computer in a few seconds, which makes it a quick way to see that a change to the engine
+still works end to end. The server itself is `deltapatcher/mcp_server.py`: Python's
 standard library only, and it runs the engine with `--json` for every tool, exactly as the app does.
 `tests/test_mcp.py` drives it over its real standard input and output.

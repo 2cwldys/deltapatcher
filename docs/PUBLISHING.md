@@ -1,0 +1,99 @@
+# Publishing a release
+
+You have a folder with your game, mod or asset pack. Publishing turns it into a *store* that clients
+update from.
+
+## 1. Lay out the release folder
+
+Put the files exactly as they should appear in the player's folder. Subfolders are kept. Any file type
+works.
+
+Leave out what players should not get with a `.deltaignore` file in the release folder:
+
+```
+# one pattern per line; a trailing / means a folder
+*.log
+screenshots/
+dev-notes.txt
+```
+
+Always left out: `.git/`, `.svn/`, `.hg/`, `__pycache__/`, `Thumbs.db`, `desktop.ini`, `.DS_Store`,
+`*.tmp`. Links and junctions are never followed.
+
+Do not put DeltaPatcher itself, or player data (saves, settings the game writes), in the release
+folder.
+
+## 2. Publish
+
+Window: **Publish** tab, choose *Folder* and *Store*, fill in *Name* and *Version*, click **Publish**.
+
+Command line:
+
+```
+deltapatcher publish ./release ./store --name "My Game" --version 1.4 --protect "config/*.cfg"
+```
+
+What happens:
+
+- Every file is hashed. Unchanged files are recognised by size and date, so publishing again is fast.
+- Each distinct file content is copied once into `store/blobs/`, named by its SHA-256. Two identical
+  files are one blob.
+- `store/manifest.json` is written. The one before it is kept as `manifest.previous.json`, so players
+  who started updating a moment ago can still finish.
+- Blobs that neither manifest names any more are deleted from the store (`--no-prune` keeps them).
+- Publishing exactly the same files again changes nothing, and the manifest keeps its date.
+
+## 3. Protect player files
+
+A *protected* file is created when a player does not have it, and never overwritten after that.
+Use it for default settings the game later changes:
+
+- Window: *Protect* field, comma-separated: `config/*.cfg, settings.ini`
+- Command line: `--protect "config/*.cfg" --protect settings.ini`
+
+Patterns are matched against the whole path with `/` separators (`*` matches within a name and across
+folders).
+
+## 4. Test it on your PC
+
+Window: **Serve locally**, then **Update** a test folder from `http://localhost:8000/`.
+Command line: `deltapatcher serve ./store`, then `deltapatcher update ./test --source http://localhost:8000/`.
+
+## 5. Put the store where players can read it
+
+The store is plain static files: any web server can serve it. Choose one:
+
+- **A VPS**: deploy over SSH from the **Server** tab. See [Setting up a VPS](VPS-SETUP.md).
+- **A folder**: Server tab, *A folder*, for a web root on this machine or a network share. Command
+  line: `deltapatcher deploy ./store --to-folder D:/www/game`.
+- **Any static host** (object storage, a CDN): upload `manifest.json`, `manifest.previous.json` and
+  `blobs/`. Upload the blobs first and `manifest.json` last.
+
+Deploying sends only the blobs the target does not have yet.
+
+## 6. Give players the updater
+
+Players need DeltaPatcher and your source address. Common ways:
+
+- **Ship `DeltaPatcher.exe`** next to the game and tell players the address once. The window remembers it.
+- **A one-click updater** for your launcher or a `.bat` file, using the command-line program:
+
+  ```
+  @echo off
+  "%~dp0deltapatcher-cli.exe" update "%~dp0game" --source https://game.example.com/
+  pause
+  ```
+
+  Exit code 0 means updated or already up to date, and 1 means it failed (the folder was left as it was).
+  `--check` returns 2 when an update is available, which is useful to show an "update available" badge.
+
+- **Your own code**: from Python, `deltapatcher.client.update(url, folder)`. Or write a client in any
+  language from [the format](FORMAT.md).
+
+Keep the updater outside the folder it updates (`game\` above), so a release never has to replace the
+program that is running.
+
+## Versions
+
+*Version* is shown to players and in the log. It does not decide anything: clients always move to
+whatever the manifest lists, so publishing an older folder again rolls everyone back to it.

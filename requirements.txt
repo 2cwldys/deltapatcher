@@ -1,0 +1,4 @@
+# Everything is optional: the core (publish, serve, update, deploy) needs only Python 3.8+.
+pystray>=0.19       # the tray icon
+Pillow>=9           # the tray icon's image, and tools/make_icon.py
+cryptography>=41    # making SSH keys inside the window

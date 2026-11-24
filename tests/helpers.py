@@ -1,0 +1,38 @@
+import hashlib
+import os
+import shutil
+import tempfile
+import unittest
+
+
+def write(path, data):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data if isinstance(data, bytes) else data.encode("utf-8"))
+
+
+def read(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def snapshot(folder):
+    """{relative path: sha256} of every file, leaving out DeltaPatcher's own .deltapatcher folder."""
+    out = {}
+    for dp, dn, fn in os.walk(folder):
+        dn[:] = [d for d in dn if d != ".deltapatcher"]
+        for f in fn:
+            full = os.path.join(dp, f)
+            out[os.path.relpath(full, folder).replace("\\", "/")] = hashlib.sha256(read(full)).hexdigest()
+    return out
+
+
+class TempCase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp(prefix="dp-test-")
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+    def p(self, *parts):
+        return os.path.join(self.tmp, *parts)

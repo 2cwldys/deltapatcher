@@ -6,6 +6,8 @@ import { FORCE_STOPPED } from '@shared/forceStop'
 import { ask, useModal } from './modal'
 import { anotherRun, restartSchedules } from './schedule'
 import { autoOutcome, madeAt, nextBackup } from './backups'
+import { windowStorage } from './folds'
+import { closeWelcome, welcomeAtStart } from './welcome'
 
 export type Value = string | number | boolean
 export interface SchemaItem {
@@ -159,6 +161,9 @@ interface State {
   startServe: (store?: string) => Promise<void>
   stopServe: () => void
   setPage: (p: Page) => void
+  // the welcome screen, over the pages until it is closed or a page is picked (store/welcome.ts)
+  welcome: boolean
+  showWelcome: (on: boolean) => void
   load: () => Promise<void>
   set: (key: string, value: Value) => void
   // a setting's value, or its default when the field is empty (what the engine itself would use)
@@ -343,6 +348,7 @@ export const useApp = create<State>((set, get) => {
     exporting: null,
     stopped: false,
     stoppedSince: '',
+    welcome: false,
 
     // GitHub's newest release against this version, by number; quiet, and nothing when offline
     checkAppUpdate: async () => {
@@ -427,10 +433,17 @@ export const useApp = create<State>((set, get) => {
     },
 
     setResult: (kind, data) => set({ results: { ...get().results, [kind]: data } }),
-    setPage: (p) => set({ page: p }),
+    // a page picked: the welcome screen gives way to it
+    setPage: (p) => set({ page: p, welcome: false }),
+    // closed by hand: it does not come back at the next start ("Getting started" opens it again)
+    showWelcome: (on) => {
+      if (!on) closeWelcome(windowStorage())
+      set({ welcome: on })
+    },
 
     // the projects first (which one to show), then its settings; with several projects the window opens on
-    // the Projects page, with one it opens on Update as it always did
+    // the Projects page, with one it opens on Update as it always did; while no project is set up yet, the
+    // welcome screen shows over it
     load: async () => {
       // a Force stop left on holds: the window opens stopped
       const fs = (await window.api.info()).forceStop
@@ -441,7 +454,11 @@ export const useApp = create<State>((set, get) => {
       }
       await get().loadProjects()
       await readSettings()
-      set({ loaded: true, page: get().projects.length > 1 ? 'projects' : get().page })
+      set({
+        loaded: true,
+        page: get().projects.length > 1 ? 'projects' : get().page,
+        welcome: get().projects.length > 0 && welcomeAtStart(get().projects, windowStorage())
+      })
     },
 
     loadProjects: async () => {

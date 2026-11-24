@@ -1,9 +1,12 @@
 import { useEffect, useRef } from 'react'
+import { Sparkles, X } from 'lucide-react'
 import Sidebar from './components/Sidebar'
 import ActivityBar from './components/ActivityBar'
 import Modals from './components/Modals'
+import Welcome from './components/Welcome'
 import { StoppedNotice } from './components/ForceStop'
 import { ExportDialog, ImportDialog } from './components/ProjectFileDialogs'
+import { Button, InfoTip } from './components/ui'
 import UpdatePage, { runUpdate } from './pages/UpdatePage'
 import ReleasePage, { publishRelease } from './pages/ReleasePage'
 import SettingsPage from './pages/SettingsPage'
@@ -12,12 +15,15 @@ import { autoBackup, autoCheck, Page, useApp } from './store/app'
 import { addFile } from './store/projectActions'
 import { scheduler, TICK } from './store/schedule'
 
-const TITLES: Record<Page, [string, string]> = {
-  projects: ['Projects', 'Every game, mod or server DeltaPatcher keeps up to date or releases: check them, update them all at once, or open one.'],
+// each page's name, its subtitle (one short line), and the whole of it behind the (i) when there is more
+const TITLES: Record<Page, [string, string, string?]> = {
+  projects: ['Projects', 'Every game, mod or server DeltaPatcher keeps up to date or releases.',
+    'Every game, mod or server DeltaPatcher keeps up to date or releases: check them, update them all at once, or open one.'],
   update: ['Update', 'Bring a folder up to the latest release, downloading only what changed.'],
-  release: ['Release', 'Send players a new version.\nOnly what changed is sent, and players download only that.'],
+  release: ['Release', 'Send players a new version.', 'Send players a new version.\nOnly what changed is sent, and players download only that.'],
   settings: ['Settings', "This project's settings file, DeltaPatcher's own, the log, and about."]
 }
+const WELCOME: [string, string] = ['Welcome to DeltaPatcher', 'Pick what you want to do. Every page stays in the sidebar.']
 // the pages about one project, whose header names it
 const ONE_PROJECT: Page[] = ['update', 'release', 'settings']
 
@@ -71,6 +77,8 @@ export default function App(): JSX.Element {
   const load = useApp((s) => s.load)
   const projectTitle = useApp((s) => (s.projects.length > 1 ? s.projects.find((p) => p.file === s.project)?.title ?? '' : ''))
   const stopped = useApp((s) => s.stopped)
+  const welcome = useApp((s) => s.welcome)
+  const showWelcome = useApp((s) => s.showWelcome)
   // Force stop: the pages take no clicks, keys or focus until it is lifted
   const pages = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -126,9 +134,9 @@ export default function App(): JSX.Element {
     }
   }, [])
 
-  const [name, subtitle] = TITLES[page]
+  const [name, subtitle, whole] = welcome ? WELCOME : TITLES[page]
   // ASCII only: the page's name, then the project it is about
-  const title = ONE_PROJECT.includes(page) && projectTitle ? `${name} - ${projectTitle}` : name
+  const title = !welcome && ONE_PROJECT.includes(page) && projectTitle ? `${name} - ${projectTitle}` : name
   return (
     <div className="flex h-full bg-ink-950 bg-[radial-gradient(ellipse_at_top_right,rgba(25,179,160,0.10),transparent_55%)]">
       <Sidebar />
@@ -138,14 +146,26 @@ export default function App(): JSX.Element {
             ref={pages}
             className={`flex min-h-0 flex-1 flex-col transition-opacity ${stopped ? 'pointer-events-none select-none opacity-30 grayscale' : ''}`}
           >
-            <header className="px-8 pb-4 pt-7">
-              <h1 className="truncate text-2xl font-semibold tracking-tight">{title}</h1>
-              <p className="mt-1 whitespace-pre-line text-sm text-ink-300">{subtitle}</p>
+            <header className="flex items-start gap-4 px-8 pb-4 pt-7">
+              <div className="min-w-0 flex-1">
+                <h1 className="flex min-w-0 items-center gap-2.5 text-2xl font-semibold tracking-tight">
+                  <span className="truncate">{title}</span>
+                  {whole && <InfoTip text={whole} />}
+                </h1>
+                <p className="mt-1 whitespace-pre-line text-sm text-ink-300">{subtitle}</p>
+              </div>
+              {loaded && welcome && <Button small variant="ghost" icon={X} title="Close the welcome screen" onClick={() => showWelcome(false)}>Close</Button>}
+              {loaded && !welcome && page === 'projects' && (
+                <Button small variant="ghost" icon={Sparkles} title="The welcome screen: keep a game up to date, or publish your own releases"
+                  onClick={() => showWelcome(true)}>Getting started</Button>
+              )}
             </header>
             {/* keyed by page: each page opens at its top, not where the last one was scrolled to */}
-            <div key={page} className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
+            <div key={welcome ? 'welcome' : page} className="min-h-0 flex-1 overflow-y-auto px-8 pb-8">
               {!loaded ? (
                 <div className="text-sm text-ink-400">Starting the engine...</div>
+              ) : welcome ? (
+                <Welcome />
               ) : page === 'projects' ? (
                 <ProjectsPage />
               ) : page === 'update' ? (

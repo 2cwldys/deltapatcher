@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { FileText, FolderKanban, FolderOpen, Info, RotateCcw, Settings2, SlidersHorizontal, Trash2, TriangleAlert } from 'lucide-react'
+import { ChevronDown, ChevronUp, FileText, FolderKanban, FolderOpen, Info, RotateCcw, Settings2, SlidersHorizontal, Trash2, TriangleAlert } from 'lucide-react'
 import { running, SchemaItem, useApp, Value } from '../store/app'
 import { removeProject, resetAll, sentences } from '../store/projectActions'
 import { folderNameProblem } from '../store/folders'
 import { sizeProblem } from '../store/backups'
+import { useFold } from '../store/folds'
+import { splitMore, wordsOf } from '../store/settingWords'
 import BackupsSection from '../components/BackupsSection'
 import { Button, Card, Chip, Field, SettingToggle } from '../components/ui'
 import type { AppInfo } from '@shared/types'
@@ -22,13 +24,17 @@ const APP_SECTIONS = ['window', 'general']
 // kept by the Projects page and the project picker, not typed here: the name, the added files, the one shown
 const HIDDEN = ['title', 'project_files', 'current_project']
 
-// blocked: a switch that cannot work in this copy, and why (start_with_system, run from source)
+// A setting in plain words (store/settingWords.ts): its label, its own name small beside it, one short line
+// under it, and the engine's whole explanation behind the (i). blocked: a switch that cannot work in this copy,
+// and why (start_with_system, run from source).
 function Setting(props: { s: SchemaItem; blocked?: string }): JSX.Element {
   const s = props.s
+  const words = wordsOf(s.key)
   return typeof s.default === 'boolean' ? (
-    <SettingToggle setting={s.key} label={s.key} hint={sentences(s.what)} blocked={props.blocked} />
+    <SettingToggle setting={s.key} label={words.label} showSetting hint={sentences(s.what)} line={words.line} blocked={props.blocked} />
   ) : (
-    <Field label={s.key} setting={s.key} hint={sentences(s.what)} mono type={typeof (s.default as Value) === 'number' ? 'number' : 'text'}
+    <Field label={words.label} setting={s.key} showSetting hint={sentences(s.what)} line={words.line} mono
+      type={typeof (s.default as Value) === 'number' ? 'number' : 'text'}
       browse={FOLDERS.includes(s.key) ? 'folder' : undefined}
       check={s.key === 'install_folder' ? folderNameProblem : s.key === 'backup_max_size' ? sizeProblem : undefined} />
   )
@@ -37,25 +43,59 @@ function Setting(props: { s: SchemaItem; blocked?: string }): JSX.Element {
 // a folder chosen with Browse here: these settings are typed on no other page
 const FOLDERS = ['backup_dir']
 
+// A section's settings: the ones often changed, then More, which unfolds the ones rarely changed (each in the
+// order of the settings file; the window remembers it as it remembers its cards)
+function SectionFields(props: { sec: string; items: SchemaItem[]; blocked?: Record<string, string> }): JSX.Element {
+  const { shown, more } = splitMore(props.items.map((s) => s.key))
+  const byKey = (k: string): SchemaItem => props.items.find((s) => s.key === k) as SchemaItem
+  const [folded, setFolded] = useFold(`settings/${props.sec}/more`, true)
+  const grid = (keys: string[]): JSX.Element => (
+    <div className="grid gap-5 md:grid-cols-2">
+      {keys.map((k) => <Setting key={k} s={byKey(k)} blocked={props.blocked?.[k]} />)}
+    </div>
+  )
+  return (
+    <>
+      {grid(shown)}
+      {more.length > 0 && (
+        <div className={shown.length ? 'mt-5 border-t border-ink-700/70 pt-4' : ''}>
+          <button type="button" aria-expanded={!folded} onClick={() => setFolded(!folded)}
+            className="flex items-center gap-1.5 rounded text-sm font-medium text-ink-300 transition-colors hover:text-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-delta/40">
+            {folded ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
+            More
+            <span className="text-xs font-normal text-ink-400">{`${more.length} rarely changed`}</span>
+          </button>
+          {!folded && <div className="mt-4">{grid(more)}</div>}
+        </div>
+      )}
+    </>
+  )
+}
+
 // each section's settings in a card; the Backups section's card also holds the backups themselves
 function Sections(props: { names: string[]; schema: SchemaItem[]; blocked?: Record<string, string> }): JSX.Element {
   return (
     <>
       {props.names.map((sec) => {
-        const fields = props.schema
-          .filter((s) => s.section === sec && !HIDDEN.includes(s.key))
-          .map((s) => <Setting key={s.key} s={s} blocked={props.blocked?.[s.key]} />)
+        const items = props.schema.filter((s) => s.section === sec && !HIDDEN.includes(s.key))
+        const fields = <SectionFields sec={sec} items={items} blocked={props.blocked} />
         return sec === 'backup' ? (
           <BackupsSection key={sec}>{fields}</BackupsSection>
         ) : (
-          <Card key={sec} title={SECTIONS[sec] ?? sec} icon={SlidersHorizontal}>
-            <div className="grid gap-5 md:grid-cols-2">{fields}</div>
+          <Card key={sec} fold={`settings/${sec}`} title={SECTIONS[sec] ?? sec} icon={SlidersHorizontal}>
+            {fields}
           </Card>
         )
       })}
     </>
   )
 }
+
+const RESET =
+  'DeltaPatcher as it was just installed: every project but Default leaves, and the settings go back to their defaults.\n' +
+  'The folders projects update or release are never touched, nor the signing key or SSH keys.\n' +
+  'Trusted server host keys, the log and prepared releases stay.\n' +
+  'A copy of the settings files is kept beside them, so a reset can be undone by hand.'
 
 export default function SettingsPage(): JSX.Element {
   const { schema, settingsPath, mainPath, logDir } = useApp()
@@ -71,7 +111,7 @@ export default function SettingsPage(): JSX.Element {
   const app = sections.filter((s) => APP_SECTIONS.includes(s))
   return (
     <div className="space-y-5">
-      <Card title={`This project: ${project?.title ?? 'Default'}`} icon={FolderKanban}>
+      <Card fold="settings/this-project" title={`This project: ${project?.title ?? 'Default'}`} icon={FolderKanban}>
         <p className="text-sm text-ink-300">
           What this project updates and releases lives in its own settings file, a text file with a line explaining each setting.
           <br />
@@ -90,7 +130,7 @@ export default function SettingsPage(): JSX.Element {
 
       <Sections names={own} schema={schema} />
 
-      <Card title="DeltaPatcher" icon={Settings2}>
+      <Card fold="settings/deltapatcher" title="DeltaPatcher" icon={Settings2}>
         <p className="text-sm text-ink-300">
           DeltaPatcher's own settings are the same for every project.
           <br />
@@ -108,7 +148,7 @@ export default function SettingsPage(): JSX.Element {
 
       <Sections names={app} schema={schema} blocked={{ start_with_system: info?.startWithSystem ?? '' }} />
 
-      <Card title="About" icon={Info}>
+      <Card fold="settings/about" title="About" icon={Info}>
         <div className="flex flex-wrap gap-2">
           <Chip kind="info">DeltaPatcher {info?.version}</Chip>
           <Chip kind="muted">{info?.platform}</Chip>
@@ -118,23 +158,12 @@ export default function SettingsPage(): JSX.Element {
       </Card>
 
       <div className="pt-6">
-        <section className="rounded-xl border border-rose-500/30 bg-rose-500/5 shadow-lg shadow-black/20">
-          <header className="flex items-center gap-2.5 border-b border-rose-500/20 px-5 py-3.5 text-sm font-semibold text-slate-100">
-            <TriangleAlert size={16} className="text-rose-300" />
-            Reset DeltaPatcher
-          </header>
-          <div className="p-5">
-            <p className="whitespace-pre-line text-sm text-ink-300">
-              {'DeltaPatcher as it was just installed: every project but Default leaves, and the settings go back to their defaults.\n' +
-                'The folders projects update or release are never touched, nor the signing key or SSH keys.\n' +
-                'Trusted server host keys, the log and prepared releases stay.\n' +
-                'A copy of the settings files is kept beside them, so a reset can be undone by hand.'}
-            </p>
-            <div className="mt-4">
-              <Button variant="danger" icon={RotateCcw} disabled={working} onClick={resetAll}>Reset DeltaPatcher...</Button>
-            </div>
+        <Card fold="settings/reset" title="Reset DeltaPatcher" icon={TriangleAlert} tone="danger" info={RESET}>
+          <p className="text-sm text-ink-300">{RESET.split('\n')[0]}</p>
+          <div className="mt-4">
+            <Button variant="danger" icon={RotateCcw} disabled={working} onClick={resetAll}>Reset DeltaPatcher...</Button>
           </div>
-        </section>
+        </Card>
       </div>
     </div>
   )

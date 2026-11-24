@@ -66,7 +66,7 @@ export default function UpdatePage(): JSX.Element {
 
   return (
     <div className="space-y-5">
-      <Card title="Update a folder" icon={FolderSync}>
+      <Card fold="update/folder" title="Update a folder" icon={FolderSync}>
         <div className="grid gap-5">
           <Field label="Source" setting="source_url" mono
             hint={"Where the release is: an http(s) address or a folder.\nThe game's maker gives you this."} />
@@ -89,8 +89,9 @@ export default function UpdatePage(): JSX.Element {
       </Card>
 
       {result && (
-        <Card title={result.empty ? 'Up to date' : result.check ? 'An update is available' : 'Updated'} icon={result.publisher_key ? ShieldCheck : ShieldAlert}
-          actions={result.publisher_key ? <Chip kind="ok" icon={ShieldCheck}>Signed release, publisher key pinned</Chip> : <Chip kind="muted">Not signed</Chip>}>
+        <Card fold="update/result" title={result.empty ? 'Up to date' : result.check ? 'An update is available' : 'Updated'} icon={result.publisher_key ? ShieldCheck : ShieldAlert}
+          actions={result.publisher_key ? <Chip kind="ok" icon={ShieldCheck}>Signed release, publisher key pinned</Chip> : <Chip kind="muted">Not signed</Chip>}
+          summary={`${result.add} new, ${result.replace} changed, ${result.remove} removed, ${result.same} unchanged; ${human(result.download_bytes)} ${result.check ? 'to download' : 'downloaded'}`}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <Stat label="New" value={result.add} accent={result.add > 0} />
             <Stat label="Changed" value={result.replace} accent={result.replace > 0} />

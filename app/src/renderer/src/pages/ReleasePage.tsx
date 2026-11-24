@@ -1,16 +1,19 @@
-// The Release page: what to release, where players download it from, and one button that publishes the
-// folder and sends only what changed there (or serves it on this computer, to try it first); then the
-// statistics of the release players have. Publishing the same version again with changed files is fine:
-// players get the changed files (a shadow patch). The backups of the live release are on the Settings page.
+// The Release page: what to release, where players download it from, the one-time setup of the server (folded
+// once it is all done), and one button that publishes the folder and sends only what changed there (or serves it
+// on this computer, to try it first); then the statistics of the release players have. Publishing the same
+// version again with changed files is fine: players get the changed files (a shadow patch). A project with no
+// folder to release yet opens on a short start; the rest is one click away. The backups of the live release are
+// on the Settings page.
 import { useCallback, useEffect, useRef, useState } from 'react'
 import {
-  ChartColumn, Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw, Rocket,
-  Server as ServerIcon, ShieldAlert, ShieldCheck, Square, Unlock, Upload
+  ChartColumn, ChevronsDown, Copy, Globe, HardDrive, KeyRound, Lock, Monitor, Package, PenLine, Plug, RefreshCw,
+  Rocket, Server as ServerIcon, ServerCog, ShieldAlert, ShieldCheck, Square, Unlock, Upload
 } from 'lucide-react'
 import type { EngineOutcome } from '@shared/types'
 import { useApp } from '../store/app'
 import { sentences } from '../store/projectActions'
-import { BarRow, players, statsCounter, StatsState, when } from '../store/stats'
+import { BarRow, players, statsCounter, StatsState, statsSummary, when } from '../store/stats'
+import { serverSetup, signingSetup, SignStatus, SshStatus } from '../store/setup'
 import { REPO_URL } from '@shared/project'
 import { ask, HostKey } from '../store/modal'
 import { Banner, Button, Card, Chip, Field, Segmented, SettingToggle, Stat, Toggle, human } from '../components/ui'
@@ -18,25 +21,6 @@ import { PathList, listOf } from '../components/PathList'
 
 type Mode = 'sftp' | 'folder' | 'local'
 type Data = Record<string, unknown>
-
-interface SshStatus {
-  key: string
-  key_exists: boolean
-  has_passphrase?: boolean
-  permission_problems?: string[]
-  agent: 'keys' | 'empty' | 'none'
-  in_agent?: boolean
-  host?: string
-  host_trusted?: boolean
-  host_error?: string
-}
-
-interface SignStatus {
-  path: string
-  exists: boolean
-  has_passphrase: boolean
-  can_sign: boolean
-}
 
 export function modeOf(v: unknown): Mode {
   return v === 'folder' ? 'folder' : v === 'local' ? 'local' : 'sftp'
@@ -172,23 +156,70 @@ export async function runRelease(dry = false): Promise<void> {
   st.setResult('release', { publish: pub, deploy: d, players_url: String(s.public_url || ''), mode })
 }
 
-function ServerSettings(): JSX.Element {
+// the last state of each project's key, host and signing key, kept while another page or project is shown, so
+// the setup part opens folded or not at once when the page is shown again
+const keptSsh = new Map<string, SshStatus>()
+const keptSign = new Map<string, SignStatus>()
+
+// The SSH key and the host: what the engine says of them, read again when the key, host or port changes; only the
+// newest answer counts (a slow status check must not overwrite a newer one)
+function useSshStatus(on: boolean): [SshStatus | null, () => Promise<void>] {
+  const project = useApp((s) => s.project)
+  const settings = useApp((s) => s.settings)
+  const [status, setStatus] = useState<SshStatus | null>(keptSsh.get(project) ?? null)
+  const seq = useRef(0)
+  const refresh = useCallback(async () => {
+    const mine = ++seq.current
+    const file = useApp.getState().project
+    const r = await useApp.getState().run('', ['ssh', 'status', ...hostArgs()], { quiet: true })
+    if (mine !== seq.current) return
+    const s = r.ok ? (r.data as unknown as SshStatus) : null
+    if (s) keptSsh.set(file, s)
+    else keptSsh.delete(file)
+    setStatus(s)
+  }, [])
+  useEffect(() => {
+    setStatus(keptSsh.get(project) ?? null)
+  }, [project])
+  useEffect(() => {
+    if (!on) return
+    const t = setTimeout(refresh, 500)
+    return () => clearTimeout(t)
+  }, [on, settings.ssh_key, settings.ssh_host, settings.ssh_port, settings.ssh_user, project, refresh])
+  return [status, refresh]
+}
+
+// the signing key: what the engine says of it, read again when its path changes
+function useSignStatus(): [SignStatus | null, (s: SignStatus | null) => void] {
+  const project = useApp((s) => s.project)
+  const keyPath = useApp((s) => String(s.effective('signing_key')))
+  const [status, setStatus] = useState<SignStatus | null>(keptSign.get(project) ?? null)
+  const keep = useCallback((s: SignStatus | null) => {
+    const file = useApp.getState().project
+    if (s) keptSign.set(file, s)
+    else keptSign.delete(file)
+    setStatus(s)
+  }, [])
+  useEffect(() => {
+    let live = true
+    const t = setTimeout(async () => {
+      const s = keyPath ? await signStatus(keyPath) : null
+      if (live) keep(s)
+    }, 400)
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
+  }, [keyPath, project, keep])
+  return [status, keep]
+}
+
+// The SSH key's steps: make it, put it on the server (or copy its line), unlock it, fix who can read it
+function SshKeySteps(props: { status: SshStatus | null; refresh: () => Promise<void> }): JSX.Element {
+  const { status, refresh } = props
   const busy = useApp((s) => s.busy)
   const settings = useApp((s) => s.settings)
   const keyPath = useApp((s) => String(s.effective('ssh_key')))
-  const [status, setStatus] = useState<SshStatus | null>(null)
-  const seq = useRef(0)
-
-  // only the newest answer counts: a slow status check must not overwrite a newer one
-  const refresh = useCallback(async () => {
-    const mine = ++seq.current
-    const r = await useApp.getState().run('', ['ssh', 'status', ...hostArgs()], { quiet: true })
-    if (mine === seq.current) setStatus(r.ok ? (r.data as unknown as SshStatus) : null)
-  }, [])
-  useEffect(() => {
-    const t = setTimeout(refresh, 500)
-    return () => clearTimeout(t)
-  }, [settings.ssh_key, settings.ssh_host, settings.ssh_port, refresh])
 
   const newKey = async (): Promise<void> => {
     const p = await ask.passphrase('New SSH key', `A passphrase for the new key at\n${keyPath}\n\nYou type it once per session (Unlock key). It is not saved anywhere.`, true, 10)
@@ -198,7 +229,7 @@ function ServerSettings(): JSX.Element {
       await window.api.copy(String(r.data.authorized_keys_line))
       await ask.info('Key made', "Next: Put key on server (it logs in once with the server's password). Or add this line yourself to ~/.ssh/authorized_keys of the user on the server: it allows SFTP only, nothing else. Then Unlock key.", String(r.data.authorized_keys_line))
     }
-    refresh()
+    void refresh()
   }
   // log in once with the server's password (used for that login only, never kept) and add the key
   const installKey = async (): Promise<void> => {
@@ -211,7 +242,7 @@ function ServerSettings(): JSX.Element {
     if (p === null) return
     const d = await withHostTrust('Put key on server', ['ssh', 'install-key', ...hostArgs(), '--passphrase-stdin'], p)
     if (d) await ask.info('Your key is on the server', `${String(d.host)} knows your key now (${String(d.result)}). Unlock key, then Test connection.`)
-    refresh()
+    void refresh()
   }
   const copyLine = async (): Promise<void> => {
     const r = await useApp.getState().run('Server line', ['ssh', 'pubkey', `--path=${keyPath}`])
@@ -228,12 +259,41 @@ function ServerSettings(): JSX.Element {
     const p = await ask.passphrase('Unlock key', `The passphrase of\n${keyPath}\n\nssh-agent keeps the key unlocked until you log out.`)
     if (p === null) return
     await useApp.getState().run('Unlock key', ['ssh', 'unlock', `--path=${keyPath}`, '--passphrase-stdin'], { passphrase: p })
-    refresh()
+    void refresh()
   }
   const fixPerms = async (): Promise<void> => {
     await useApp.getState().run('Fix permissions', ['ssh', 'fix-permissions', `--path=${keyPath}`])
-    refresh()
+    void refresh()
   }
+
+  const perms = status?.permission_problems ?? []
+  return (
+    <div>
+      <p className="mb-3 text-sm font-semibold text-slate-100">The SSH key</p>
+      <Field label="SSH key file" setting="ssh_key" browse="file" mono hint={'Read only by OpenSSH.\nDeltaPatcher never opens your private key.'} />
+      <div className="mt-3 flex flex-wrap gap-2">
+        {!status?.key_exists && <Chip kind="muted">No key at this path yet</Chip>}
+        {status?.key_exists && (status.has_passphrase ? <Chip kind="ok" icon={Lock}>Passphrase protected</Chip> : <Chip kind="warn">No passphrase</Chip>)}
+        {status?.key_exists && perms.length > 0 && <Chip kind="bad">Readable by others</Chip>}
+        {status?.key_exists && (status.agent === 'none' ? <Chip kind="warn">ssh-agent not running</Chip> : status.in_agent ? <Chip kind="ok" icon={Unlock}>Unlocked</Chip> : <Chip kind="muted">Locked</Chip>)}
+      </div>
+      {perms.length > 0 && <div className="mt-3"><Banner kind="bad">{perms.join('; ')}. OpenSSH refuses a key others can read: use Fix permissions.</Banner></div>}
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button small icon={KeyRound} disabled={Boolean(busy) || Boolean(status?.key_exists)} onClick={newKey}>New key</Button>
+        <Button small icon={Upload} disabled={Boolean(busy) || !status?.key_exists || !settings.ssh_host} onClick={installKey}>Put key on server</Button>
+        <Button small icon={Copy} disabled={Boolean(busy) || !status?.key_exists} onClick={copyLine}>Copy server line</Button>
+        <Button small icon={Unlock} disabled={Boolean(busy) || !status?.key_exists || !status?.has_passphrase} onClick={unlock}>Unlock key</Button>
+        <Button small icon={Lock} disabled={Boolean(busy) || !perms.length} onClick={fixPerms}>Fix permissions</Button>
+      </div>
+    </div>
+  )
+}
+
+// The server's host key: confirmed once, checked strictly after; and a test of the whole connection
+function HostSteps(props: { status: SshStatus | null; refresh: () => Promise<void> }): JSX.Element {
+  const { status, refresh } = props
+  const busy = useApp((s) => s.busy)
+  const host = useApp((s) => s.settings.ssh_host)
   const checkHost = async (): Promise<void> => {
     const r = await useApp.getState().run('Check host key', ['ssh', 'scan', ...hostArgs()])
     if (!r.ok) return
@@ -243,75 +303,38 @@ function ServerSettings(): JSX.Element {
     } else {
       await confirmHost(String(r.data.host), keys, r.data.state === 'changed')
     }
-    refresh()
+    void refresh()
   }
   const test = async (): Promise<void> => {
     const s = useApp.getState().settings
     const args = ['ssh', 'test', ...hostArgs()]
     if (s.remote_root) args.push(`--remote-root=${String(s.remote_root)}`)
     await withHostTrust('Test connection', args)
-    refresh()
+    void refresh()
   }
-
-  const perms = status?.permission_problems ?? []
   return (
-    <div className="space-y-5">
-      <div className="grid gap-5 md:grid-cols-6">
-        <Field className="md:col-span-3" label="Host" setting="ssh_host" placeholder="game.example.com" mono />
-        <Field className="md:col-span-2" label="User" setting="ssh_user" placeholder="deploy" mono />
-        <Field className="md:col-span-1" label="Port" setting="ssh_port" type="number" />
-        <Field className="md:col-span-3" label="Remote folder" setting="remote_root" placeholder="/var/www/game" mono
-          hint={'The folder on the server its web server serves.\nForward slashes, even on a Windows server.'} />
-        <Field className="md:col-span-3" label="Players download from" setting="public_url" placeholder="https://game.example.com/" mono
-          hint={'The address the web server gives that folder.\nPlayers put it on their Update page.'} />
+    <div>
+      <p className="mb-3 text-sm font-semibold text-slate-100">The server's host key</p>
+      <div className="flex flex-wrap items-center gap-2">
+        {status?.host_error && <Chip kind="bad" icon={ShieldAlert}>{status.host_error}</Chip>}
+        {status?.host && (status.host_trusted ? <Chip kind="ok" icon={ShieldCheck}>Host key confirmed</Chip> : <Chip kind="warn">Host key not confirmed yet</Chip>)}
+        {!status?.host && !status?.host_error && <span className="text-sm text-ink-400">Fill in the host under Where players get it.</span>}
       </div>
-      <div className="rounded-lg border border-ink-700 bg-ink-900/60 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <span className="flex items-center gap-2 text-sm font-semibold text-slate-100"><KeyRound size={15} className="text-delta" />Connection</span>
-          <Button small variant="ghost" icon={RefreshCw} onClick={refresh}>Refresh</Button>
-        </div>
-        <Field label="SSH key file" setting="ssh_key" browse="file" mono hint="Read only by OpenSSH. DeltaPatcher never opens your private key." />
-        <div className="mt-3 flex flex-wrap gap-2">
-          {status?.host_error && <Chip kind="bad" icon={ShieldAlert}>{status.host_error}</Chip>}
-          {status?.host && (status.host_trusted ? <Chip kind="ok" icon={ShieldCheck}>Host key confirmed</Chip> : <Chip kind="warn">Host key not confirmed yet</Chip>)}
-          {!status?.key_exists && <Chip kind="muted">No key at this path yet</Chip>}
-          {status?.key_exists && (status.has_passphrase ? <Chip kind="ok" icon={Lock}>Passphrase protected</Chip> : <Chip kind="warn">No passphrase</Chip>)}
-          {status?.key_exists && perms.length > 0 && <Chip kind="bad">Readable by others</Chip>}
-          {status?.key_exists && (status.agent === 'none' ? <Chip kind="warn">ssh-agent not running</Chip> : status.in_agent ? <Chip kind="ok" icon={Unlock}>Unlocked</Chip> : <Chip kind="muted">Locked</Chip>)}
-        </div>
-        {perms.length > 0 && <div className="mt-3"><Banner kind="bad">{perms.join('; ')}. OpenSSH refuses a key others can read: use Fix permissions.</Banner></div>}
-        <div className="mt-4 flex flex-wrap gap-2">
-          <Button small icon={KeyRound} disabled={Boolean(busy) || Boolean(status?.key_exists)} onClick={newKey}>New key</Button>
-          <Button small icon={Upload} disabled={Boolean(busy) || !status?.key_exists || !settings.ssh_host} onClick={installKey}>Put key on server</Button>
-          <Button small icon={Copy} disabled={Boolean(busy) || !status?.key_exists} onClick={copyLine}>Copy server line</Button>
-          <Button small icon={Unlock} disabled={Boolean(busy) || !status?.key_exists || !status?.has_passphrase} onClick={unlock}>Unlock key</Button>
-          <Button small icon={Lock} disabled={Boolean(busy) || !perms.length} onClick={fixPerms}>Fix permissions</Button>
-          <Button small icon={ShieldCheck} disabled={Boolean(busy) || !settings.ssh_host} onClick={checkHost}>Check host key</Button>
-          <Button small icon={Plug} disabled={Boolean(busy) || !settings.ssh_host} onClick={test}>Test connection</Button>
-        </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <Button small icon={ShieldCheck} disabled={Boolean(busy) || !host} onClick={checkHost}>Check host key</Button>
+        <Button small icon={Plug} disabled={Boolean(busy) || !host} onClick={test}>Test connection</Button>
       </div>
-      <SettingToggle setting="htaccess" label=".htaccess for Apache" hint="Serve only the release: no listings, the right cache headers." />
     </div>
   )
 }
 
-function SigningCard(): JSX.Element {
+// Signing: the switch, the key's file, a new key, its public key; `chip`: the key's state beside the buttons (when
+// the card's header does not show it)
+function SigningSteps(props: { status: SignStatus | null; keep: (s: SignStatus | null) => void; chip?: boolean }): JSX.Element {
+  const { status: keyStatus, keep } = props
   const busy = useApp((s) => s.busy)
   const keyPath = useApp((s) => String(s.effective('signing_key')))
   const [publicKey, setPublicKey] = useState('')
-  const [keyStatus, setKeyStatus] = useState<SignStatus | null>(null)
-
-  useEffect(() => {
-    let live = true
-    const t = setTimeout(async () => {
-      const s = keyPath ? await signStatus(keyPath) : null
-      if (live) setKeyStatus(s)
-    }, 400)
-    return () => {
-      live = false
-      clearTimeout(t)
-    }
-  }, [keyPath])
 
   const newKey = async (): Promise<void> => {
     const path = keyPath
@@ -321,7 +344,7 @@ function SigningCard(): JSX.Element {
     if (r.ok) {
       setPublicKey(String(r.data.public_key))
       useApp.getState().set('sign', true)
-      setKeyStatus(await signStatus(path))
+      keep(await signStatus(path))
       await window.api.copy(String(r.data.public_key))
       await ask.info('Signing key made', 'Signing is on. The public key is on the clipboard: give it to players, or put it in your launcher, so their updater checks that your releases are yours.', String(r.data.public_key))
     }
@@ -343,17 +366,55 @@ function SigningCard(): JSX.Element {
   }
 
   return (
-    <Card title="Sign releases (optional)" icon={PenLine}
-      actions={keyStatus?.exists ? <Chip kind="ok" icon={KeyRound}>Key ready{keyStatus.has_passphrase ? ', passphrase protected' : ''}</Chip> : <Chip kind="muted">No key yet</Chip>}>
+    <div>
       <div className="grid gap-5">
         <SettingToggle setting="sign" label="Sign each release" hint="Players' updaters then refuse anything not signed by your key." />
-        <Field label="Signing key" setting="signing_key" browse="file" mono hint="The file's path is kept, never the key. Readable by your account only." />
+        <Field label="Signing key" setting="signing_key" browse="file" mono hint={"The file's path is kept, never the key.\nReadable by your account only."} />
       </div>
-      <div className="mt-5 flex flex-wrap gap-2">
-        <Button icon={KeyRound} disabled={Boolean(busy) || Boolean(keyStatus?.exists)} onClick={newKey}>New signing key</Button>
-        <Button icon={Copy} disabled={Boolean(busy) || !keyStatus?.exists} onClick={copyKey}>Copy public key</Button>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button small icon={KeyRound} disabled={Boolean(busy) || Boolean(keyStatus?.exists)} onClick={newKey}>New signing key</Button>
+        <Button small icon={Copy} disabled={Boolean(busy) || !keyStatus?.exists} onClick={copyKey}>Copy public key</Button>
+        {props.chip && (keyStatus?.exists
+          ? <Chip kind="ok" icon={KeyRound}>Key ready{keyStatus.has_passphrase ? ', passphrase protected' : ''}</Chip>
+          : <Chip kind="muted">No key yet</Chip>)}
       </div>
       {publicKey && <p className="selectable mt-4 break-all rounded-lg border border-ink-700 bg-ink-950 px-3 py-2 font-mono text-xs text-delta-light">{publicKey}</p>}
+    </div>
+  )
+}
+
+// The one-time steps. Over SSH: "Set up your server" (the key, the host key, signing), folded by itself once they
+// are all done, with a line that says where they stand. To a folder or this computer: signing alone, as "Sign
+// releases (optional)".
+function SetupCard(props: { mode: Mode }): JSX.Element {
+  const sign = useApp((s) => Boolean(s.settings.sign))
+  const sftp = props.mode === 'sftp'
+  const [ssh, refresh] = useSshStatus(sftp)
+  const [signing, keep] = useSignStatus()
+  if (!sftp) {
+    const state = signingSetup(sign, signing)
+    return (
+      <Card fold="release/sign" title="Sign releases (optional)" icon={PenLine} startsFolded={state.ready} summary={state.line}
+        actions={signing?.exists ? <Chip kind="ok" icon={KeyRound}>Key ready{signing.has_passphrase ? ', passphrase protected' : ''}</Chip> : <Chip kind="muted">No key yet</Chip>}>
+        <SigningSteps status={signing} keep={keep} />
+      </Card>
+    )
+  }
+  const state = serverSetup(ssh, sign, signing)
+  const line = <span className={ssh ? (state.ready ? 'text-delta-light' : 'text-blob-light') : 'text-ink-400'}>{state.line}</span>
+  return (
+    <Card fold="release/setup" title="Set up your server" icon={ServerCog} startsFolded={state.ready} summary={line}
+      info={'Done once for a server: an SSH key, on the server and unlocked; its host key, confirmed; and a signing key, if releases are signed.\nThis part folds by itself once everything in it is done.'}
+      actions={<Button small variant="ghost" icon={RefreshCw} onClick={() => void refresh()}>Refresh</Button>}>
+      <p className="text-sm">{line}</p>
+      <div className="mt-5 space-y-6">
+        <SshKeySteps status={ssh} refresh={refresh} />
+        <div className="border-t border-ink-700/70 pt-5"><HostSteps status={ssh} refresh={refresh} /></div>
+        <div className="border-t border-ink-700/70 pt-5">
+          <p className="mb-3 text-sm font-semibold text-slate-100">Sign releases (optional)</p>
+          <SigningSteps status={signing} keep={keep} chip />
+        </div>
+      </div>
     </Card>
   )
 }
@@ -389,7 +450,8 @@ function StatBars(props: { row: BarRow }): JSX.Element {
 
 // Statistics: the current release and what it changed, the store, and from the web server's access log the
 // update checks, downloads and players of each day and the releases players are on. Counted when a project is
-// first shown, after a release, when the access log changes, and on Refresh.
+// first shown, after a release, when the access log changes, and on Refresh. Folded, it says the checks and
+// players of the period.
 function StatsCard(): JSX.Element {
   const project = useApp((s) => s.project)
   const accessLog = useApp((s) => String(s.settings.access_log ?? ''))
@@ -426,7 +488,7 @@ function StatsCard(): JSX.Element {
 
   const dl = view?.downloads
   return (
-    <Card title="Statistics" icon={ChartColumn}
+    <Card fold="release/stats" title="Statistics" icon={ChartColumn} summary={statsSummary(card, accessLog)}
       actions={<Button small variant="ghost" icon={RefreshCw} disabled={loading} onClick={() => void load()}>{loading ? 'Counting...' : 'Refresh'}</Button>}>
       {error && <div className="mb-4"><Banner kind="bad">{error}</Banner></div>}
       {!view && !error && <p className="text-sm text-ink-400">Counting...</p>}
@@ -539,8 +601,24 @@ function ReleaseResult(props: { r: Data }): JSX.Element {
           </div>
         </Banner>
       ) : (
-        <p className="hint">Fill in "Players download from" above to see here the address players use.</p>
+        <p className="hint">Fill in Players download from, under Where players get it: the address players use then shows here.</p>
       )}
+    </div>
+  )
+}
+
+// A project with no folder to release yet: a short start, the folder to release; the whole page is one click away
+function ReleaseStart(props: { onWhole: () => void }): JSX.Element {
+  return (
+    <div className="space-y-5">
+      <Card fold="release/start" title="Publish this project" icon={Rocket}>
+        <p className="text-sm text-ink-300">Pick the folder to release: the rest of the page comes once it is picked.</p>
+        <Field className="mt-4" label="Folder to release" setting="publish_src" browse="folder" mono
+          hint={'The files exactly as players should have them.\nAny type: zip, pk3, textures, programs.'} />
+        <div className="mt-5">
+          <Button variant="ghost" icon={ChevronsDown} onClick={props.onWhole}>Show the whole page</Button>
+        </div>
+      </Card>
     </div>
   )
 }
@@ -553,8 +631,14 @@ export default function ReleasePage(): JSX.Element {
   const stopServe = useApp((s) => s.stopServe)
   const port = useApp((s) => String(s.effective('serve_port') || 8000))
   const result = useApp((s) => s.results.release as Data | undefined)
+  const project = useApp((s) => s.project)
   const [dry, setDry] = useState(false)
+  // the whole page shown for a project with no folder to release yet (until another project is shown)
+  const [whole, setWhole] = useState(false)
+  useEffect(() => setWhole(false), [project])
   const mode = modeOf(settings.deploy_mode)
+
+  if (!settings.publish_src && !whole) return <ReleaseStart onWhole={() => setWhole(true)} />
 
   const where =
     mode === 'sftp'
@@ -567,13 +651,13 @@ export default function ReleasePage(): JSX.Element {
 
   return (
     <div className="space-y-5">
-      <Card title="What to release" icon={Package}>
+      <Card fold="release/what" title="What to release" icon={Package}>
         <div className="grid gap-5 md:grid-cols-2">
           <Field className="md:col-span-2" label="Folder to release" setting="publish_src" browse="folder" mono
             hint={'The files exactly as players should have them.\nAny type: zip, pk3, textures, programs.'} />
           <Field label="Name" setting="name" placeholder="My Game" />
           <Field label="Version" setting="version" placeholder="1.0"
-            hint="Shown to players. A new version or the same one: either way only what changed is sent." />
+            hint={'Shown to players.\nA new version or the same one: either way only what changed is sent.'} />
           <PathList setting="leave_out" label="Leave out of the release" empty="Nothing picked: the whole folder is released."
             hint={'Players never get these. A folder leaves out everything in it.\nAlways left out: .git, .svn, .hg, __pycache__, Thumbs.db, desktop.ini, .DS_Store, *.tmp.'} />
           <PathList setting="protect" label="Players keep their own copy" empty="Nothing picked: every file follows the release."
@@ -581,7 +665,7 @@ export default function ReleasePage(): JSX.Element {
         </div>
       </Card>
 
-      <Card title="Where players get it" icon={Globe}>
+      <Card fold="release/where" title="Where players get it" icon={Globe}>
         <Segmented value={mode} onChange={(v) => set('deploy_mode', v)}
           options={[
             { value: 'sftp', label: 'Your server (SSH)', icon: ServerIcon },
@@ -589,7 +673,20 @@ export default function ReleasePage(): JSX.Element {
             { value: 'local', label: 'This computer, to test', icon: Monitor }
           ]} />
         <div className="mt-5">
-          {mode === 'sftp' && <ServerSettings />}
+          {mode === 'sftp' && (
+            <div className="space-y-5">
+              <div className="grid gap-5 md:grid-cols-6">
+                <Field className="md:col-span-3" label="Host" setting="ssh_host" placeholder="game.example.com" mono />
+                <Field className="md:col-span-2" label="User" setting="ssh_user" placeholder="deploy" mono />
+                <Field className="md:col-span-1" label="Port" setting="ssh_port" type="number" />
+                <Field className="md:col-span-3" label="Remote folder" setting="remote_root" placeholder="/var/www/game" mono
+                  hint={'The folder on the server that its web server serves.\nForward slashes, even on a Windows server.'} />
+                <Field className="md:col-span-3" label="Players download from" setting="public_url" placeholder="https://game.example.com/" mono
+                  hint={'The address the web server gives that folder.\nPlayers put it on their Update page.'} />
+              </div>
+              <SettingToggle setting="htaccess" label=".htaccess for Apache" hint="Serve only the release: no listings, the right cache headers." />
+            </div>
+          )}
           {mode === 'folder' && (
             <div className="grid gap-5 md:grid-cols-2">
               <Field className="md:col-span-2" label="Copy it to" setting="deploy_folder" browse="folder" mono
@@ -603,22 +700,22 @@ export default function ReleasePage(): JSX.Element {
             <div className="flex flex-wrap items-end gap-4">
               <Field className="w-32" label="Port" setting="serve_port" type="number" />
               <p className="hint max-w-xl">
-                Release serves it at <span className="font-mono">http://localhost:{port}/</span>, for this computer only:
+                Release serves it at <span className="font-mono">http://localhost:{port}/</span>, for this computer only.
                 <br />
-                put that address on the Update page to try the release before players get it.
+                Put that address on the Update page to try the release before players get it.
               </p>
             </div>
           )}
         </div>
       </Card>
 
-      <SigningCard />
+      <SetupCard mode={mode} />
 
-      <Card title="Send to players" icon={Rocket}>
+      <Card fold="release/send" title="Send to players" icon={Rocket}>
         <p className="text-sm text-ink-300">
           {mode === 'local'
-            ? `Publishes the folder and serves it at ${where}, on this computer only.`
-            : `Publishes the folder and sends ${where} only what changed.`}
+            ? `Serves the release at ${where}, on this computer only.`
+            : `Sends only what changed to ${where}.`}
           <br />
           {mode === 'local'
             ? 'Stop serving, or close DeltaPatcher, and it is gone.'

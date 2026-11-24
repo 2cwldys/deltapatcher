@@ -2,9 +2,9 @@
 // kept on this computer. Back up now; a line that sums the backups up, opening on a click to the list (each
 // one's day in UTC, release, files, size, and Restore... after a question that says what it replaces there);
 // the system scheduler's last run, a backup that cannot be read and the last failure, a short line each; then
-// the section's settings (the children).
+// the section's settings (the children). Folded, the card shows the line that sums the backups up.
 import { ReactNode, useCallback, useEffect, useRef, useState } from 'react'
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight } from 'lucide-react'
+import { Archive, ArchiveRestore, ChevronDown, ChevronUp } from 'lucide-react'
 import { FORCE_STOPPED } from '@shared/forceStop'
 import { noteBackup, useApp } from '../store/app'
 import { ask, HostKey } from '../store/modal'
@@ -86,8 +86,10 @@ export default function BackupsSection(props: { children: ReactNode }): JSX.Elem
   const rows = backupRows(list)
   const working = Boolean(busy) || Boolean(backupJob)
   const today = new Date().toISOString().slice(0, 10)
+  const summary = list ? backupSummary(list, every, today, human(list.bytes)) : problem ? 'The backups could not be listed.' : 'Reading the backups...'
   return (
-    <Card title="Backups" icon={Archive}
+    <Card fold="settings/backup" title="Backups" icon={Archive}
+      summary={mode === 'local' ? 'A release served from this computer has nothing to back up: its store is here already.' : summary}
       actions={<Button small icon={Archive} disabled={working || mode === 'local'} onClick={now}>
         {backupJob === project ? 'Backing up...' : 'Back up now'}
       </Button>}>
@@ -96,8 +98,8 @@ export default function BackupsSection(props: { children: ReactNode }): JSX.Elem
       ) : (
         <button type="button" aria-expanded={open} disabled={!rows.length} onClick={() => setOpen(!open)}
           className="flex w-full items-center gap-2 rounded-lg text-left text-sm text-slate-100 disabled:cursor-default">
-          {rows.length > 0 && (open ? <ChevronDown size={15} className="shrink-0 text-delta" /> : <ChevronRight size={15} className="shrink-0 text-delta" />)}
-          <span>{list ? backupSummary(list, every, today, human(list.bytes)) : problem ? 'The backups could not be listed.' : 'Reading the backups...'}</span>
+          {rows.length > 0 && (open ? <ChevronDown size={15} className="shrink-0 text-delta" /> : <ChevronUp size={15} className="shrink-0 text-delta" />)}
+          <span>{summary}</span>
           {rows.length > 0 && <span className="text-xs text-ink-400">{open ? 'hide' : 'show'}</span>}
         </button>
       )}
@@ -124,7 +126,7 @@ export default function BackupsSection(props: { children: ReactNode }): JSX.Elem
           <p className="selectable truncate border-t border-ink-700/70 px-3 py-1.5 text-xs text-ink-400" title={list.folder}>{`In ${list.folder}`}</p>
         </div>
       )}
-      <div className="mt-5 grid gap-5 border-t border-ink-700/70 pt-5 md:grid-cols-2">{props.children}</div>
+      <div className="mt-5 border-t border-ink-700/70 pt-5">{props.children}</div>
     </Card>
   )
 }

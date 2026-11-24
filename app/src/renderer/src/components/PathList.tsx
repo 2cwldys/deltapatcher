@@ -1,11 +1,11 @@
 // A list of files and folders inside the folder being released, picked with Add folder / Add file and
 // kept in one setting, separated by ; (paths from the top of that folder; a folder ends with /). A
-// pattern typed into deltapatcher.ini (*.log) shows here too, and can be removed.
-import { ReactNode } from 'react'
+// pattern typed into deltapatcher.ini (*.log) shows here too, and can be removed. Its explanation's first line
+// shows under it, the whole of it behind the (i) beside the label.
 import { Asterisk, File, FilePlus, Folder, FolderPlus, X } from 'lucide-react'
 import { useApp } from '../store/app'
 import { ask } from '../store/modal'
-import { Button } from './ui'
+import { Button, firstLine, InfoTip } from './ui'
 
 export function listOf(value: unknown): string[] {
   return String(value ?? '')
@@ -24,7 +24,7 @@ function inside(root: string, picked: string): string | null {
   return p.slice(r.length + 1)
 }
 
-export function PathList(props: { setting: string; label: string; hint: ReactNode; empty: string }): JSX.Element {
+export function PathList(props: { setting: string; label: string; hint: string; empty: string }): JSX.Element {
   const items = useApp((s) => listOf(s.settings[props.setting]))
   const root = useApp((s) => String(s.settings.publish_src ?? ''))
   const set = useApp((s) => s.set)
@@ -51,8 +51,11 @@ export function PathList(props: { setting: string; label: string; hint: ReactNod
   }
 
   return (
-    <div>
-      <label className="label">{props.label}</label>
+    <div className="min-w-0">
+      <div className="mb-1.5 flex items-center gap-2">
+        <label className="label !mb-0">{props.label}</label>
+        {props.hint.includes('\n') && <InfoTip text={props.hint} />}
+      </div>
       <div className="rounded-lg border border-ink-600 bg-ink-900">
         {items.length === 0 ? (
           <p className="px-3 py-2.5 text-sm text-ink-400">{props.empty}</p>
@@ -91,7 +94,7 @@ export function PathList(props: { setting: string; label: string; hint: ReactNod
           Add file
         </Button>
       </div>
-      <p className="hint">{props.hint}</p>
+      <p className="hint">{firstLine(props.hint)}</p>
     </div>
   )
 }

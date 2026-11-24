@@ -77,26 +77,26 @@ export function backupSummary(list: BackupList, hours: unknown, today: string, s
   const by = Number.isFinite(h) && h > 0 ? (h === 1 ? 'every hour' : `every ${h} hours`)
     : list.scheduled ? `${list.scheduled.schedule} by the system` : 'only when asked'
   const n = list.backups.length
-  if (!n) return `No backups yet; ${by}`
+  if (!n) return `No backups yet; one is made ${by}`
   const newest = list.backups[0].name
   const t = Date.parse(`${today}T00:00:00Z`)
   const yesterday = Number.isFinite(t) ? new Date(t - 24 * HOUR).toISOString().slice(0, 10) : ''
   const day = newest === today ? 'today' : newest === yesterday ? 'yesterday' : newest
-  return `${n === 1 ? '1 backup' : `${n} backups`}, the newest ${day}, ${size}; ${by}`
+  return `${n === 1 ? '1 backup' : `${n} backups`}, the newest ${day}, ${size}; made ${by}`
 }
 
 // the system scheduler's last run, in a line ('' when there was none)
 export function scheduledLine(s: ScheduledRun | null | undefined): string {
   if (!s) return ''
-  return `The system's last scheduled run: ${when(s.time)}: ${s.message || (s.ok ? 'it worked' : 'it failed')}`
+  return `The system's last scheduled run, ${when(s.time)}: ${s.message || (s.ok ? 'it worked' : 'it failed')}`
 }
 
 // what a restore asks first, from what the engine says it replaces
 export function restoreQuestion(d: { backup?: BackupInfo; live?: ReleaseShort | null; live_problem?: string; destination?: string }): { title: string; body: string } {
   const name = d.backup?.name ?? ''
   const players = d.live_problem
-    ? `Players get ${releaseWords(d.backup?.release)} from there from then on.\nThe release there now could not be read (${d.live_problem}).\n`
-    : `Players get ${releaseWords(d.backup?.release)} from there from then on, instead of ${releaseWords(d.live)}.\n`
+    ? `From then on, players get ${releaseWords(d.backup?.release)} there.\nThe release there now could not be read (${d.live_problem}).\n`
+    : `From then on, players get ${releaseWords(d.backup?.release)} there instead of ${releaseWords(d.live)}.\n`
   return {
     title: `Restore the backup of ${name}?`,
     body:

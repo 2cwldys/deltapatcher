@@ -19,6 +19,8 @@ export default function Sidebar(): JSX.Element {
   const installAppUpdate = useApp((s) => s.installAppUpdate)
   const busy = useApp((s) => s.busy)
   const stopped = useApp((s) => s.stopped)
+  // the welcome screen is shown instead of a page: no page is marked as the one shown
+  const welcome = useApp((s) => s.welcome)
   // the projects the last check found an update for
   const waiting = useApp(waitingCount)
   const [version, setVersion] = useState('')
@@ -27,7 +29,7 @@ export default function Sidebar(): JSX.Element {
   }, [])
 
   const link = ({ page: p, label, hint, Icon }: (typeof LINKS)[number]): JSX.Element => {
-    const on = p === page
+    const on = !welcome && p === page
     return (
       <button
         key={p}

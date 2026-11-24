@@ -1,7 +1,7 @@
 // The Statistics card's view (src/renderer/src/store/stats.ts) of the engine's statistics document.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { bars, players, readStats, shares, statsCounter, when } from '../src/renderer/src/store/stats.ts'
+import { bars, players, readStats, shares, statsCounter, statsSummary, when } from '../src/renderer/src/store/stats.ts'
 
 const day = (date, checks, downloads, bytes, players) => ({ date, checks, downloads, bytes, players })
 
@@ -127,4 +127,21 @@ test('a section that is missing says why; another document is not read', () => {
   assert.equal(readStats({ ...DOC, version: 2 }).ok, false)
   assert.equal(readStats(null).ok, false)
   assert.equal(readStats({ ...DOC, sections: { releases: { ...DOC.sections.releases, change: null } } }).change, undefined)
+})
+
+test('folded, the card says the checks and players of the period, or what stands in the way', () => {
+  const card = (view, extra = {}) => ({ view, error: '', loading: false, ...extra })
+  const v = readStats(DOC)
+  assert.equal(statsSummary(card(v), '/var/log/nginx/game.log'), '12 update checks and 6 players in the last 3 days')
+  const about = readStats({ ...DOC, sections: { ...DOC.sections, downloads: { ...DOC.sections.downloads, players_estimated: true } } })
+  assert.equal(statsSummary(card(about), 'x'), '12 update checks and about 6 players in the last 3 days')
+  const total = { checks: 1, downloads: 0, bytes: 0, players: 1 }
+  const one = readStats({ ...DOC, sections: { ...DOC.sections, downloads: { ...DOC.sections.downloads, total } } })
+  assert.equal(statsSummary(card(one), 'x'), '1 update check and 1 player in the last 3 days')
+  const noLog = readStats({ ...DOC, sections: { releases: DOC.sections.releases }, problems: { downloads: 'access_log is not set' } })
+  assert.equal(statsSummary(card(noLog), ''), 'Release 1.2; players are counted once the access log is named')
+  assert.equal(statsSummary(card(noLog), '/var/log/x.log'), 'Release 1.2; players could not be counted: open it to see why')
+  assert.equal(statsSummary(card(null, { loading: true }), ''), 'Counting...')
+  assert.equal(statsSummary(card(null), ''), '')
+  assert.match(statsSummary(card(v, { error: 'the engine stopped' }), 'x'), /could not be counted/)
 })

@@ -115,6 +115,23 @@ export function players(n: number, about: boolean): string {
   return `${about ? 'about ' : ''}${n}`
 }
 
+// The line a folded Statistics card shows: the update checks and players of the period, or what stands in the
+// way of counting them ('' while there is nothing to say yet).
+export function statsSummary(card: StatsState, accessLog: string): string {
+  const { view, error, loading } = card
+  if (error) return 'The statistics could not be counted: open it to see why.'
+  if (!view) return loading ? 'Counting...' : ''
+  const dl = view.downloads
+  if (dl) {
+    const checks = dl.total.checks
+    const n = dl.total.players
+    return `${checks} update ${checks === 1 ? 'check' : 'checks'} and ${players(n, dl.about)} ${n === 1 ? 'player' : 'players'} in the last ${view.days || 30} days`
+  }
+  const release = view.release ? `Release ${view.release.version}; ` : ''
+  if (!accessLog) return `${release}players are counted once the access log is named`
+  return `${release}players could not be counted: open it to see why`
+}
+
 export function when(text: string): string {
   return String(text || '').replace('T', ' ').replace('Z', ' UTC')
 }

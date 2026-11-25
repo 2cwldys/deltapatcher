@@ -488,8 +488,8 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         total = sum(need.values())
         free = shutil.disk_usage(install).free
         if free < total * 2 + (64 << 20):
-            raise UpdateError("not enough free space: %s needed while the update runs, %s free"
-                              % (human(total * 2 + (64 << 20)), human(free)))
+            raise UpdateError("not enough free space: %s needed while the update runs, %s free%s"
+                              % (human(total * 2 + (64 << 20)), human(free), _copies_note(install)))
 
         # 1. download every blob into the cache and check it; the folder is not touched yet
         cdir = os.path.join(state_dir, "cache")
@@ -633,6 +633,20 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         logs.folder_record(state_dir, record)
         log("updated to %s" % title)
         return plan
+
+
+def _copies_note(install):
+    """For a message about free space: what the seed copies take on the drive of `install` and how to free it; ''
+    when none of them is there."""
+    try:
+        from .torrent import seedcopy
+        taken = seedcopy.bytes_on_drive(install)
+    except (OSError, ValueError):
+        return ""
+    if not taken:
+        return ""
+    return ("; seed copies take %s on this drive: seed from the folder with seed_copy = no, or move seed copies with "
+            "seed_copies" % human(taken))
 
 
 def _keep(torrent, src, raw, sig_kept, signer, log):

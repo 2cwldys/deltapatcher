@@ -4,9 +4,9 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
-  afterRun, hasTorrentId, MAX_SEEDS, NEEDS_SIGNING, portProblem, projectSeedLine, rate, REFUSED_WHY, refusedLine, RESTART_KEYS,
-  RETRY, SEED_IT, SEED_KEYS, seedable, seedingCount, seedLine, seedOffArgs, seedsProblem, STALE, STEADY, torrentMark,
-  torrentNameProblem, torrentsRefused, torrentSwitches, wantsSeeding, withRow
+  afterRun, copiesBytes, copiesFolder, hasTorrentId, MAX_SEEDS, NEEDS_SIGNING, portProblem, projectSeedLine, rate, REFUSED_WHY,
+  refusedLine, RESTART_KEYS, RETRY, SEED_IT, SEED_KEYS, seedable, seedingCount, seedLine, seedOffArgs, seedsProblem, size, STALE,
+  STEADY, torrentMark, torrentNameProblem, torrentsRefused, torrentSwitches, wantsSeeding, withRow
 } from '../src/renderer/src/store/seeding.ts'
 import { allowedWhileStopped, FORCE_STOPPED } from '../src/shared/forceStop.ts'
 
@@ -68,6 +68,42 @@ test("a project's line from the run's events", () => {
   assert.equal(rate(999 * 1024), '999 KB/s')
   assert.equal(rate(1000 * 1024), '1.0 MB/s')
   assert.equal(rate(-5), '0 KB/s')
+})
+
+test("a project seeded from a copy: its line says so, and how far the copy is while it fills", () => {
+  const copy = { path: 'D:\\Games\\Shared\\.deltapatcher\\seedstore', bytes: 21_000_000, state: 'ready', done: 20_971_520, total: 20_971_520 }
+  const fromCopy = { ...row, kind: 'copy', copy }
+  assert.equal(seedLine(fromCopy), 'Seeding: 3 peers, 120 KB/s up, from a copy')
+  const filling = { ...fromCopy, copy: { ...copy, state: 'copying', done: 4_404_019 } }
+  assert.equal(seedLine({ ...filling, state: 'waiting' }), 'Copying for seeding: 4.2 MB of 20.0 MB.')
+  assert.equal(seedLine(filling), 'Seeding: 3 peers, 120 KB/s up, from a copy; copying for seeding: 4.2 MB of 20.0 MB')
+  const why = 'the copy needs 1.0 GB more and its drive has 2.0 GB free, but 1.5 GB always stays free there: ' +
+    'seed from the folder with seed_copy = no, or move seed copies with seed_copies'
+  assert.equal(seedLine({ ...fromCopy, why, copy: { ...copy, state: 'full' } }), `Seeding: 3 peers, 120 KB/s up, from a copy; ${why}.`)
+  // files that could not be copied yet: still copying, and why, until every one the folder has is in
+  const retried = '1 file could not be copied now (data/pak0.bin: in use): tried again in a minute'
+  assert.equal(seedLine({ ...filling, why: retried }),
+    `Seeding: 3 peers, 120 KB/s up, from a copy; copying for seeding: 4.2 MB of 20.0 MB; ${retried}.`)
+  // a copying stopped by an update: waiting, and why
+  assert.equal(seedLine({ ...fromCopy, why: 'an update is changing its folder', copy: { ...copy, state: 'waiting' } }),
+    'Seeding: 3 peers, 120 KB/s up, from a copy; an update is changing its folder.')
+  // waiting for another reason: that reason, as before
+  assert.equal(seedLine({ ...filling, state: 'waiting', why: 'its folder is not there' }), 'Not seeded: its folder is not there.')
+  assert.equal(size(512), '512 bytes')
+  assert.equal(size(4_404_019), '4.2 MB')
+})
+
+test('what the seed copies take, and the folder Open opens', () => {
+  const copy = { path: 'x', bytes: 1000, state: 'ready', done: 1, total: 1 }
+  assert.equal(copiesBytes({}), null)
+  assert.equal(copiesBytes({ a: row }), null, 'seeded from its folder')
+  assert.equal(copiesBytes({ a: { ...row, kind: 'copy', copy }, b: { ...row, kind: 'copy', copy: { ...copy, bytes: 24 } }, c: row }), 1024)
+  assert.equal(copiesFolder('E:\\Seeds', 'D:\\dp\\deltapatcher.ini'), 'E:\\Seeds')
+  assert.equal(copiesFolder('/srv/seeds', '/home/me/.config/deltapatcher/deltapatcher.ini'), '/srv/seeds')
+  // a relative one starts at the main settings file's folder, as the engine reads it
+  assert.equal(copiesFolder('seeds', 'D:\\dp\\deltapatcher.ini'), 'D:\\dp\\seeds')
+  assert.equal(copiesFolder(' seeds ', '/home/me/.config/deltapatcher/deltapatcher.ini'), '/home/me/.config/deltapatcher/seeds')
+  assert.equal(copiesFolder('', 'D:\\dp\\deltapatcher.ini'), '')
 })
 
 test('a row on the Projects page: the run says it, or why the project is not seeded', () => {
@@ -147,7 +183,10 @@ test("the import dialog's words: the mark, what seeding means, what refused torr
   assert.deepEqual(torrentMark(false), { text: 'By torrent', hint: 'Shared by torrent too: players also download it from each other.' })
   assert.deepEqual(torrentMark(true), { text: 'By torrent only', hint: 'It has no address: players download it from each other only.' })
   assert.equal(SEED_IT,
-    'Other players download from you while DeltaPatcher runs.\nOnly files DeltaPatcher has checked are offered; others see your IP address.')
+    'Other players download from you while DeltaPatcher runs.\n' +
+    'It keeps a copy of the release for that in its folder, or the folder Settings > Seed copies names, as large as the ' +
+    'release (less on drives that share space).\n' +
+    'Only files DeltaPatcher has checked are offered; others see your IP address.')
   assert.equal(refusedLine(true), 'Torrents are refused in your settings (Settings, Torrents): it updates from its address only.')
   assert.equal(refusedLine(false),
     'Torrents are refused in your settings (Settings, Torrents): it updates only by torrent, so it cannot update here.')

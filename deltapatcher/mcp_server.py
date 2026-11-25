@@ -662,7 +662,7 @@ def t_seed_status(server, a, key, progress):
         rows.append({"project": p.get("title"), "file": p.get("file"), "torrent": bool(p.get("torrent")),
                      "torrent_only": bool(p.get("torrent_only")), "seed": bool(p.get("seed")),
                      "seeding": None if run is None else {k: run.get(k) for k in (
-                         "state", "why", "release", "peers", "upload_rate", "sent", "kind", "folder", "pid")}})
+                         "state", "why", "release", "peers", "upload_rate", "sent", "kind", "folder", "pid", "copy")}})
     lines = ["Torrents are allowed here." if torrents == "allow" else
              "Torrents are refused here (Settings, Torrents): nothing is seeded." if torrents == "refuse" else
              "Whether torrents are allowed here could not be read: %s" % cfg.message]
@@ -671,6 +671,7 @@ def t_seed_status(server, a, key, progress):
     for r in rows:
         shared = "by torrent only" if r["torrent_only"] else "shared by torrent" if r["torrent"] else "not shared by torrent"
         s = r["seeding"]
+        copy = s.get("copy") if s is not None and isinstance(s.get("copy"), dict) else None
         if s is None:
             now = "not seeded now"
         elif s.get("state") == "seeding":
@@ -679,6 +680,10 @@ def t_seed_status(server, a, key, progress):
                 size_text(s.get("sent")), s.get("pid"))
         else:
             now = "in a seed run, %s%s" % (s.get("state"), (": " + s["why"]) if s.get("why") else "")
+        if copy is not None:
+            now += ", from a copy of its release (%s, %s)" % (copy.get("path"), size_text(copy.get("bytes")))
+            if copy.get("state") == "copying":
+                now += ", copying for seeding: %s of %s" % (size_text(copy.get("done")), size_text(copy.get("total")))
         lines.append("%s: %s, %s; %s" % (r["project"], shared, "set to seed" if r["seed"] else "not set to seed", now))
     lines.append("Seeding starts and stops only with a person: in the DeltaPatcher app (Projects, Seed this project or "
                  "Stop seeding), or with deltapatcher seed.")
@@ -885,9 +890,10 @@ TOOLS_LIST = [
          schema(days=s_int("How many days back (default 30).", 1, 366), project=PROJECT), RO_NET, build=b_stats),
     Tool("seed_status", "Seeding status",
          "Which projects are shared by torrent and set to seed (seed = yes), and which a seed run seeds now, with their "
-         "peers, upload rate (bytes a second) and what they sent this run, read from DeltaPatcher's seeding.json and the "
-         "settings; and whether torrents are refused here. It only reads: it never starts or stops seeding, which stays "
-         "with a person (the DeltaPatcher app, or deltapatcher seed).",
+         "peers, upload rate (bytes a second) and what they sent this run (for one seeded from a copy of its release, "
+         "copy: where the copy is, what it holds and how far its copying is), read from DeltaPatcher's seeding.json and "
+         "the settings; and whether torrents are refused here. It only reads: it never starts or stops seeding, which "
+         "stays with a person (the DeltaPatcher app, or deltapatcher seed).",
          schema(), RO, run=t_seed_status),
     Tool("check_for_new_version", "Is DeltaPatcher up to date",
          "Whether a newer DeltaPatcher is out. Updating DeltaPatcher itself is done in its app or command line.",

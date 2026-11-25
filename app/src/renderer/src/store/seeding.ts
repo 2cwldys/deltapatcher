@@ -4,19 +4,31 @@
 // torrent settings the window checks while they are typed. Nothing here uses the window, so a test can run it as
 // it is.
 
+// the copy of its release a project seeds from (kind copy): where it is, what it holds on disk (bytes), whether it
+// is filling (or tried again), ready, stopped by a full drive or waiting (the row's why says why when it is not
+// ready), and the bytes of the release's blobs it holds (done) of all (total)
+export interface SeedCopy {
+  path: string
+  bytes: number
+  state: 'copying' | 'ready' | 'full' | 'waiting'
+  done: number
+  total: number
+}
+
 // one project of the seed run, as the run says every 5 seconds (the engine's "seeding" event): its state, why when
 // it is not seeded, its release, its peers, what it sends (bytes a second) and what it sent this run (bytes)
 export interface SeedRow {
   project: string
   file: string
   folder: string
-  kind: 'folder' | 'store'
+  kind: 'folder' | 'store' | 'copy'
   state: 'seeding' | 'paused' | 'waiting' | 'stopped'
   why: string
   release: string
   peers: number
   upload_rate: number
   sent: number
+  copy?: SeedCopy
 }
 
 // a row with when it came (milliseconds)
@@ -152,16 +164,56 @@ export function rate(bytesPerSecond: number): string {
   return kb < 1000 ? `${Math.round(kb)} KB/s` : `${(kb / 1024).toFixed(1)} MB/s`
 }
 
-// a project's line on the Projects page, from the seed run's row: "Seeding: 3 peers, 120 KB/s up", paused while an
-// update changes its folder, or why it is not seeded
+// bytes, as the window says them elsewhere: 512 bytes, 4.2 MB
+export function size(bytes: number): string {
+  let v = Math.max(0, Number(bytes) || 0)
+  if (v < 1024) return `${v} bytes`
+  const units = ['KB', 'MB', 'GB', 'TB']
+  let u = -1
+  while (v >= 1024 && u < units.length - 1) {
+    v /= 1024
+    u++
+  }
+  return `${v.toFixed(1)} ${units[u]}`
+}
+
+// how far a copy's filling is: "copying for seeding: 4.2 MB of 20.0 MB"
+export function copyingWords(c: SeedCopy): string {
+  return `copying for seeding: ${size(c.done)} of ${size(c.total)}`
+}
+
+// a project's line on the Projects page, from the seed run's row: "Seeding: 3 peers, 120 KB/s up" (", from a copy"
+// when it seeds from a copy of its release, how far that copy is while it fills, and why while it is not ready),
+// paused while an update changes its folder, or why it is not seeded
 export function seedLine(row: SeedRow): string {
+  const c = row.copy
+  const copying = c && c.state === 'copying'
   if (row.state === 'seeding') {
     const peers = Math.max(0, Number(row.peers) || 0)
-    return `Seeding: ${peers} ${peers === 1 ? 'peer' : 'peers'}, ${rate(row.upload_rate)} up`
+    const line = `Seeding: ${peers} ${peers === 1 ? 'peer' : 'peers'}, ${rate(row.upload_rate)} up`
+    if (!c) return line
+    const why = c.state !== 'ready' && row.why ? `; ${clause(row.why, '')}.` : ''
+    return copying ? `${line}, from a copy; ${copyingWords(c)}${why}` : `${line}, from a copy${why}`
   }
   if (row.state === 'paused') return 'Seeding paused while an update changes its folder.'
+  if (row.state === 'waiting' && !row.why && c && copying) return `Copying for seeding: ${size(c.done)} of ${size(c.total)}.`
   if (row.state === 'waiting' && !row.why) return 'Getting ready to seed.'
   return row.why ? `Not seeded: ${row.why}.` : 'Not seeded.'
+}
+
+// how much the seed copies take on disk now, from the rows the window has of the seed run; null when no row says
+// it seeds from a copy
+export function copiesBytes(rows: Record<string, SeedRow>): number | null {
+  const copies = Object.values(rows).filter((r) => r.copy)
+  return copies.length ? copies.reduce((n, r) => n + Math.max(0, Number(r.copy?.bytes) || 0), 0) : null
+}
+
+// the seed copies folder as the engine reads seed_copies: a relative path starts at the main settings file's folder
+export function copiesFolder(value: string, mainPath: string): string {
+  const v = value.trim()
+  if (!v || /^([A-Za-z]:[\\/]|[\\/]|~)/.test(v)) return v
+  const at = Math.max(mainPath.lastIndexOf('/'), mainPath.lastIndexOf('\\'))
+  return at > 0 ? `${mainPath.slice(0, at)}${mainPath.includes('\\') ? '\\' : '/'}${v}` : v
 }
 
 // A project's line on the Projects page: for a project set to seed, its row of the seed run, else why it is not
@@ -189,7 +241,10 @@ export function torrentMark(only: boolean): { text: string; hint: string } {
 }
 
 // what seeding a project means, under its switch in the import dialog
-export const SEED_IT = 'Other players download from you while DeltaPatcher runs.\nOnly files DeltaPatcher has checked are offered; others see your IP address.'
+export const SEED_IT = 'Other players download from you while DeltaPatcher runs.\n' +
+  'It keeps a copy of the release for that in its folder, or the folder Settings > Seed copies names, as large as the ' +
+  'release (less on drives that share space).\n' +
+  'Only files DeltaPatcher has checked are offered; others see your IP address.'
 
 // a project shared by torrent while torrents are refused here: what that leaves (the engine's words)
 export function refusedLine(hasAddress: boolean): string {

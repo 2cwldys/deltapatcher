@@ -272,7 +272,7 @@ export function firstLine(text: string | undefined): string {
 
 // A label, the setting's own name small beside it (the Settings page), and an (i) with the whole explanation
 // when there is more of it than the line under the field shows.
-function FieldLabel(props: { label: string; setting?: string; info?: string }): JSX.Element {
+export function FieldLabel(props: { label: string; setting?: string; info?: string }): JSX.Element {
   return (
     <div className="mb-1.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
       <label className="label !mb-0">{props.label}</label>
@@ -284,7 +284,7 @@ function FieldLabel(props: { label: string; setting?: string; info?: string }): 
 
 // the line under a field and the (i)'s text: the line given, or the explanation's first line; the (i) holds the
 // whole explanation when there is more of it
-function lineAndInfo(hint: string | undefined, line: string | undefined): [string, string] {
+export function lineAndInfo(hint: string | undefined, line: string | undefined): [string, string] {
   const shown = line ?? firstLine(hint)
   return [shown, hint && hint !== shown ? hint : '']
 }

@@ -142,6 +142,29 @@ about bytes, never about names: every file of the torrent is named by its SHA-25
 and its signature. A project with an address keeps its address as the authority; the item matters to a
 project with no address, which finds it in the DHT by the publisher key and the torrent id.
 
+A player's seed run reads a copy of the release kept for seeding (`seed_copy = yes`, the default), laid out like
+the store above and filled only from files of the folder whose SHA-256 it checked; the publisher's own store is
+seeded as it is, never copied. The copy is the folder's `.deltapatcher/seedstore/<torrent id>/`
+([The client's own folder](#the-clients-own-folder)), or with `seed_copies` set, one folder per project there:
+
+| Path in `seed_copies` | |
+| --- | --- |
+| `<torrent id>-<8 hex>/` | One project's copy: the first 8 hexadecimal characters are of the SHA-256 of the full path of the folder it updates, in the system's letter case, so two folders of one release keep a copy each |
+| `<torrent id>-<8 hex>/seedstore.json` | Its marker: `{"deltapatcher": "seed copy", "torrent_id", "folder", "project"}` (the folder and the project's settings file) |
+| `<torrent id>-<8 hex>/manifest.json`, `sigs/`, `release.torrent`, `release.item`, `blobs/`, `.deltapatcher/hashes.json` | The release seeded now and the copy's hash cache, as in `seedstore/` |
+
+`seed-copies.json` beside the main settings file lists every copy this DeltaPatcher made (`{path: {"torrent_id",
+"folder", "project"}}`). A clean-up puts back on it a marked copy at a project's own place (in its folder, or in
+`seed_copies`) whose marker names this DeltaPatcher's settings file of that project and its torrent id; a list that
+cannot be read is never written over, and the next clean-up keeps it as `seed-copies.json.bad` and makes it again
+that way; an entry whose copy's drive or folder is away stays until it is back. DeltaPatcher deletes a copy once
+its project stops seeding from it (a seed run, once two reads of the settings at least 3 seconds apart agree), unless
+another project needs it (two projects of one torrent and one folder share a copy) or a settings file cannot be
+read whole; only a copy on that list, at either place (one that is not is another settings file's), and only a
+folder whose marker says `"seed copy"`. A folder without the marker, or one that is or holds a link (a symbolic
+link, or a junction on Windows; any other reparse point, such as a cloud placeholder, is an ordinary folder), is
+never written into or deleted, whatever it is called.
+
 ## Serving
 
 Clients make plain `GET` requests:
@@ -172,7 +195,8 @@ Inside every folder it updates, the client keeps `.deltapatcher/`:
 | `release/` | A project shared by torrent: the release the folder has (`manifest.json`, `sigs/<sha256>.sig`, `release.torrent`, `release.item`), kept so it can be seeded |
 | `torrent.json` | A project shared by torrent: `{"<torrent id>": {"seq", "peers", "saved"}}`, the highest release item number accepted and the peers met |
 | `torrent/<pid>.<hex>/` | While a project with no address looks for its release: that run's own work folder (the manifest, signature and blobs from peers), removed when it ends |
-| `seeding/` | While a seed run seeds the folder: `<pid>.seeding`; an update's request `<pid>.pause` (`{"by", "at", "lock"}`, with the `<pid>.<random>.asking` file the update holds locked while it asks) and the seed run's answer `<pid>.paused` (`{"pid", "at"}`: it lets go of the folder's files before they change); `next/`, a newer release it seeds before the folder has it |
+| `seeding/` | While a seed run seeds the folder: `<pid>.seeding`; an update's request `<pid>.pause` (`{"by", "at", "lock"}`, with the `<pid>.<random>.asking` file the update holds locked while it asks) and the seed run's answer `<pid>.paused` (`{"pid", "at"}`: it lets go of the folder's files before they change; `{"pid", "at", "copy": true}`: it seeds from a copy, which the update never touches, and goes on); `next/`, a newer release it seeds before the folder has it |
+| `seedstore/<torrent id>/` | A project set to seed from a copy (`seed_copy = yes`, the default) while `seed_copies` is empty: the copy of the release its seed runs read instead of the folder, one for each torrent, laid out like a store (`manifest.json`, `sigs/<sha256>.sig`, `release.torrent`, `release.item`, `blobs/<sha256>`, each blob written as `blobs/<sha256>.<pid>.part` until its SHA-256 is checked), with its marker `seedstore.json` (`{"deltapatcher": "seed copy", "torrent_id", "folder", "project"}`) and its own `.deltapatcher/hashes.json`. Deleted when the project stops seeding from it |
 
 `journal.jsonl` has one JSON object per line: a header `{"started", "had_state", "source",
 "version"}`, then one `{"op": "add"|"replace"|"remove", "path"}` before each change, and

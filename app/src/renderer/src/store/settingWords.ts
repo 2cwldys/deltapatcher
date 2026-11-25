@@ -63,6 +63,7 @@ export const WORDS: Record<string, SettingWords> = {
   torrent_name: { label: 'Torrent name', line: 'Empty: the last part of the address, else release.', more: true },
   seeds: { label: 'Seeds', line: 'Computers players connect to first: host:port, separated by ,' },
   seed: { label: 'Seed this project', line: 'Share its files with other players while DeltaPatcher runs.' },
+  seed_copy: { label: 'Seed from a copy', line: 'Seeding reads a copy, filled from the game folder; it takes space.' },
   // Window
   close_to_tray: { label: 'Close to the tray', line: 'Closing the window keeps DeltaPatcher in the tray.' },
   minimize_to_tray: { label: 'Minimize to the tray', line: 'Minimizing hides the window in the tray.' },
@@ -75,7 +76,8 @@ export const WORDS: Record<string, SettingWords> = {
   torrents: { label: 'Torrents', line: 'Refuse: DeltaPatcher never uses BitTorrent, whatever a project asks.' },
   torrent_port: { label: 'Torrent port', line: 'The port seeding listens on; 0: any free port.', more: true },
   seed_upload_kbps: { label: 'Upload limit', line: 'The most torrents send to others, in KB/s; 0: no limit.', more: true },
-  torrent_port_mapping: { label: 'Port mapping', line: 'Ask the router to forward the torrent port (UPnP, NAT-PMP).', more: true }
+  torrent_port_mapping: { label: 'Port mapping', line: 'Ask the router to forward the torrent port (UPnP, NAT-PMP).', more: true },
+  seed_copies: { label: 'Seed copies', line: "Empty: inside each game's folder. A folder: all copies there." }
 }
 
 // a setting's words; one the window does not know yet keeps its own name

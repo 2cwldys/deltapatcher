@@ -6,9 +6,9 @@ import { folderNameProblem } from '../store/folders'
 import { sizeProblem } from '../store/backups'
 import { useFold } from '../store/folds'
 import { HIDDEN, splitMore, wordsOf } from '../store/settingWords'
-import { portProblem, seedsProblem, torrentNameProblem, torrentSwitches } from '../store/seeding'
+import { copiesBytes, copiesFolder, portProblem, seedsProblem, torrentNameProblem, torrentSwitches } from '../store/seeding'
 import BackupsSection from '../components/BackupsSection'
-import { Button, Card, Chip, Field, SettingChoice, SettingToggle } from '../components/ui'
+import { Button, Card, Chip, Field, FieldLabel, human, lineAndInfo, SettingChoice, SettingToggle } from '../components/ui'
 import type { AppInfo } from '@shared/types'
 
 const SECTIONS: Record<string, string> = {
@@ -45,9 +45,11 @@ function Setting(props: { s: SchemaItem; blocked?: string }): JSX.Element {
   if (CHOICES[s.key]) {
     return <SettingChoice setting={s.key} label={words.label} showSetting hint={sentences(s.what)} line={words.line} options={CHOICES[s.key]} />
   }
-  return typeof s.default === 'boolean' ? (
-    <SettingToggle setting={s.key} label={words.label} showSetting hint={sentences(s.what)} line={words.line} blocked={props.blocked} />
-  ) : (
+  if (typeof s.default === 'boolean') {
+    return <SettingToggle setting={s.key} label={words.label} showSetting hint={sentences(s.what)} line={words.line} blocked={props.blocked} />
+  }
+  if (s.key === 'seed_copies') return <SeedCopies s={s} />
+  return (
     <Field label={words.label} setting={s.key} showSetting hint={sentences(s.what)} line={words.line} mono
       type={typeof (s.default as Value) === 'number' ? 'number' : 'text'}
       browse={FOLDERS.includes(s.key) ? 'folder' : undefined}
@@ -57,6 +59,51 @@ function Setting(props: { s: SchemaItem; blocked?: string }): JSX.Element {
 
 // a folder chosen with Browse here: these settings are typed on no other page
 const FOLDERS = ['backup_dir']
+
+// Seed copies (seed_copies): never typed into, so a half-typed path never reaches the settings. Browse picks a
+// folder and saves it at once (the engine checks it first and says why when it refuses it: then nothing changes);
+// Clear empties it (every copy back inside its project's folder); Open shows it. Under it, how much the copies take
+// now (the seed run's rows say it, only while a run seeds from a copy).
+function SeedCopies(props: { s: SchemaItem }): JSX.Element {
+  const words = wordsOf(props.s.key)
+  const value = useApp((st) => String(st.settings.seed_copies ?? '').trim())
+  const mainPath = useApp((st) => st.mainPath)
+  const bytes = useApp((st) => copiesBytes(st.seedRows))
+  const [problem, setProblem] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [line, info] = lineAndInfo(sentences(props.s.what), words.line)
+  const save = async (folder: string): Promise<void> => {
+    setSaving(true)
+    const r = await useApp.getState().side(['config', 'set', `seed_copies=${folder}`])
+    setSaving(false)
+    if (!r.ok) return setProblem(sentences(String(r.message ?? 'Not saved.')))
+    setProblem('')
+    useApp.setState({ settings: { ...useApp.getState().settings, seed_copies: folder } })
+  }
+  const browse = async (): Promise<void> => {
+    const folder = await window.api.pickFolder(copiesFolder(value, mainPath))
+    if (folder) await save(folder)
+  }
+  return (
+    <div className="min-w-0">
+      <FieldLabel label={words.label} setting={props.s.key} info={info} />
+      <div className="flex flex-wrap gap-2">
+        <input className="input min-w-0 flex-1 font-mono text-[13px]" value={value} readOnly
+          placeholder="Empty: inside each game's folder" />
+        <Button icon={FolderOpen} disabled={saving} onClick={() => void browse()} title="Pick the folder for every seed copy">
+          Browse
+        </Button>
+        {value && <Button variant="ghost" disabled={saving} onClick={() => void save('')} title="Every seed copy inside its game's folder">Clear</Button>}
+        {value && (
+          <Button variant="ghost" icon={FolderOpen} title="Open the seed copies folder"
+            onClick={() => void window.api.open(copiesFolder(value, mainPath))}>Open</Button>
+        )}
+      </div>
+      {problem ? <p className="hint text-rose-300">{problem}</p> : line && <p className="hint">{line}</p>}
+      {bytes !== null && <p className="hint">{`The seed copies take ${human(bytes)} now.`}</p>}
+    </div>
+  )
+}
 
 // BitTorrent in this copy, tested when asked: the engine's self-test (a session on 127.0.0.1, a small torrent made
 // and checked). With torrents refused it makes no session, and says so.

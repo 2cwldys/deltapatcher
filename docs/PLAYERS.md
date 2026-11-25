@@ -113,7 +113,20 @@ checked as a download from a server is: the publisher's signature, then every fi
   project** in its **...** menu on the Projects page (**Stop seeding** turns it off), or Settings. Its row
   then shows its peers and upload speed, and the tray icon says how many projects are seeded. Only files
   DeltaPatcher has checked are offered: never a file you changed, never your own files the release keeps for
-  you. Seeding pauses while an update changes the folder.
+  you.
+- **Seeding reads a copy** of the release kept for it, not the game folder: the game's files are not held
+  open while it seeds, and updates do not pause it. Filling the copy reads the game folder (only files
+  DeltaPatcher has checked), and stops at once when an update asks. The copy is in the game folder's hidden
+  `.deltapatcher/seedstore`, on the game's own drive. It takes up to the release's size again (nothing extra
+  on a drive that shares space between copies: a Mac's APFS, Btrfs, XFS), and its row says *copying* while it
+  fills. It follows each release you update to, and a newer one its publisher puts out (seeding looks every
+  5 minutes). It stays while DeltaPatcher is closed, and is deleted once the project stops seeding from it
+  (*Seed this project* off, *Seed from a copy* off, torrents refused, or the project removed): a few seconds
+  later, or at the next clean-up, when seeding starts again or a setting changes. A seed copy always leaves the
+  larger of 1 GB and 5% of its drive free, never more than 20 GB: a copy that would need more stops there, and
+  its row says so. **Settings, Seed copies** moves every copy to a folder of your choosing (a real folder that
+  is there, of its own: not a symbolic link or junction). *Seed from a copy* off (the project's Torrents settings) seeds straight
+  from the game folder with no copy; that seeding pauses while an update changes the folder.
 - **Force stop** ends seeding at once and turns it off for every project; it stays off until you turn it on
   again.
 - **Refusing torrents completely**: set *Torrents* to *refuse* (Settings). DeltaPatcher then never uses

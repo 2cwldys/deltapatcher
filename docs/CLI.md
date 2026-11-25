@@ -219,13 +219,23 @@ address updates by torrent only. See [Sharing by torrent](PUBLISHING.md#sharing-
 | Command or option | |
 | --- | --- |
 | `config set torrent=yes seeds=game.example.com:6881` | Share the project by torrent (it needs `sign = yes`), then release with `--sign` as before. Its torrent id is made once and never changes. |
-| `seed --all` | Share every project set to seed (`seed = yes`) with other players until stopped: Ctrl+C, or with `--json` a line `cancel` or the end of standard input (it ends within two seconds). Only files DeltaPatcher has checked are offered. |
-| `seed --project NAME` | Seed that project for this run: the command is the yes. |
+| `seed --all` | Share every project set to seed (`seed = yes`) with other players until stopped: Ctrl+C, or with `--json` a line `cancel` or the end of standard input (it ends within two seconds). Only files DeltaPatcher has checked are offered. A player's project seeds from a copy of its release kept for seeding (`seed_copy = yes`, the default): seeding reads only the copy, so updates do not pause it; filling the copy reads the folder, and stops at once when an update asks. With `seed_copy = no` it seeds straight from the folder and pauses while an update changes it. |
+| `seed --project NAME` | Seed that project for this run: the command is the yes. For a project not set to `seed = yes`, its copy is kept while the run lasts, and deleted by a later clean-up once nothing needs it; the next such run uses it again while it is still there. |
+| `config set seed_copy=no` | Seed the project straight from its folder, with no copy; its copy is deleted. |
+| `config set seed_copies=DIR` | Keep every seed copy in DIR, one folder per project. DIR must be a real folder that is there (not a symbolic link or junction), not a drive's root, and not a folder a project keeps up to date or releases (nor inside or holding one): otherwise nothing changes, and it says why. The copies at the old place are deleted, and seed runs make them again in DIR. A DIR set by hand in the settings file that cannot be used leaves each copy where it is, and its line says why. |
 | `version --torrent` | Test this DeltaPatcher's BitTorrent support: a session on 127.0.0.1, a small torrent made and checked. Exit 1 when it fails. |
 | `project import FILE --seed` | Seed the file's projects shared by torrent (otherwise a terminal asks; the default is no) |
 
 `seed` prints what it seeds, then a line for each project every 5 seconds: its peers, its upload rate and
-what it sent. `projects` shows which projects a seed run is seeding. `torrents` takes `allow` or `refuse`
+what it sent; for a project seeded from a copy, `from a copy`, and while the copy fills
+`copying for seeding: 4.2 MB of 20.0 MB`. A seed run looks for a newer release every 5 minutes, reading only the
+small signed `release.item` when nothing changed (a project with no address has its release item put in the
+DHT again every 30 minutes). A copy is deleted once its project stops seeding from it: `seed = no`,
+`seed_copy = no`, torrents refused, the project removed. A command deletes it at once, in 2 seconds at most; a
+seed run (also for what it finds at its start) once two reads of the settings, 3 seconds apart, agree, or at its end
+when it ends on torrents refused, its deletes stopping 1.5 seconds after its stop; what is left goes at the next
+clean-up. Never while another project needs it, and never when a settings file cannot be read whole (said once,
+naming the file). `projects` shows which projects a seed run is seeding. `torrents` takes `allow` or `refuse`
 only (in the settings file, anything but `allow` refuses). A publish of a project with no address says how
 players find it: once a seed run of its store has put its release item in the DHT. Publishing with
 `torrent = no` takes `release.torrent` and `release.item` out of the store. The settings are in
@@ -402,7 +412,9 @@ safe point: an update during its download or before it moves its first file (the
 was), a publish, release, deploy or backup restore before its new manifest goes up (players keep the
 release before); closing standard input stops `serve`. A `seed` run ends within two seconds of `cancel` or
 the end of standard input; it sends `{"event": "seeding", ...}` for each project every 5 seconds (its state,
-peers, upload rate and what it sent).
+peers, upload rate and what it sent; for a project seeded from a copy, `"kind": "copy"` and `"copy": {"path",
+"bytes", "state", "done", "total"}`: where the copy is, what it holds on disk, `copying`, `ready`, `full` or
+`waiting` (with `why` while it is not ready), and how much of the release's blobs it holds).
 
 `update --all` and `check --all` add `queue`, `project-start` and `project-end` events, and every line
 about one project carries its name (`project`) and settings file (`file`); the full list is at the top of
@@ -438,15 +450,22 @@ project, and so is any settings file listed in `project_files`. A project's file
 `[project]` (`title`, and the `description`, `website`, `install_hint` and `install_folder` shown with it and
 carried by project files), `[update]`,
 `[publish]`, `[server]`, `[backup]` and `[torrent]` (`torrent`: share it by torrent; `torrent_id`, kept by
-DeltaPatcher; `torrent_name`; `seeds`; `seed`: seed it here). DeltaPatcher's own stay in the main file:
+DeltaPatcher; `torrent_name`; `seeds`; `seed`: seed it here; `seed_copy`: `yes`, the default, seeds from a copy
+of its release kept for seeding, `no` straight from its folder). DeltaPatcher's own stay in the main file:
 `[window]` (`close_to_tray`, `minimize_to_tray`, `start_with_system`, `check_updates`) and `[general]`:
 `parallel_updates` (how many projects Update all runs at once), `check_every_hours` (how often the window
 checks every project; 0: only when it starts), `auto_update` (update what a check finds, by itself),
 `project_files` and `current_project` (the project the app shows), `torrents` (`allow`, or `refuse`: never
 BitTorrent, whatever a project says), `torrent_port` (6881: the port seeding listens on),
-`seed_upload_kbps` (0: no limit) and `torrent_port_mapping` (`no`: nothing asks the router to forward the
-port). `seeding.json` beside the main file says what the seed runs are seeding (they take turns writing it
-through `seeding.json.lock`).
+`seed_upload_kbps` (0: no limit), `torrent_port_mapping` (`no`: nothing asks the router to forward the
+port) and `seed_copies` (where seed copies are kept: a folder that is there, of its own; empty: each inside its
+project's folder, in `.deltapatcher/seedstore/<torrent id>`; a relative path starts at the main file's folder).
+`seeding.json` beside the main file says what the seed runs are seeding (they take turns writing it through
+`seeding.json.lock`), and `seed-copies.json` lists every seed copy this DeltaPatcher made: only a copy on it is
+ever deleted, so another DeltaPatcher's (in a shared seed copies folder, or in a game folder both update) is never
+taken. None is lost: a clean-up puts back on it a marked copy at a project's own place whose marker names this
+DeltaPatcher's settings file of that project, makes a list that cannot be read again (keeping it as
+`seed-copies.json.bad`), and keeps the entry of a copy whose drive is away until it is back.
 
 **Logs**:
 - everything DeltaPatcher shows, with the time: `%APPDATA%\DeltaPatcher\logs\deltapatcher.log` (Windows)

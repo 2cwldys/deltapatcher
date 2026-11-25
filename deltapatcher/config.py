@@ -130,6 +130,13 @@ SCHEMA = [
     ("torrent", "seed", False, "Share this project's files with other players while DeltaPatcher runs (yes/no): "
                                "deltapatcher seed --all, or the app, seeds every project set to yes. Only files "
                                "DeltaPatcher has checked are offered, never your own changes. Off unless you say yes."),
+    ("torrent", "seed_copy", True, "Seed this project from a copy of its release kept for seeding (its manifest, "
+                                   "signature, torrent and blobs) instead of from its folder (yes/no). Seeding reads only "
+                                   "the copy, so updates do not pause it; filling the copy reads the folder, and stops at "
+                                   "once when an update asks. The copy takes up to the release's size again (nothing "
+                                   "extra on a drive that shares space between copies: a Mac's APFS, Btrfs, XFS), and is "
+                                   "deleted when the project stops seeding from it. No: seed straight from the folder, "
+                                   "with no copy."),
     ("window", "close_to_tray", False, "Closing the window keeps DeltaPatcher in the tray (yes/no)."),
     ("window", "minimize_to_tray", False, "Minimizing the window hides it in the tray, off the taskbar; a click on the "
                                           "tray icon brings it back (yes/no)."),
@@ -159,6 +166,12 @@ SCHEMA = [
     ("general", "torrent_port_mapping", False, "Ask the router to forward the torrent port to this computer (UPnP and "
                                                "NAT-PMP) while seeding (yes/no). Off: nothing asks the router; you can "
                                                "still download from and send to every peer you reach."),
+    ("general", "seed_copies", "", "Where seed copies are kept. Empty: each one inside its project's folder, in "
+                                   ".deltapatcher/seedstore (the same drive as the game, gone with it). A folder (a real "
+                                   "one that is there, not a link): all of them there, one folder per project; a relative "
+                                   "path starts at the main settings file's folder. Changing it deletes the copies at the "
+                                   "old place; "
+                                   "seed runs make them again at the new one."),
 ]
 DEFAULTS = {key: default for _s, key, default, _w in SCHEMA}
 SECTION = {key: section for section, key, _d, _w in SCHEMA}
@@ -289,6 +302,17 @@ def file_values(path, keys=None, problems=None):
 # The main settings file when the last load() could not read it: {"path", "why"}; {} when it could. Torrents are
 # then refused (the person's choice about them cannot be known), and the command line says so.
 UNREADABLE = {}
+
+
+def unreadable(path):
+    """Why the settings file `path` cannot be read whole ('' when it can, or when it is not there): what load() takes
+    from a file it cannot read are the defaults, which say nothing of what the person chose (a seed copy is never
+    deleted on them)."""
+    if not path or not os.path.exists(path):
+        return ""
+    problems = []
+    file_values(path, [], problems)
+    return problems[0] if problems else ""
 
 
 def load(project=None):

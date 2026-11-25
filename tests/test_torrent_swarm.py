@@ -1,8 +1,8 @@
 """Torrents beside HTTP with libtorrent, on 127.0.0.x only (never the public network): the settings every session
 is made with, a player downloading only what it lacks from a seeding store and its web seed at once, a project with
 no address found through its release item in a DHT of local sessions, a seed that never offers a changed or
-protected file, an update while another process seeds the folder, a seed run that ends within two seconds, and a
-peer's damaged data never used.
+protected file, an update while another process seeds the folder, a seed run that ends within two seconds, a peer's
+damaged data never used, and a player seeding from a copy of its release (the default) and from its folder.
 
 They skip without libtorrent, unless DP_REQUIRE_TORRENT=1 (CI): then a missing libtorrent fails them."""
 
@@ -182,7 +182,9 @@ class Base(TempCase):
         config.save(cfg, p)
         return p
 
-    def setup_player(self):
+    def setup_player(self, copy=True, **values):
+        """A publisher's release (one file protected) and a player's project updated to it; copy=False: the player
+        seeds straight from its folder (seed_copy = no)."""
         pub = self.publisher(torrent_name="mod", protect="data/user.cfg",
                              files={"readme.txt": b"one\n", "data/pak0.bin": os.urandom(600000),
                                     "data/pak1.bin": os.urandom(900000), "data/user.cfg": b"defaults\n" * 100,
@@ -190,10 +192,17 @@ class Base(TempCase):
         srv, _t = serve.serve_in_background(self.p("store"), "127.0.0.1", 0)
         self.cleanups.append(lambda: (srv.shutdown(), srv.server_close()))
         address = "http://127.0.0.1:%d/mod/" % srv.server_address[1]
-        p = self.player("Player", address, config.load(pub), self.p("game"))
+        if not copy:
+            values["seed_copy"] = False
+        p = self.player("Player", address, config.load(pub), self.p("game"), **values)
         rc, ev = run_json(["--project", "Player", "update"])
         self.assertEqual(rc, 0, ev[-1])
         return pub, p
+
+    def copy_dir(self, p):
+        """Where the seed copy of the project `p` is, as the settings say now."""
+        from deltapatcher.torrent import seedcopy
+        return seedcopy.place(config.load(p), config.load())
 
     def downloader(self, ip, ti_bytes, peer, dest, seconds=60, quiet=5.0):
         """A plain BitTorrent peer (libtorrent, its own settings: loopback only) that downloads everything it can
@@ -276,7 +285,8 @@ class Settings(Base):
         config.save({"seed": True, "torrent_port_mapping": False}, p)
         with test_ip(""):
             os.environ.pop(torrent.TEST_IP_ENV, None)
-            with mock.patch.object(self.S, "make_session", side_effect=capture):
+            with mock.patch.object(self.S, "make_session", side_effect=capture), \
+                    mock.patch.object(cli, "start_control_reader"):      # no end of input: the run is not stopped
                 rc, ev = run_json(["seed", "--all"])
         self.assertEqual(rc, 1)
         s = made[0]
@@ -328,12 +338,20 @@ class Settings(Base):
 
 class Download(Base):
     def test_only_what_it_lacks_from_a_seed_and_from_the_address_at_once(self):
+        self.only_what_it_lacks(True, "127.0.0.31", "127.0.0.32")
+
+    def test_only_what_it_lacks_from_a_seed_of_its_folder_and_from_the_address_at_once(self):
+        self.only_what_it_lacks(False, "127.0.0.33", "127.0.0.34")
+
+    def only_what_it_lacks(self, seed_copy, seed_ip, update_ip):
+        """A's seed (from a copy, seed_copy, or from its folder, on seed_ip) and the slow address at once for B's
+        update (on update_ip)."""
         pub = self.publisher(torrent_name="mod")
         log = {}
         srv = slow_server(self.p("store"), 400000, log)
         self.cleanups.append(lambda: (srv.shutdown(), srv.server_close()))
         address = "http://127.0.0.1:%d/mod/" % srv.server_address[1]
-        a = self.player("A", address, config.load(pub), self.p("a"))
+        a = self.player("A", address, config.load(pub), self.p("a"), seed_copy=seed_copy)
         b = self.player("B", address, config.load(pub), self.p("b"))
         for name in ("A", "B"):                                                   # release 1, before any seed
             rc, ev = run_json(["--project", name, "update"])
@@ -345,12 +363,13 @@ class Download(Base):
         rc, ev = run_json(["--project", "A", "update"])
         self.assertEqual(rc, 0, ev[-1])
         write(self.p("a", "maps", "b.bsp"), os.urandom(1500000))                 # A changed it: A never offers it
-        run, _said = self.seed_run(a, "127.0.0.31", upload_kbps=350)
-        config.save({"seeds": "127.0.0.31:%d" % run.swarm.port}, b)
+        run, _said = self.seed_run(a, seed_ip, upload_kbps=350)
+        self.assertEqual(run.seeded[0].kind, "copy" if seed_copy else "folder")
+        config.save({"seeds": "%s:%d" % (seed_ip, run.swarm.port)}, b)
         log.clear()
         t0 = time.time()
         # the race against a slow swarm is SlowSwarm's: here the seed's 350 KB/s may dip on a busy computer
-        with test_ip("127.0.0.32"), mock.patch.object(self.S, "RATE_FLOOR", 32 * 1024):
+        with test_ip(update_ip), mock.patch.object(self.S, "RATE_FLOOR", 32 * 1024):
             rc, ev = run_json(["--project", "B", "update"])
         timing("an update of 4 MB, a seed at 350 KB/s and the address at 400 KB/s at once", time.time() - t0)
         self.assertEqual(rc, 0, ev[-1])
@@ -464,7 +483,7 @@ class NoAddress(Base):
 
 class Seeding(Base):
     def test_a_player_seeds_from_its_folder_and_never_a_changed_file(self):
-        _pub, p = self.setup_player()
+        _pub, p = self.setup_player(copy=False)
         man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
         data = bytearray(read(self.p("game", "data", "pak0.bin")))
         data[10] ^= 0xFF
@@ -545,7 +564,7 @@ class TwoProcesses(Base):
         return result[-1]
 
     def test_an_update_while_another_process_seeds_the_folder(self):
-        pub, p = self.setup_player()
+        pub, p = self.setup_player(copy=False)
         proc, lines = self.seed_process("127.0.0.61")
         self.assertTrue(self.wait_for(lines, lambda e: e.get("event") == "seeding" and e.get("state") == "seeding"),
                         "".join(lines))
@@ -575,7 +594,7 @@ class TwoProcesses(Base):
         self.ended(proc, lines, t0, "cancel")
 
     def test_a_seed_run_ends_within_two_seconds_when_its_input_ends(self):
-        self.setup_player()
+        self.setup_player(copy=False)
         proc, lines = self.seed_process("127.0.0.65")
         self.assertTrue(self.wait_for(lines, lambda e: e.get("event") == "seeding"), "".join(lines))
         t0 = time.time()
@@ -583,6 +602,55 @@ class TwoProcesses(Base):
         self.ended(proc, lines, t0, "end of input")
         self.assertFalse(os.path.exists(os.path.join(os.path.dirname(config.path()), "seeding.json")))
         self.assertEqual(self.events(lines)[-1]["event"], "result")
+
+    def test_a_seed_run_from_a_copy_ends_within_two_seconds_when_its_input_ends(self):
+        self.setup_player()
+        proc, lines = self.seed_process("127.0.0.23")
+        self.assertTrue(self.wait_for(lines, lambda e: e.get("event") == "seeding" and e.get("kind") == "copy" and
+                                      e.get("state") == "seeding"), "".join(lines))
+        t0 = time.time()
+        proc.stdin.close()
+        self.ended(proc, lines, t0, "end of input, seeding from a copy")
+        self.assertEqual(self.events(lines)[-1]["event"], "result")
+
+    def test_an_update_while_another_process_seeds_the_folder_from_a_copy(self):
+        _pub, p = self.setup_player()
+        proc, lines = self.seed_process("127.0.0.24")
+        self.assertTrue(self.wait_for(lines, lambda e: e.get("event") == "seeding" and e.get("kind") == "copy" and
+                                      e.get("state") == "seeding"), "".join(lines))
+        port = None
+        for e in self.events(lines):
+            if e.get("event") == "log" and e["text"].startswith("seeding on port "):
+                port = int(e["text"].split()[3])
+        copy = self.copy_dir(p)
+        got = self.downloader("127.0.0.25", read(os.path.join(copy, "release.torrent")), ("127.0.0.24", port),
+                              self.p("peer"))
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        mine = "blobs/" + man.files["data/user.cfg"].sha256
+        self.assertTrue(all(v > 0 for k, v in got.items() if k.startswith("blobs/") and k != mine), got)
+        write(self.p("src", "data", "pak0.bin"), os.urandom(600000))              # files the copy has as they were
+        write(self.p("src", "maps", "a.bsp"), os.urandom(300000))
+        self.publish("Mod", "2.0")
+        with self.slow_margin():
+            t0 = time.time()
+            rc, ev = run_json(["--project", "Player", "update"])
+            took = time.time() - t0
+        self.assertEqual(rc, 0, ev[-1])
+        timing("an update while another process seeds the folder from a copy", took)
+        texts = [e.get("text", "") for e in ev if e["event"] == "log"]
+        self.assertIn("seeding of this folder goes on from its copy", texts)
+        self.assertNotIn("seeding of this folder pauses while it changes", texts)
+        self.assertLess(took, 15.0)                     # a pause not answered would hold it 30 seconds (slow_margin)
+        self.assertEqual(read(self.p("game", "maps", "a.bsp")), read(self.p("src", "maps", "a.bsp")))
+        self.assertTrue(self.wait_for(lines, lambda e: e.get("event") == "seeding" and e.get("release") == "Mod 2.0"),
+                        "".join(lines[-20:]))                                       # the copy takes the new release
+        new = Manifest.from_json(read(self.p("store", "manifest.json")))
+        self.assertEqual(sorted(os.listdir(os.path.join(copy, "blobs"))),
+                         sorted(set(new.blobs()) - {new.files["data/user.cfg"].sha256}))
+        t0 = time.time()
+        proc.stdin.write("cancel\n")
+        proc.stdin.flush()
+        self.ended(proc, lines, t0, "cancel, seeding from a copy")
 
 
 class Loopback(Base):
@@ -634,7 +702,7 @@ class Switching(Base):
                 "release.item": read(self.p("store", "release.item"))}
 
     def test_a_second_switch_while_next_is_seeded(self):
-        _pub, p = self.setup_player()
+        _pub, p = self.setup_player(copy=False)
         write(self.p("src", "readme.txt"), "two\n")
         self.publish("Mod", "2.0")
         v2 = self.store_files()
@@ -656,6 +724,13 @@ class Switching(Base):
 
 class Renamed(Base):
     def test_a_player_with_no_address_after_the_publisher_renames_the_torrent(self):
+        self.renamed(True, "127.0.0.75")
+
+    def test_a_player_seeding_from_its_folder_after_the_publisher_renames_the_torrent(self):
+        self.renamed(False, "127.0.0.39")
+
+    def renamed(self, seed_copy, ip):
+        """The player's project seeds from a copy (seed_copy) or from its folder, on the address `ip`."""
         pub = self.publisher("Only", public_url="", torrent_name="only")
         config.save({"torrent_name": "renamed"}, pub)
         self.publish("Only", "2.0")
@@ -681,18 +756,19 @@ class Renamed(Base):
             write(self.p("game2", ".deltapatcher", "release", *rel.split("/")), data)
         p = projects.new("Player")
         config.save({"install_dir": self.p("game2"), "trust_key": key, "torrent": True, "torrent_id": tid,
-                     "torrent_name": "only"}, p)
+                     "torrent_name": "only", "seed_copy": seed_copy}, p)
         from deltapatcher.torrent import seed
         run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
-                       lambda rows: None, threading.Event(), ip="127.0.0.75")
-        run.swarm = self.S.Swarm("all", ip="127.0.0.75")
+                       lambda rows: None, threading.Event(), ip=ip)
+        run.swarm = self.S.Swarm("all", ip=ip)
         self.cleanups.append(run.swarm.close)
         self.assertTrue(run.seeded[0].start(), run.seeded[0].why)
+        self.assertEqual(run.seeded[0].kind, "copy" if seed_copy else "folder")
 
 
 class PauseRaces(Base):
     def test_a_pause_asked_while_the_files_are_looked_at(self):
-        _pub, p = self.setup_player()
+        _pub, p = self.setup_player(copy=False)
         from deltapatcher.torrent import folder, pause, seed
         run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
                        lambda rows: None, threading.Event(), ip="127.0.0.81")
@@ -718,7 +794,7 @@ class PauseRaces(Base):
         self.assertEqual(s.state, "seeding")
 
     def test_a_rollback_while_the_folder_is_seeded(self):
-        _pub, p = self.setup_player()
+        _pub, p = self.setup_player(copy=False)
         write(self.p("src", "data", "pak0.bin"), os.urandom(600000))
         self.publish("Mod", "2.0")
         rc, ev = run_json(["--project", "Player", "update"])
@@ -770,14 +846,22 @@ class SlowSwarm(Base):
 
 class TwoInstalls(Base):
     def test_two_installs_of_one_release_in_one_run(self):
-        pub, p = self.setup_player()
-        p2 = self.player("Player 2", config.load(p)["source_url"], config.load(pub), self.p("game2"))
+        self.two_installs(True, "127.0.0.95")
+
+    def test_two_installs_of_one_release_seeding_from_their_folders_in_one_run(self):
+        self.two_installs(False, "127.0.0.35")
+
+    def two_installs(self, seed_copy, ip):
+        """Two players' projects of one release seeded from copies (seed_copy) or from their folders, on `ip`."""
+        pub, p = self.setup_player(copy=seed_copy)
+        p2 = self.player("Player 2", config.load(p)["source_url"], config.load(pub), self.p("game2"),
+                         seed_copy=seed_copy)
         rc, ev = run_json(["--project", "Player 2", "update"])
         self.assertEqual(rc, 0, ev[-1])
         from deltapatcher.torrent import seed
         said, stop = [], threading.Event()
         run = seed.Run([(p, config.load(p)), (p2, config.load(p2))], dict(config.load(), torrent_port=0),
-                       lambda t, s=None: said.append(t), lambda rows: None, stop, ip="127.0.0.95")
+                       lambda t, s=None: said.append(t), lambda rows: None, stop, ip=ip)
         t = threading.Thread(target=run.run, daemon=True)
         t.start()
         self.cleanups.append(lambda: (stop.set(), t.join(10)))
@@ -792,15 +876,23 @@ class TwoInstalls(Base):
 
 class Damaged(Base):
     def test_a_kept_torrent_with_a_huge_number_never_ends_the_run(self):
-        pub, p = self.setup_player()
+        self.huge_number(True, "127.0.0.97")
+
+    def test_a_kept_torrent_with_a_huge_number_never_ends_a_run_seeding_from_folders(self):
+        self.huge_number(False, "127.0.0.38")
+
+    def huge_number(self, seed_copy, ip):
+        """A damaged kept torrent beside a good project, both seeded from copies (seed_copy) or folders, on `ip`."""
+        pub, p = self.setup_player(copy=seed_copy)
         shutil.copytree(self.p("game"), self.p("game2"))
         kept = self.p("game2", ".deltapatcher", "release", "release.torrent")
         write(kept, read(kept)[:-1] + b"3:zzzi" + b"9" * 5000 + b"ee")          # after its info, as kept by hand
-        damaged = self.player("Damaged", config.load(p)["source_url"], config.load(pub), self.p("game2"))
+        damaged = self.player("Damaged", config.load(p)["source_url"], config.load(pub), self.p("game2"),
+                              seed_copy=seed_copy)
         from deltapatcher.torrent import seed
         said, stop = [], threading.Event()
         run = seed.Run([(damaged, config.load(damaged)), (p, config.load(p))], dict(config.load(), torrent_port=0),
-                       lambda t, s=None: said.append(t), lambda rows: None, stop, ip="127.0.0.97")
+                       lambda t, s=None: said.append(t), lambda rows: None, stop, ip=ip)
         t = threading.Thread(target=run.run, daemon=True)
         t.start()
         self.cleanups.append(lambda: (stop.set(), t.join(10)))
@@ -836,7 +928,7 @@ class _Crawl(object):
 
 class SlowMapping(Base):
     def test_a_pause_asked_while_a_big_folder_is_looked_at(self):
-        _pub, p = self.setup_player()
+        _pub, p = self.setup_player(copy=False)
         os.remove(self.p("game", ".deltapatcher", "hashes.json"))                # every file is hashed again
         from deltapatcher.torrent import folder, pause, seed
         run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
@@ -860,7 +952,7 @@ class SlowMapping(Base):
         self.assertEqual((s.paused, s.handle), (True, None))
 
     def test_an_update_from_another_process_while_a_big_folder_is_looked_at(self):
-        _pub, p = self.setup_player()
+        _pub, p = self.setup_player(copy=False)
         os.remove(self.p("game", ".deltapatcher", "hashes.json"))
         write(self.p("src", "readme.txt"), "two\n")
         self.publish("Mod", "2.0")
@@ -885,6 +977,39 @@ class SlowMapping(Base):
         self.assertIn("seeding of this folder pauses while it changes", done.stdout)
         self.assertNotIn("did not pause", done.stdout)
         self.assertEqual(read(self.p("game", "readme.txt")), b"two\n")
+
+    def test_an_update_from_another_process_while_a_copy_fills(self):
+        _pub, p = self.setup_player(seed=True)                                   # its copy stays after the run
+        write(self.p("src", "readme.txt"), "two\n")
+        self.publish("Mod", "2.0")
+        from deltapatcher.torrent import seed, seedcopy
+        stop = threading.Event()
+        run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
+                       lambda rows: None, stop, ip="127.0.0.26")
+        # about 30 seconds of copying: the update asks while it goes on and is answered at once; with no torrent in
+        # yet (the copy's first filling), the answer is a folder seed's (nothing is seeded meanwhile)
+        with mock.patch.object(seedcopy, "hashlib", _Crawl), mock.patch.object(seedcopy, "PIECE", 64 * 1024), \
+                mock.patch.object(_Crawl, "SLEEP", 1.0):
+            t = threading.Thread(target=run.run, daemon=True)
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            time.sleep(1.0)
+            env = dict(os.environ, PYTHONPATH=ROOT, PYTHONUNBUFFERED="1")
+            env[torrent.TEST_IP_ENV] = "127.0.0.27"
+            t0 = time.time()
+            done = subprocess.run([sys.executable, "-m", "deltapatcher", "--json", "--no-log", "--project", "Player",
+                                   "update"], cwd=ROOT, env=env, capture_output=True, text=True, timeout=180)
+            took = time.time() - t0
+            stop.set()
+            t.join(30)
+        timing("an update from another process while a copy fills", took)
+        self.assertEqual(done.returncode, 0, done.stdout[-2000:])
+        self.assertIn("seeding of this folder pauses while it changes", done.stdout)
+        self.assertNotIn("goes on from its copy", done.stdout)
+        self.assertNotIn("did not pause", done.stdout)
+        self.assertEqual(read(self.p("game", "readme.txt")), b"two\n")
+        self.assertFalse([n for n in os.listdir(os.path.join(self.copy_dir(p), "blobs"))
+                          if n.endswith(".part")])
 
 
 class MeasuredAddress(Base):
@@ -916,7 +1041,14 @@ class SlowName(Base):
     def test_a_seed_run_ends_within_two_seconds_while_this_computers_name_is_looked_up(self):
         """A resolver can take half a minute for this computer's own name (macOS asks mDNS when the name is not in
         DNS): a seed run's stop never waits for it."""
-        _pub, p = self.setup_player()
+        self.slow_name(True, "127.0.0.96")
+
+    def test_a_folder_seed_run_ends_within_two_seconds_while_this_computers_name_is_looked_up(self):
+        self.slow_name(False, "127.0.0.40")
+
+    def slow_name(self, seed_copy, ip):
+        """The stop of a run seeding from a copy (seed_copy) or from the folder, on `ip`, while the name hangs."""
+        _pub, p = self.setup_player(copy=seed_copy)
         from deltapatcher.torrent import seed
         name, real = socket.gethostname(), socket.getaddrinfo
         answer = threading.Event()
@@ -930,7 +1062,7 @@ class SlowName(Base):
         with mock.patch.object(self.S, "_HOST", {"addresses": [], "started": None, "thread": None}), \
                 mock.patch.object(self.S.socket, "getaddrinfo", side_effect=lookup):
             run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
-                           lambda rows: None, stop, ip="127.0.0.96")
+                           lambda rows: None, stop, ip=ip)
             t = threading.Thread(target=run.run, daemon=True)
             t.start()
             self.cleanups.append(lambda: (stop.set(), t.join(30)))
@@ -938,6 +1070,7 @@ class SlowName(Base):
             while time.time() < end and not any(s.handle is not None for s in run.seeded):
                 time.sleep(0.05)
             self.assertTrue(any(s.handle is not None for s in run.seeded))
+            self.assertEqual(run.seeded[0].kind, "copy" if seed_copy else "folder")
             t0 = time.time()
             stop.set()
             t.join(30)
@@ -945,6 +1078,556 @@ class SlowName(Base):
         timing("a seed run's stop while this computer's name is looked up", took)
         self.assertFalse(t.is_alive())
         self.assertLess(took, 2.0)
+
+
+class SeedCopy(Base):
+    """A player seeds from a copy of its release by default (seedcopy.py): the copy holds exactly the release (never the
+    player's own file), the game folder is never read while it seeds, an update never waits for it and the copy then
+    takes the new release, a newer release found by a look switches it, a full drive stops the copying and says so, a
+    stop while it copies ends within two seconds and keeps what was copied, and the copy goes as soon as its project
+    stops seeding from it (seed_copy = no, seed = no) or moves with seed_copies."""
+
+    def copy_files(self, copy):
+        """Every file in the copy, relative, with forward slashes."""
+        out = []
+        for top, _dirs, names in os.walk(copy):
+            for n in names:
+                out.append(os.path.relpath(os.path.join(top, n), copy).replace("\\", "/"))
+        return sorted(out)
+
+    def wait(self, pred, seconds=60):
+        """pred() holds within `seconds` (a slow computer's margin: a second or two here)."""
+        end = time.time() + seconds
+        while time.time() < end and not pred():
+            time.sleep(0.05)
+        return pred()
+
+    def test_a_player_seeds_from_a_copy_of_its_release_by_default(self):
+        _pub, p = self.setup_player()
+        before = snapshot(self.p("game"))
+        run, said = self.seed_run(p, "127.0.0.3")
+        s = run.seeded[0]
+        copy = self.copy_dir(p)
+        self.assertEqual((s.kind, s.root, s.state), ("copy", copy, "seeding"), (s.why, said))
+        kept = self.p("game", ".deltapatcher", "release")
+        raw = read(os.path.join(kept, "manifest.json"))
+        sha = hashlib.sha256(raw).hexdigest()
+        man = Manifest.from_json(raw)
+        mine = man.files["data/user.cfg"].sha256                                  # protected: the player's own
+        blobs = set(man.blobs()) - {mine}
+        small = ["manifest.json", "sigs/%s.sig" % sha, "release.torrent", "release.item"]
+        self.assertEqual(self.copy_files(copy), sorted(small + ["blobs/" + b for b in blobs] +
+                                                       ["seedstore.json", ".deltapatcher/hashes.json"]))
+        for name in small:
+            self.assertEqual(read(os.path.join(copy, *name.split("/"))), read(os.path.join(kept, *name.split("/"))), name)
+        for b in blobs:
+            self.assertEqual(hashlib.sha256(read(os.path.join(copy, "blobs", b))).hexdigest(), b)
+        got = self.downloader("127.0.0.4", read(os.path.join(copy, "release.torrent")), ("127.0.0.3", run.swarm.port),
+                              self.p("peer"))
+        for sha_, size in man.blobs().items():
+            self.assertEqual(got["blobs/" + sha_], 0 if sha_ == mine else size, sha_)
+        self.assertEqual(snapshot(self.p("game")), before)                        # the game folder as it was
+        row = s.status()
+        self.assertEqual((row["kind"], row["folder"], row["copy"]["path"], row["copy"]["state"]),
+                         ("copy", self.p("game"), copy, "ready"))
+        self.assertEqual(row["copy"]["bytes"], sum(os.path.getsize(os.path.join(copy, *f.split("/")))
+                                                   for f in self.copy_files(copy)))
+        total = sum(man.blobs().values())
+        self.assertEqual((row["copy"]["done"], row["copy"]["total"]), (total - man.blobs()[mine], total))
+        self.assertTrue(cli.seeding_words(row).endswith(", from a copy"), cli.seeding_words(row))
+
+    def test_the_game_folder_is_never_read_while_seeding_from_a_copy(self):
+        _pub, p = self.setup_player()
+        from deltapatcher.torrent import seed
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        with mock.patch.object(seed, "WATCH", 0.3):
+            run, said = self.seed_run(p, "127.0.0.5")
+            s = run.seeded[0]
+            handle = s.handle
+            pak = self.p("game", "data", "pak0.bin")
+            os.rename(pak, pak + ".away")                       # Windows refuses this for a file a seed has open
+            os.rename(pak + ".away", pak)
+            bsp = self.p("game", "maps", "a.bsp")
+            data = bytearray(read(bsp))
+            data[0] ^= 0xFF
+            write(bsp, bytes(data))                                                 # changed in place, same size
+            time.sleep(1.5)                                                         # a few looks at what it offers
+            self.assertIs(s.handle, handle)
+            self.assertFalse([x for x in said if "looking at them again" in str(x)], said)
+            got = self.downloader("127.0.0.6", read(os.path.join(self.copy_dir(p), "release.torrent")),
+                                  ("127.0.0.5", run.swarm.port), self.p("peer"))
+        for path in ("data/pak0.bin", "maps/a.bsp"):
+            e = man.files[path]
+            self.assertEqual(got["blobs/" + e.sha256], e.size, path)               # the copy still offers both
+
+    def test_an_update_while_seeding_from_a_copy_never_waits_and_the_copy_takes_the_new_release(self):
+        _pub, p = self.setup_player()
+        from deltapatcher.torrent import pause
+        run, said = self.seed_run(p, "127.0.0.7")
+        s = run.seeded[0]
+        handle = s.handle
+        write(self.p("src", "data", "pak0.bin"), os.urandom(600000))
+        write(self.p("src", "maps", "a.bsp"), os.urandom(300000))
+        self.publish("Mod", "2.0")
+        real, seen, samples = pause.paused, [], []
+
+        @contextlib.contextmanager
+        def watched(root, log=None, wait=None):
+            t0 = time.time()
+            with real(root, log, wait):
+                seen.append(time.time() - t0)
+                done = threading.Event()
+
+                def sample():                                    # the torrent, every 10 ms while the folder changes
+                    while not done.is_set():
+                        samples.append(s.handle is handle)
+                        time.sleep(0.01)
+                sampler = threading.Thread(target=sample, daemon=True)
+                sampler.start()
+                try:
+                    yield
+                finally:
+                    done.set()
+                    sampler.join(5)
+                    samples.append(s.handle is handle)
+        with mock.patch.object(pause, "paused", watched):
+            rc, ev = run_json(["--project", "Player", "update"])
+        self.assertEqual(rc, 0, ev[-1])
+        texts = [e.get("text", "") for e in ev if e["event"] == "log"]
+        self.assertIn("seeding of this folder goes on from its copy", texts)
+        self.assertTrue(seen)
+        for waited in seen:
+            timing("an update's ask of a seed run from a copy", waited)
+            self.assertLess(waited, pause.WAIT / 2)                                # answered at once: no pause
+        self.assertGreaterEqual(len(samples), 2)
+        self.assertTrue(all(samples), samples)                                     # its torrent stayed in all along
+        self.assertFalse([x for x in said if "seeding paused" in str(x)], said)
+        self.assertTrue(self.wait(lambda: s.title_of_release == "Mod 2.0" and s.handle is not None), said)
+        new = Manifest.from_json(read(self.p("store", "manifest.json")))
+        copy = self.copy_dir(p)
+        self.assertEqual(sorted(os.listdir(os.path.join(copy, "blobs"))),
+                         sorted(set(new.blobs()) - {new.files["data/user.cfg"].sha256}))      # its blobs, only those
+        self.assertEqual(read(os.path.join(copy, "manifest.json")), read(self.p("store", "manifest.json")))
+        self.assertEqual(s.status()["release"], "Mod 2.0")
+        got = self.downloader("127.0.0.8", read(os.path.join(copy, "release.torrent")), ("127.0.0.7", run.swarm.port),
+                              self.p("peer"))
+        self.assertEqual(got["blobs/" + new.files["maps/a.bsp"].sha256], 300000)
+
+    def test_seed_copy_no_seeds_from_the_folder_and_deletes_the_copy(self):
+        _pub, p = self.setup_player()
+        from deltapatcher.torrent import seed
+        with mock.patch.object(seed, "SETTINGS", 0.3):
+            run, said = self.seed_run(p, "127.0.0.10")
+            copy = run.seeded[0].root
+            self.assertTrue(os.path.isdir(copy))
+            rc, ev = run_json(["--project", "Player", "config", "set", "seed_copy=no"])
+            self.assertEqual(rc, 0, ev[-1])
+            self.assertTrue(self.wait(lambda: run.seeded[0].kind == "folder" and run.seeded[0].handle is not None), said)
+            self.assertTrue(self.wait(lambda: not os.path.exists(copy)), said)     # once a second read says so too
+        self.assertIn("Player seeds from its folder now (seed_copy = no)", said)
+        got = self.downloader("127.0.0.11", read(self.p("game", ".deltapatcher", "release", "release.torrent")),
+                              ("127.0.0.10", run.swarm.port), self.p("peer"))
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        self.assertEqual(got["blobs/" + man.files["data/pak1.bin"].sha256], 900000)   # now from the folder
+
+    def test_seed_copy_turned_on_moves_a_folder_seed_to_a_copy(self):
+        _pub, p = self.setup_player(copy=False)
+        from deltapatcher.torrent import seed
+        with mock.patch.object(seed, "SETTINGS", 0.3):
+            run, said = self.seed_run(p, "127.0.0.28")
+            self.assertEqual(run.seeded[0].kind, "folder")
+            rc, ev = run_json(["--project", "Player", "config", "set", "seed_copy=yes"])
+            self.assertEqual(rc, 0, ev[-1])
+            self.assertTrue(self.wait(lambda: run.seeded[0].kind == "copy" and run.seeded[0].handle is not None), said)
+        copy = self.copy_dir(p)
+        self.assertEqual(run.seeded[0].root, copy)
+        self.assertIn("Player seeds from a copy of its release now (seed_copy = yes): %s" % copy, said)
+        pak = self.p("game", "data", "pak0.bin")
+        os.rename(pak, pak + ".away")                     # the folder's files are not open any more (Windows)
+        os.rename(pak + ".away", pak)
+        got = self.downloader("127.0.0.29", read(os.path.join(copy, "release.torrent")), ("127.0.0.28", run.swarm.port),
+                              self.p("peer"))
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        self.assertEqual(got["blobs/" + man.files["data/pak0.bin"].sha256], 600000)
+
+    def test_seed_no_while_a_run_seeds_from_a_copy_deletes_it(self):
+        _pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed
+        with mock.patch.object(seed, "SETTINGS", 0.3):
+            run, said = self.seed_run(p, "127.0.0.12")
+            copy = run.seeded[0].root
+            self.assertTrue(os.path.isdir(copy))
+            rc, ev = run_json(["--project", "Player", "config", "set", "seed=no"])
+            self.assertEqual(rc, 0, ev[-1])
+            self.assertTrue(self.wait(lambda: not os.path.exists(copy)), said)
+        self.assertIn("Player leaves this run: seed is off for it now", said)
+
+    def test_seed_copies_moves_the_copy_and_never_a_folder_without_the_marker(self):
+        _pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed, seedcopy
+        a, b = self.p("copies-a"), self.p("copies-b")
+        tid = config.load(p)["torrent_id"]
+        decoys = {os.path.join(a, "decoy", "big.bin"): os.urandom(100000), os.path.join(b, "decoy", "x.txt"): b"mine",
+                  os.path.join(a, "%s-00000000" % tid, "blobs", "x"): b"named like a copy",
+                  os.path.join(b, "%s-ffffffff" % tid, "y.txt"): b"named like a copy too"}
+        for path, data in decoys.items():
+            write(path, data)
+        config.save({"seed_copies": a})
+        digest = hashlib.sha256(os.path.normcase(self.p("game")).encode("utf-8")).hexdigest()[:8]
+        with mock.patch.object(seed, "SETTINGS", 0.3):
+            run, said = self.seed_run(p, "127.0.0.13")
+            at_a = run.seeded[0].root
+            self.assertEqual(at_a, os.path.join(a, "%s-%s" % (tid, digest)))
+            self.assertTrue(seedcopy.is_copy(at_a))
+            self.assertFalse(os.path.exists(seedcopy.default_place(self.p("game"), tid)))
+            rc, ev = run_json(["config", "set", "seed_copies=" + b])
+            self.assertEqual(rc, 0, ev[-1])
+            at_b = os.path.join(b, "%s-%s" % (tid, digest))
+            self.assertTrue(self.wait(lambda: run.seeded[0].root == at_b and run.seeded[0].handle is not None), said)
+            self.assertTrue(self.wait(lambda: not os.path.exists(at_a)), said)     # once a second read says so too
+        self.assertIn("Player: its seed copy moves to %s" % at_b, said)
+        self.assertEqual(len(os.listdir(os.path.join(at_b, "blobs"))), 4)
+        for path, data in decoys.items():
+            self.assertEqual(read(path), data, path)                               # untouched
+
+    def test_a_drive_without_room_stops_the_copying_and_the_row_says_why(self):
+        _pub, p = self.setup_player()
+        from deltapatcher.torrent import seedcopy
+        real = shutil.disk_usage(self.tmp)
+
+        def usage(d):                                     # 1 MB of room past the 5% kept, taken as the copy grows
+            return type(real)(100 << 30, 0, (5 << 30) + 1000000 - seedcopy.size_of(d))
+        with mock.patch.object(seedcopy.shutil, "disk_usage", side_effect=usage), \
+                mock.patch.object(seedcopy, "_clone", return_value=False):
+            run, said = self.seed_run(p, "127.0.0.15")
+        s = run.seeded[0]
+        row = s.status()
+        self.assertEqual((row["state"], row["copy"]["state"]), ("seeding", "full"), said)
+        self.assertIn("seed from the folder with seed_copy = no, or move seed copies with seed_copies", row["why"])
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        big = {man.files[f].sha256 for f in ("data/pak0.bin", "data/pak1.bin", "maps/a.bsp")}
+        held = os.listdir(os.path.join(s.root, "blobs"))
+        self.assertTrue(big & set(held), held)                                    # some went in
+        self.assertTrue(big - set(held), held)                                    # and some would not fit
+        self.assertLessEqual(sum(os.path.getsize(os.path.join(s.root, "blobs", n)) for n in held), 1000000)
+        self.assertIn(row["why"], cli.seeding_words(row))
+
+    def test_a_run_stopped_while_it_copies_ends_within_two_seconds_and_keeps_what_it_copied(self):
+        _pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed, seedcopy
+        blobs = os.path.join(self.copy_dir(p), "blobs")
+
+        def names():
+            try:
+                return os.listdir(blobs)
+            except OSError:
+                return []
+        stop = threading.Event()
+        with mock.patch.object(seedcopy, "hashlib", _Crawl), mock.patch.object(seedcopy, "PIECE", 64 * 1024):
+            run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
+                           lambda rows: None, stop, ip="127.0.0.16")
+            t = threading.Thread(target=run.run, daemon=True)                      # about 6 seconds of copying
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            self.assertTrue(self.wait(lambda: any(n.endswith(".part") for n in names()) and
+                                      any(not n.endswith(".part") for n in names())), names())
+            t0 = time.time()
+            stop.set()
+            t.join(30)
+            took = time.time() - t0
+        timing("a seed run's stop while it copies", took)
+        self.assertFalse(t.is_alive())
+        self.assertLess(took, 2.0)
+        done = names()
+        self.assertFalse([n for n in done if n.endswith(".part")], done)          # the one going in went
+        self.assertTrue(done)                                                      # the ones copied stay
+        copied, put = [], seedcopy._put
+
+        def counted(src, part, *a):
+            copied.append(os.path.basename(part).split(".")[0])
+            return put(src, part, *a)
+        with mock.patch.object(seedcopy, "_put", side_effect=counted):
+            run2, _said = self.seed_run(p, "127.0.0.17")
+        self.assertEqual(run2.seeded[0].state, "seeding")
+        self.assertFalse(set(copied) & set(done), (copied, done))                  # never copied again
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        self.assertEqual(sorted(names()), sorted(set(man.blobs()) - {man.files["data/user.cfg"].sha256}))
+
+    def test_a_newer_release_found_by_a_look_switches_the_copy(self):
+        _pub, p = self.setup_player()
+        old = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        write(self.p("src", "readme.txt"), "two\n")
+        write(self.p("src", "data", "pak1.bin"), os.urandom(900000))
+        self.publish("Mod", "2.0")
+        raw = read(self.p("store", "manifest.json"))
+        sha = hashlib.sha256(raw).hexdigest()
+        v2 = {"manifest.json": raw, "sigs/%s.sig" % sha: read(self.p("store", "sigs", sha + ".sig")),
+              "release.torrent": read(self.p("store", "release.torrent")),
+              "release.item": read(self.p("store", "release.item"))}
+        from deltapatcher.torrent import seed
+        said = []
+        run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: said.append(t),
+                       lambda rows: None, threading.Event(), ip="127.0.0.18")
+        run.swarm = self.S.Swarm("all", ip="127.0.0.18")
+        self.cleanups.append(run.swarm.close)
+        s = run.seeded[0]
+        self.assertTrue(s.start(), s.why)
+        s._switch(v2)
+        self.assertEqual((s.kind, s.state, s.title_of_release), ("copy", "seeding", "Mod 2.0"), said)
+        new = Manifest.from_json(raw)
+        mine = new.files["data/user.cfg"].sha256
+        shared = (set(new.blobs()) & set(old.blobs())) - {mine}
+        copy = self.copy_dir(p)
+        self.assertEqual(sorted(os.listdir(os.path.join(copy, "blobs"))), sorted(shared))     # the others went
+        self.assertEqual(read(os.path.join(copy, "manifest.json")), raw)
+        got = self.downloader("127.0.0.19", v2["release.torrent"], ("127.0.0.18", run.swarm.port), self.p("peer"))
+        for sha_, size in new.blobs().items():
+            self.assertEqual(got["blobs/" + sha_], size if sha_ in shared else 0, sha_)
+
+    def test_two_projects_of_one_folder_and_torrent_in_one_run_share_their_copy(self):
+        pub, p = self.setup_player(seed=True)
+        p2 = self.player("Player 2", config.load(p)["source_url"], config.load(pub), self.p("game"), seed=True)
+        copy = self.copy_dir(p)
+        self.assertEqual(self.copy_dir(p2), copy)
+        from deltapatcher.torrent import seed, seedcopy
+        said, stop = [], threading.Event()
+        with mock.patch.object(seed, "SETTINGS", 0.3), mock.patch.object(seed, "WATCH", 0.3):
+            run = seed.Run([(p, config.load(p)), (p2, config.load(p2))], dict(config.load(), torrent_port=0),
+                           lambda t, s=None: said.append(t), lambda rows: None, stop, ip="127.0.0.14")
+            t = threading.Thread(target=run.run, daemon=True)
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(10)))
+            self.assertTrue(self.wait(lambda: run.seeded[0].handle is not None), said)
+            blobs = sorted(os.listdir(os.path.join(copy, "blobs")))
+            rc, ev = run_json(["--project", "Player", "config", "set", "seed=no"])
+            self.assertEqual(rc, 0, ev[-1])
+            self.assertTrue(self.wait(lambda: [s.project.title for s in run.seeded if s.handle is not None] ==
+                                      ["Player 2"]), said)
+        self.assertIn("Player leaves this run: seed is off for it now", said)
+        self.assertTrue(seedcopy.is_copy(copy))                                    # Player 2 still needs it: whole
+        self.assertEqual(sorted(os.listdir(os.path.join(copy, "blobs"))), blobs)
+        self.assertEqual(run.seeded[0].root, copy)
+
+    def test_a_copy_deleted_while_it_fills_is_made_again_never_left_without_its_marker(self):
+        _pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed, seedcopy
+        copy = self.copy_dir(p)
+        blobs = os.path.join(copy, "blobs")
+
+        def parts():
+            try:
+                return [n for n in os.listdir(blobs) if n.endswith(".part")]
+            except OSError:
+                return []
+        said, stop = [], threading.Event()
+        gone = "Player: not seeded: its seed copy was deleted: it is made again"
+        with mock.patch.object(seedcopy, "hashlib", _Crawl), mock.patch.object(seedcopy, "PIECE", 64 * 1024), \
+                mock.patch.object(seed, "WATCH", 3.0):
+            run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0),
+                           lambda t, s=None: said.append(t), lambda rows: None, stop, ip="127.0.0.20")
+            t = threading.Thread(target=run.run, daemon=True)
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            self.assertTrue(self.wait(lambda: parts()), said)                     # a blob going in
+            end = time.time() + 30
+            while os.path.exists(copy) and time.time() < end:                    # by hand, marker and all, again
+                shutil.rmtree(copy, ignore_errors=True)                           # while an antivirus holds a file
+                time.sleep(0.05)
+            self.assertFalse(os.path.exists(copy))
+            self.assertTrue(self.wait(lambda: gone in said), said)
+            time.sleep(0.5)                                                       # its next start is WATCH away
+            self.assertFalse(os.path.exists(copy))                                # nothing written there meanwhile
+        self.assertTrue(self.wait(lambda: run.seeded[0].handle is not None), said)   # the next start: a fresh copy
+        self.assertTrue(seedcopy.is_copy(copy))
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        self.assertEqual(sorted(os.listdir(blobs)), sorted(set(man.blobs()) - {man.files["data/user.cfg"].sha256}))
+
+    def test_a_stop_while_a_big_copy_is_deleted_ends_the_run_within_two_seconds(self):
+        pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed, seedcopy
+        old = self.player("Old", config.load(p)["source_url"], config.load(pub), self.p("old"))      # seed = no
+        os.makedirs(self.p("old", ".deltapatcher"))
+        place = self.copy_dir(old)
+        seedcopy.prepare(place, config.load(old)["torrent_id"], self.p("old"), old.path)
+        os.makedirs(os.path.join(place, "blobs"))
+        for i in range(3000):                                                     # thousands of small files
+            with open(os.path.join(place, "blobs", "%064x" % i), "wb") as f:
+                f.write(b"x")
+        real, removed = seedcopy._remove, []
+
+        def slow(path):                                                           # a slow drive
+            time.sleep(0.002)
+            removed.append(path)
+            real(path)
+        stop = threading.Event()
+        with mock.patch.object(seedcopy, "_remove", side_effect=slow):
+            run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
+                           lambda rows: None, stop, ip="127.0.0.30")
+            t = threading.Thread(target=run.run, daemon=True)                    # its 2nd read deletes: about 6 s
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            self.assertTrue(self.wait(lambda: len(removed) > 100))
+            t0 = time.time()
+            stop.set()
+            t.join(30)
+            took = time.time() - t0
+        timing("a seed run's stop while a copy of 3000 files is deleted", took)
+        self.assertFalse(t.is_alive())
+        self.assertLess(took, 2.0)
+        self.assertTrue(seedcopy.is_copy(place))                                 # cut short: its marker stays
+        self.assertLess(len(removed), 3000)
+        self.assertEqual(seedcopy.clean(config.load()), [place])                  # the next clean-up finishes it
+        self.assertFalse(os.path.exists(place))
+
+    def test_a_blob_that_cannot_be_copied_now_is_tried_again_and_the_row_says_so(self):
+        _pub, p = self.setup_player()
+        from deltapatcher.torrent import seed, seedcopy
+        real, held = seedcopy._copy, [True]
+
+        def copy(src, dst, check, tick):                                          # pak0.bin held open by the game
+            if held[0] and src.endswith("pak0.bin"):
+                raise PermissionError(13, "the file is in use")
+            return real(src, dst, check, tick)
+        with mock.patch.object(seedcopy, "_copy", side_effect=copy), \
+                mock.patch.object(seedcopy, "_clone", return_value=False), \
+                mock.patch.object(seed, "RETRY", 0.5), mock.patch.object(seed, "WATCH", 0.3):
+            run, said = self.seed_run(p, "127.0.0.44")
+            s = run.seeded[0]
+            row = s.status()
+            self.assertEqual((row["state"], row["copy"]["state"]), ("seeding", "copying"), said)
+            self.assertIn("pak0.bin: the file is in use", row["why"])
+            self.assertIn("tried again in a minute", row["why"])
+            time.sleep(1.5)                                                       # tried again: still held
+            self.assertEqual(s.status()["copy"]["state"], "copying")
+            held[0] = False
+            self.assertTrue(self.wait(lambda: s.status()["copy"]["state"] == "ready"), said)
+        man = Manifest.from_json(read(self.p("game", ".deltapatcher", "release", "manifest.json")))
+        self.assertIn(man.files["data/pak0.bin"].sha256, os.listdir(os.path.join(s.root, "blobs")))
+        self.assertEqual(s.status()["why"], "")
+
+    def test_blobs_a_retry_copies_before_the_drive_is_full_are_offered(self):
+        _pub, p = self.setup_player()
+        from deltapatcher.torrent import folder, seed, seedcopy
+        release = self.p("game", ".deltapatcher", "release")
+        man = Manifest.from_json(read(os.path.join(release, "manifest.json")))
+        mine = man.files["data/user.cfg"].sha256
+        _ti, files = self.S.read_torrent(read(os.path.join(release, "release.torrent")))
+        order = []
+        for f in files:                                                           # the order a fill takes them in
+            sha = None if f.pad else folder.blob_of(f.path)
+            if sha and sha != mine and sha not in order:
+                order.append(sha)
+        sizes = man.blobs()
+        real = shutil.disk_usage(self.tmp)
+        room = [0]
+
+        def usage(d):                                     # room past the 5% kept, taken as the copy grows
+            return type(real)(100 << 30, 0, (5 << 30) + room[0] - seedcopy.size_of(d))
+        with mock.patch.object(seedcopy.shutil, "disk_usage", side_effect=usage), \
+                mock.patch.object(seedcopy, "_clone", return_value=False), \
+                mock.patch.object(seed, "RETRY", 0.5), mock.patch.object(seed, "WATCH", 0.3):
+            run, said = self.seed_run(p, "127.0.0.46")
+            s = run.seeded[0]
+            self.assertEqual((s.state, s.copy_state), ("seeding", "full"), said)
+            self.assertFalse([b for b in order if "blobs/" + b in s.mapping.offered])        # none went in
+            room[0] = sizes[order[0]] + sizes[order[1]]                                      # room for two now
+            self.assertTrue(self.wait(lambda: "blobs/" + order[1] in s.mapping.offered), said)
+            self.assertIn("blobs/" + order[0], s.mapping.offered)                            # both offered
+            self.assertNotIn("blobs/" + order[2], s.mapping.offered)
+            self.assertEqual((s.state, s.copy_state), ("seeding", "full"))
+            got = self.downloader("127.0.0.49", read(os.path.join(s.root, "release.torrent")),
+                                  ("127.0.0.46", run.swarm.port), self.p("peer"))
+        for sha in order[:2]:
+            self.assertEqual(got["blobs/" + sha], sizes[sha], sha)
+
+    def test_a_run_never_deletes_a_copy_on_settings_that_cannot_be_read(self):
+        _pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed, seedcopy
+        good, main = read(p.path), read(config.path())
+        said, stop = [], threading.Event()
+        with mock.patch.object(seed, "SETTINGS", 0.3):
+            run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0),
+                           lambda t, s=None: said.append(t), lambda rows: None, stop, ip="127.0.0.47")
+            t = threading.Thread(target=run.run, daemon=True)
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            self.assertTrue(self.wait(lambda: run.seeded and run.seeded[0].handle is not None), said)
+            s = run.seeded[0]
+            copy, handle = s.root, s.handle
+            write(p.path, b"[torrent\nseed = no\n")                                  # cannot be read whole now
+            self.assertTrue(config.unreadable(p.path))
+            time.sleep(1.5)                                                          # a few reads of the settings
+            self.assertEqual(run.seeded, [s])
+            self.assertIs(s.handle, handle)                                          # seeded as it was
+            self.assertTrue(seedcopy.is_copy(copy))
+            self.assertTrue([x for x in said if "its settings file cannot be read whole" in str(x)], said)
+            write(p.path, good)
+            write(config.path(), main + b"torrents refuse\n")                       # the main file cannot be read
+            self.assertTrue(config.unreadable(config.path()))
+            t.join(30)                                                               # torrents refused: it ends
+            self.assertFalse(t.is_alive())
+        write(config.path(), main)
+        self.assertIn("torrents are refused in the settings now: seeding stops", said)
+        self.assertTrue(seedcopy.is_copy(copy))                                      # never deleted on them
+        self.assertFalse([x for x in said if "deleted the seed copy" in str(x)], said)
+
+    def test_a_stop_while_a_dropped_projects_copy_is_deleted_ends_the_run_in_time(self):
+        _pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed, seedcopy
+        said, stop = [], threading.Event()
+        with mock.patch.object(seed, "SETTINGS", 0.3):
+            run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0),
+                           lambda t, s=None: said.append(t), lambda rows: None, stop, every_project=True,
+                           ip="127.0.0.48")
+            t = threading.Thread(target=run.run, daemon=True)
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            self.assertTrue(self.wait(lambda: run.seeded and run.seeded[0].handle is not None), said)
+            copy = run.seeded[0].root
+            for i in range(3000):                                                    # thousands of small files
+                with open(os.path.join(copy, "blobs", "%064x" % i), "wb") as f:
+                    f.write(b"x")
+            real, removed = seedcopy._remove, []
+
+            def slow(path):                                                          # a slow drive
+                time.sleep(0.002)
+                removed.append(path)
+                real(path)
+            with mock.patch.object(seedcopy, "_remove", side_effect=slow):
+                config.save({"seed": False}, p)                                      # by hand: the run drops it
+                self.assertTrue(self.wait(lambda: len(removed) > 100), said)
+                t0 = time.time()
+                stop.set()
+                t.join(30)
+                took = time.time() - t0
+        timing("a seed run's stop while a dropped project's copy of 3000 files is deleted", took)
+        self.assertFalse(t.is_alive())
+        self.assertLess(took, 2.0)                                # its end's deletes stop LEAVE seconds after it
+        self.assertIn("Player leaves this run: seed is off for it now", said)
+        self.assertTrue(seedcopy.is_copy(copy))                                      # cut short: its marker stays
+        self.assertLess(len(removed), 3000)
+        self.assertEqual(seedcopy.clean(config.load()), [copy])                      # the next clean-up finishes it
+
+    def test_torrents_refused_while_a_run_seeds_end_it_and_delete_its_copy(self):
+        _pub, p = self.setup_player(seed=True)
+        from deltapatcher.torrent import seed, seedcopy
+        said, stop = [], threading.Event()
+        with mock.patch.object(seed, "SETTINGS", 0.3):
+            run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0),
+                           lambda t, s=None: said.append(t), lambda rows: None, stop, ip="127.0.0.50")
+            t = threading.Thread(target=run.run, daemon=True)
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            self.assertTrue(self.wait(lambda: run.seeded and run.seeded[0].handle is not None), said)
+            copy = run.seeded[0].root
+            rc, ev = run_json(["config", "set", "torrents=refuse"])
+            self.assertEqual(rc, 0, ev[-1])
+            self.assertTrue(seedcopy.is_copy(copy))                                  # in use: left to the run
+            t.join(30)
+            self.assertFalse(t.is_alive())
+        self.assertIn("torrents are refused in the settings now: seeding stops", said)
+        self.assertFalse(os.path.exists(copy))                                       # the person's no: at its end
+        self.assertIn("deleted the seed copy %s: no project seeds from it any more" % copy, said)
 
 
 if __name__ == "__main__":

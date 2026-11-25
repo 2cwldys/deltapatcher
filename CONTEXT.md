@@ -93,6 +93,20 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
   outside node that reaches it, so integrity never depends on it: every item is signed and every file
   hashed. libtorrent's own check of a seeded file is not used (it misses a file changed in place): the
   engine hashes, and tells libtorrent which pieces it has.
+- **Players seed from a copy, by default.** A player's seeding reads a copy of the release kept for
+  seeding, laid out like a store (`deltapatcher/torrent/seedcopy.py`), not the game folder: the game's
+  files are not held open while it seeds (Windows refuses to replace an open file), so updates never wait
+  for seeding, and an edit in the folder never reaches the copy. Filling the copy reads the folder, and stops
+  at once when an update asks. The copy sits in the game folder's own `.deltapatcher/seedstore/<torrent id>`
+  (the same drive, gone with the folder), or every copy in the folder `seed_copies` names (one that is there,
+  of its own); it is a space-sharing clone where the drive can make one, and always leaves the larger of
+  1 GiB and 5% of its drive free (never more than 20 GiB). It is deleted once its project stops seeding from
+  it (a seed run, once two reads of the settings agree), never while another project needs it or a settings file
+  cannot be read whole, and only ever a folder its marker says is a copy, never through a link (a symbolic link
+  or a junction); `seed-copies.json` lists every copy made, and only a copy on it is deleted, so another
+  DeltaPatcher's is never taken (a clean-up puts back on it a copy at a project's own place that this
+  DeltaPatcher made, so a lost list loses none). Seeding straight from the folder stays as a choice per project
+  (`seed_copy = no`). A publisher's own store is never copied.
 
 ## State
 
@@ -152,7 +166,9 @@ as possible without becoming hard to use.
     (`release.torrent`), and for a project with no address its newest release found in a DHT by the
     publisher key (`release.item`, numbered so a player never goes back). libtorrent 2.0.15 is frozen into
     the engine; no tracker, no public DHT router, no port mapping unless asked. Players can refuse torrents
-    completely; seeding is their yes per project, from their own folder, offering only files the engine
-    checked, paused while an update changes them. In the window: *Share by torrent too* on the Release
+    completely; seeding is their yes per project, from a copy of the release kept for seeding (or, as
+    their choice, from their own folder, paused while an update changes it), offering only files the engine
+    checked; a seed run looks for a newer release every 5 minutes, reading only the small signed
+    `release.item` when nothing changed. In the window: *Share by torrent too* on the Release
     page, the seed choice when a project file is added, a seeding line and Seed or Stop seeding on each
     row, the tray's count, and Force stop turning seeding off; assistants get a read-only `seed_status`.

@@ -214,6 +214,9 @@ for your server, or no server at all. It is off by default, set per project, and
   start.
 - **Peers are found** from the project file's seeds, peers met before, peer exchange, the local network
   while seeding, and (with no address) a DHT that starts only from those: no tracker, no public DHT router.
+- **A new release reaches the seeds** within about 5 minutes: each seed run looks for one that often (reading
+  only the small signed `release.item` when nothing changed), and with no address puts your release item in
+  the DHT again every 30 minutes.
 - **A restore** (Backups) of a project shared by torrent only does not move players to it: publish its
   release again.
 - **Turning it off**: the next publish takes `release.torrent` and `release.item` out of the store. A copy

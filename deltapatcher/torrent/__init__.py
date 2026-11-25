@@ -401,11 +401,12 @@ def seeding_now():
 
 
 @contextlib.contextmanager
-def _seeding_lock(seconds=5.0):
+def _seeding_lock(seconds=5.0, path=None):
     """The seed runs' lock on seeding.json, so two runs never write it at once (an operating-system lock on
     seeding.json.lock beside it, which the system releases when the process ends, however it ends). Yields True
-    while it is held, False when it could not be had within `seconds`."""
-    path = seeding_path() + ".lock"
+    while it is held, False when it could not be had within `seconds`. path: another lock file of the same kind
+    (seed-copies.json.lock, for the list of seed copies)."""
+    path = path or (seeding_path() + ".lock")
     try:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         fh = open(path, "a+b")

@@ -6,7 +6,9 @@ In <folder>/.deltapatcher/seeding/ (for a store: <store>/.deltapatcher/seeding/)
                     from before it looks at the folder's files, also while it is paused or waiting
     <pid>.pause     an update asks that seed run to pause: {"by": the update's process id, "at": when, "lock": the
                     name of the update's <pid>.<random>.asking file}
-    <pid>.paused    the seed run's answer: {"pid", "at": when}: its torrent of this folder is out, its files closed
+    <pid>.paused    the seed run's answer: {"pid", "at": when}: its torrent of this folder is out, its files closed;
+                    or {"pid", "at", "copy": true}: it seeds the folder from a copy of its release (seedcopy.py), which
+                    an update never touches, so its torrent stays in and only its copying waits for the update
     <pid>.<random>.asking   the update holds an operating-system lock on it while it asks; the system releases the
                     lock when the update's process ends, however it ends
 The update waits for an answer written after its own request (an older answer is one to an update before), or
@@ -156,10 +158,17 @@ def _answered(d, pid, at):
     return isinstance(when, (int, float)) and not isinstance(when, bool) and when >= at
 
 
+def _from_copy(d, pid):
+    """The seed run `pid` answered that it seeds this folder from a copy: its seeding goes on during the update."""
+    doc = _read(os.path.join(d, "%d.paused" % pid))
+    return bool(doc) and doc.get("copy") is True
+
+
 @contextlib.contextmanager
 def paused(root, log=None, wait=None):
     """Around an update of the folder `root`: every seed run seeding it pauses first (it answers this request, or
-    WAIT seconds pass), and goes on once this ends."""
+    WAIT seconds pass), and goes on once this ends. A seed run that seeds the folder from a copy answers at once and
+    goes on seeding from it; when every answer says so, that is what is said."""
     log = log or (lambda s: None)
     pids = seeders(root)
     if not pids:
@@ -195,6 +204,8 @@ def paused(root, log=None, wait=None):
                 time.sleep(0.1)
         if waiting:
             log("Warning: a seed run of this folder did not pause within %d seconds: going on" % int(WAIT if wait is None else wait))
+        elif asked and all(_from_copy(d, pid) for pid in asked):
+            log("seeding of this folder goes on from its copy")
         elif asked:
             log("seeding of this folder pauses while it changes")
         yield
@@ -258,12 +269,15 @@ class Seat(object):
         """True while an update of the folder asks this run to pause, and the update still runs."""
         return self.request() is not None
 
-    def answer(self):
+    def answer(self, copy=False):
         """This run's torrent of the folder is out and its files are closed: said with the time, which the update
-        compares with its request's."""
+        compares with its request's. copy: this run seeds the folder from a copy of its release, which goes on."""
         now = time.time()
+        doc = {"pid": self.pid, "at": now}
+        if copy:
+            doc["copy"] = True
         try:
-            _write(self._p("paused"), {"pid": self.pid, "at": now})
+            _write(self._p("paused"), doc)
             self.answered = now
         except OSError:
             pass

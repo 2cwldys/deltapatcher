@@ -114,6 +114,15 @@ Publish the torrent port (`-p 6881:6881 -p 6881:6881/udp`) and list `<host>:6881
 `seed` runs until the container stops. The command-line programs from a release have BitTorrent built in;
 installed with pip from the repository, use `pip install ".[torrent]"`.
 
+`seed` reads a copy of the release kept for seeding, inside the project's folder (`/srv/game`, or the folder in it
+that the project file names) under `.deltapatcher/seedstore`: it doubles what the volume holds of the game (not on
+a filesystem that shares space between copies, such as Btrfs or XFS). To seed straight from the folder instead and
+save that space, add this before `seed --all` (with the project's name, as `projects` lists it):
+
+```
+deltapatcher-cli --no-log --close --project NAME config set seed_copy=no
+```
+
 ## Good to know
 
 - **Settings and logs**: `--no-log` writes no log file. The settings file goes to `~/.config/deltapatcher/`;

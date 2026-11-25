@@ -562,10 +562,11 @@ class Swarm(object):
                 out.append(ep)
         return out
 
-    def get_items(self, key_bytes, torrent_id, key_text, seeds, seconds=FIND, cancel=None):
+    def get_items(self, key_bytes, torrent_id, key_text, seeds, seconds=FIND, cancel=None, pump=True):
         """Release items in the DHT for this publisher key and torrent id, each checked (item.check), read with the
         small DHT client (krpc.py) from the seeds and the nodes this session knows; asked again every few seconds
-        until one is found or `seconds` pass."""
+        until one is found or `seconds` pass. pump=False: from a thread other than the one that pumps this session's
+        alerts (a seed run's look), which only waits between two rounds."""
         found, refused = [], []
         end = time.time() + seconds
         target = item.target(key_bytes, torrent_id)
@@ -581,7 +582,12 @@ class Swarm(object):
                     refused.append(str(e))
             if found:
                 break
-            self.pump(1000)
+            if pump:
+                self.pump(1000)
+            elif cancel is not None:
+                cancel.wait(1.0)
+            else:
+                time.sleep(1.0)
         for why in refused[:1]:
             self.log("Warning: %s" % why)
         return found
@@ -1017,6 +1023,7 @@ class TorrentSource(object):
         self.info = None
         self.work = None                    # its own work folder, made when first needed
         self.resolved = None                # the seeds and peers met, resolved once
+        self.kept_release = None            # (manifest, signature, torrent) the folder kept, read by find_item()
 
     def __str__(self):
         return "the torrent %s" % self.tinfo["name"]
@@ -1110,13 +1117,23 @@ class TorrentSource(object):
 
     # ---- finding the release
 
-    def _find(self):
+    def find_item(self, found=None):
+        """The newest release item for this torrent, from the DHT (or the copy this folder keeps, when no node has a
+        newer one), checked: signed by the publisher key and numbered no lower than the highest accepted here.
+        Nothing of the release itself is downloaded. found: the items another session found in the DHT already (a
+        seed run's look, with the run's own session), so this one looks for none itself. SourceError when there is
+        none."""
+        if self.item is not None:
+            return self.item
         raw, sig, tor, kept_item = read_kept(self.state_dir, self.key, self.tinfo["id"])
         floor = max(self.kept.seq, kept_item.seq if kept_item is not None else 0)
         self.open()
-        self.log("looking for the newest release in the DHT (seeds: %s)" % (", ".join(self.tinfo["seeds"]) or "none"))
-        found = self.swarm.get_items(self.key_bytes, self.tinfo["id"], self.key, self.tinfo["seeds"] + self.kept.peers,
-                                     FIND, self.cancel)
+        if found is None:
+            self.log("looking for the newest release in the DHT (seeds: %s)"
+                     % (", ".join(self.tinfo["seeds"]) or "none"))
+            found = self.swarm.get_items(self.key_bytes, self.tinfo["id"], self.key,
+                                         self.tinfo["seeds"] + self.kept.peers, FIND, self.cancel)
+        found = list(found)
         lower = [it for it in found if it.seq < floor]
         if lower:
             self.log("Warning: a release item numbered %d was refused: this folder accepted %d before"
@@ -1130,6 +1147,15 @@ class TorrentSource(object):
         if not found:
             self.log("Warning: no seed or DHT node answered: the release this folder has is the newest known")
         self.item = chosen
+        self.kept_release = (raw, sig, tor)
+        return chosen
+
+    def _find(self):
+        chosen = self.find_item()
+        if self.kept_release is not None:
+            raw, sig, tor = self.kept_release
+        else:
+            raw, sig, tor, _kept_item = read_kept(self.state_dir, self.key, self.tinfo["id"])
         if raw is not None and hashlib.sha256(raw).hexdigest() == chosen.m and tor and _infohash_or_none(tor) == chosen.ih:
             self.manifest, self.sig = raw, sig
             self.ti, self.files = read_torrent(tor)

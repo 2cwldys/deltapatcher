@@ -19,6 +19,10 @@ these follow each one:
 seed runs until it is stopped; every 5 seconds, for each project it seeds:
     {"event": "seeding", "project": ..., "file": ..., "state": "seeding|paused|waiting|stopped", "why": "...",
      "release": "...", "peers": 3, "upload_rate": 12345, "sent": 678901}      (bytes per second; bytes this run)
+and for a project seeded from a copy of its release ("kind": "copy"), also
+     "copy": {"path": ..., "bytes": ..., "state": "copying|ready|full|waiting", "done": ..., "total": ...}
+     (what the copy holds on disk; the bytes of the release's blobs it holds, of all of them; "why" says why a copy
+     is not ready)
 
 In --json mode standard input carries what a person would type: with --passphrase-stdin the first
 line is the passphrase (never put on a command line or in the environment), and a later line
@@ -1353,6 +1357,40 @@ def project_of(a):
 FOLDER_SETTINGS = ("backup_dir", "store_dir", "publish_src", "deploy_folder", "deploy_mode", "install_dir")
 # the settings of torrents, checked together (torrent_settings)
 TORRENT_SETTINGS = ("torrent", "torrent_id", "torrent_name", "seeds", "seed", "torrent_port", "seed_upload_kbps")
+# the settings that say whether a project seeds from a copy, and where it is: a change to one deletes the copies no
+# project needs any more (clean_seed_copies)
+COPY_SETTINGS = ("seed", "seed_copy", "seed_copies", "torrents", "torrent", "torrent_id", "install_dir", "store_dir",
+                 "publish_src")
+
+
+def clean_seed_copies():
+    """The seed copies no project needs any more, deleted (torrent/seedcopy.py: only copies on this DeltaPatcher's
+    list, whose marker says they are one, wherever they are: of a project removed, moved or set otherwise, or in the
+    seed copies folder before a change); a copy a seed run going on now uses is left to it, which deletes it itself.
+    The deletes take at most seedcopy.QUICK seconds (2): what is left goes at the next clean-up (a copy's marker goes
+    last), and it says so. Each copy deleted is said; one that cannot be is never an error. Returns the copies
+    deleted."""
+    from .torrent import seedcopy
+    end = time.time() + seedcopy.QUICK
+    cut = []
+
+    def stop():
+        if time.time() >= end:
+            cut.append(True)
+        return bool(cut)
+    try:
+        deleted = seedcopy.clean(config.load(), stop=stop)
+    except OSError as e:
+        deleted = []
+        say("Warning: seed copies could not be cleaned up: %s" % e, "warn")
+    for path in deleted:
+        say("deleted the seed copy %s: no project seeds from it any more" % path)
+    if cut:
+        say("Seed copies not deleted within %d seconds go at the next clean-up (the next seed run, or the next "
+            "change of these settings)" % int(seedcopy.QUICK))
+    for text in seedcopy.news():
+        say("Warning: %s" % text, "warn")
+    return deleted
 
 
 def torrent_settings(project, changes):
@@ -1426,7 +1464,14 @@ def cmd_config(a, cfg):
                 raise CliError(problem, "bad-setting")
         if set(changes) & set(TORRENT_SETTINGS):
             changes = torrent_settings(project, changes)
+        if "seed_copies" in changes:
+            from .torrent import seedcopy
+            problem = seedcopy.copies_problem(changes["seed_copies"])
+            if problem:                   # refused: nothing changes, nothing is deleted
+                raise CliError(problem, "bad-setting")
         config.save(changes, project)     # only these keys change, each in its own file; everything else stays
+        if set(changes) & set(COPY_SETTINGS):
+            clean_seed_copies()
         return {"path": own, "settings": config.load(project)}
     data = {"path": own, "main_path": p, "project": dict(project.tag(), kind=project.kind),
             "log": logs.path() or logs.default_path(), "log_dir": os.path.dirname(logs.path() or logs.default_path()),
@@ -1525,6 +1570,7 @@ def cmd_project(a, cfg):
             say("Removed the project %s and deleted its settings file." % p.title, "ok")
         else:
             say("Took the project %s off the list; its file stays where it is." % p.title, "ok")
+        clean_seed_copies()                              # its seed copy goes with it
         return dict(p.tag(), removed=done, schedule_removed=stop_schedule(p))
     if c == "export":
         return project_export(a)
@@ -1586,6 +1632,7 @@ def remove_all(a):
             raise CliError("nothing was removed", "cancelled")
     done = projects.remove_all()
     say("Removed %d project%s; Default stays." % (len(done), "" if len(done) == 1 else "s"), "ok")
+    clean_seed_copies()                                  # their seed copies go with them
     return {"removed": [dict(p.tag(), removed=how, schedule_removed=stop_schedule(p)) for p, how in done]}
 
 
@@ -1894,6 +1941,8 @@ def cmd_reset(a, cfg):
     say("DeltaPatcher is reset: as it was just installed.", "ok")
     say("The settings files as they were are in %s" % paint(done["copy"], "code"))
     done["schedules_removed"] = [p.title for p in every if stop_schedule(p)]
+    # the seed copies of every project go too: Default's settings go back to their defaults, the others leave
+    clean_seed_copies()
     return done
 
 
@@ -1948,12 +1997,28 @@ def cmd_version(a, cfg):
 
 
 def seeding_words(row):
-    """A seeded project's state in words: 3 peers, 12.0 KB/s up, 4.5 MB sent this run."""
+    """A seeded project's state in words: 3 peers, 12.0 KB/s up, 4.5 MB sent this run; from a copy of its release,
+    ", from a copy" after it, while the copy fills: copying for seeding: 4.2 MB of 20.0 MB, and while the copy is not
+    ready, why."""
+    copy = row.get("copy") if isinstance(row.get("copy"), dict) else None
+    copying = ""
+    if copy is not None and copy.get("state") == "copying":
+        copying = "copying for seeding: %s of %s" % (publish.human(copy.get("done") or 0),
+                                                     publish.human(copy.get("total") or 0))
     if row.get("state") not in (None, "seeding"):
+        if copying and row.get("state") == "waiting" and not row.get("why"):
+            return copying
         return "%s%s" % (row["state"], (": " + row["why"]) if row.get("why") else "")
-    return "%d peer%s, %s/s up, %s sent this run" % (row.get("peers", 0), "" if row.get("peers") == 1 else "s",
-                                                     publish.human(row.get("upload_rate", 0)),
-                                                     publish.human(row.get("sent", 0)))
+    words = "%d peer%s, %s/s up, %s sent this run" % (row.get("peers", 0), "" if row.get("peers") == 1 else "s",
+                                                      publish.human(row.get("upload_rate", 0)),
+                                                      publish.human(row.get("sent", 0)))
+    if copy is not None:
+        words += ", from a copy"
+        if copying:
+            words += "; " + copying
+        if copy.get("state") != "ready" and row.get("why"):
+            words += "; " + row["why"]
+    return words
 
 
 def cmd_seed(a, cfg):
@@ -2005,7 +2070,7 @@ def cmd_seed(a, cfg):
                 say("%s: %s" % (row["project"], seeding_words(row)))
     names = ", ".join(p.title for p, _c in chosen)
     say(("Seeding %s." % names) if OUT.json else ("Seeding %s; Ctrl+C stops it." % names), "head")
-    run = seeding.Run(chosen, cfg, log, status, stop, every_project=bool(a.all))
+    run = seeding.Run(chosen, cfg, log, status, stop, every_project=bool(a.all), stop_read=STOP_READ)
     try:
         rows = run.run()
     except KeyboardInterrupt:

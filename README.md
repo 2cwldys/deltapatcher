@@ -36,16 +36,6 @@ identical files are stored once.
   <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/features.png"><img src="docs/images/features.png" alt="DeltaPatcher's features. Release: one button to your server, host it anywhere, signed releases, shadow patches, pick do not type, patch notes. Update: only what changed, safe updates, updates while you play, several projects. Share: project presets, presets that follow you, torrents if you want them. Look after it: statistics for publishers, backups, force stop, app and command line, in your containers." width="880"></a>
 </p>
 
-## The app
-
-**Update**: the picked project's folder, its source and publisher key; **Check**, **Update** and **Roll back**.
-
-**Release**: what to release (with what to leave out and what players keep), where players download it
-from (your server over SSH, a folder, or this computer to test), and one button that sends only what
-changed, with the project's statistics under it.
-
-**Settings**: every setting of the project and of DeltaPatcher, explained, the project's backups, and the log one click away.
-
 ## How it works
 
 ```mermaid

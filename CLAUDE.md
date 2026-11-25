@@ -19,6 +19,7 @@ From the repository's root. The build makes `.venv`; use its Python.
 | The version | `python tools/version.py X.Y.Z` (or `patch`, `minor`, `major`; alone: show and check) |
 | Screenshots | `python tools/capture_screens.py --app <the packaged app> <an empty demo folder>` |
 | Social preview | `python tools/make_preview.py`, after the screenshots |
+| Features picture | `node tools/features/make.mjs`: the README's features, from the list in that file (`npm ci` in `app` and `tools/readme_preview` once) |
 | The wiki | `python tools/wiki.py <a clone of the wiki>`, then commit and push there |
 | Preview a guide | `node tools/readme_preview/render.mjs [FILE.md] [--light]` (`npm ci` in that folder once) |
 | Secret scan | `python tools/secret_scan.py` |

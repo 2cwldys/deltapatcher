@@ -32,38 +32,9 @@ identical files are stored once.
 
 ## Features
 
-<table>
-  <tr>
-    <td width="33%" valign="top"><b>Only what changed</b><br>Players download just the files their folder lacks, files you deleted are removed (never their own), and a cut download resumes.</td>
-    <td width="33%" valign="top"><b>Safe updates</b><br>Every file is checked before it is used. A failed update is undone, and <i>Roll back</i> undoes the last one.</td>
-    <td width="33%" valign="top"><b>Signed releases</b><br>Optional Ed25519 signatures: updaters refuse any release your key did not sign.</td>
-  </tr>
-  <tr>
-    <td valign="top"><b>One button to your server</b><br><i>Release</i> sends only the missing files over SFTP and switches the new version in last.</td>
-    <td valign="top"><b>Host it anywhere</b><br>Plain static files: Caddy, nginx, Apache, XAMPP, any static host, a share, or the built-in server.</td>
-    <td valign="top"><b>App and command line</b><br>A clean window, a menu of plain questions, and commands for scripts and launchers.</td>
-  </tr>
-  <tr>
-    <td valign="top"><b>Pick, do not type</b><br>Leave folders out, or let players keep their own settings and saves, by picking them.</td>
-    <td valign="top"><b>Shadow patches</b><br>Release the same version again with fixes: only the changed files travel.</td>
-    <td valign="top"><b>In your containers</b><br>Docker images and Pterodactyl eggs can be brought up to date at every start, from an address or a project file.</td>
-  </tr>
-  <tr>
-    <td valign="top"><b>Several projects</b><br>Every game, mod or server you keep up to date or release, each with its own settings. <i>Update all</i> runs three at once.</td>
-    <td valign="top"><b>Project presets</b><br>Share projects as one <code>.deltapatch</code> or <code>.html</code> file: players open it and are set up, signed so they know it is yours.</td>
-    <td valign="top"><b>Updates while you play</b><br>It checks every hour from the tray, says what is waiting, and can update by itself.</td>
-  </tr>
-  <tr>
-    <td valign="top"><b>Statistics for publishers</b><br>How many players check and download, and which release they are on, counted from your own web server's log.</td>
-    <td valign="top"><b>Backups</b><br>Dated copies of the live release on your computer, by hand or on a schedule, and one step to put one back.</td>
-    <td valign="top"><b>Force stop</b><br>One red button ends every update, check, release, download and seed at once, and nothing starts until you lift it.</td>
-  </tr>
-  <tr>
-    <td valign="top"><b>Patch notes</b><br>Players see what a release changed, file by file, with your notes; file names only if you allow it.</td>
-    <td valign="top"><b>Presets that follow you</b><br>Change a project later and players are asked before anything changes; one-off files stay possible.</td>
-    <td valign="top"><b>Torrents, if you want them</b><br>Players can download from each other and seed, no server needed; off unless you turn it on, and anyone can refuse it.</td>
-  </tr>
-</table>
+<p align="center">
+  <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/features.png"><img src="docs/images/features.png" alt="DeltaPatcher's features. Release: one button to your server, host it anywhere, signed releases, shadow patches, pick do not type, patch notes. Update: only what changed, safe updates, updates while you play, several projects. Share: project presets, presets that follow you, torrents if you want them. Look after it: statistics for publishers, backups, force stop, app and command line, in your containers." width="880"></a>
+</p>
 
 ## The app
 
@@ -223,7 +194,7 @@ app/              the app (Electron, React, Tailwind): the window, which runs th
 cli/              deltapatcher.bat / deltapatcher.sh: the command line straight from the repository
 packaging/        the PyInstaller spec: the engine as one self-contained file, and as a folder for the app
 tests/            the engine's tests
-tools/            the icon, the screenshots, the social preview, the secret scan, the release files, CI annotations, the version, the wiki, a README preview
+tools/            the icon, the screenshots, the social preview, the features picture, the secret scan, the release files, CI annotations, the version, the wiki, a README preview
 docs/             the guides
 ```
 
@@ -242,6 +213,10 @@ JSON mode the way the app does.
 **The guides** live in `docs/` (and `docker/README.md`, `SECURITY.md`); the wiki is made from them with
 `python tools/wiki.py <a clone of the wiki>`, then a commit and push there. Edit the files here, not the
 wiki.
+
+**The features picture** (`docs/images/features.png`) is drawn from the list in `tools/features/make.mjs`:
+add a feature there, then run `node tools/features/make.mjs` (`npm ci` once in `app` and in
+`tools/readme_preview`).
 
 **Preview a guide** the way GitHub shows it: `npm ci` once in `tools/readme_preview`, then
 `node tools/readme_preview/render.mjs [FILE.md] [--light]` writes `dist/preview/preview.html` and a

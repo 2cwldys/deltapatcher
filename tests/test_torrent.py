@@ -855,6 +855,28 @@ class Lookups(Base):
             self.assertEqual(session.resolve(["a.example.com:1"], time.time() - 1), [])
             self.assertEqual(session.resolve(["a.example.com:1"], None, stop), [])
 
+    def test_this_computers_name_is_never_waited_for(self):
+        """A resolver can take half a minute for this computer's own name (macOS asks mDNS when the name is not in
+        DNS): a session's own addresses come at once without it, and with its addresses once the lookup answers."""
+        from deltapatcher.torrent import session
+        answer = threading.Event()
+        self.addCleanup(answer.set)
+
+        def lookup(host, port, *a, **k):
+            answer.wait(10)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("203.0.113.10", 0))]
+        sw = session.Swarm.__new__(session.Swarm)
+        sw.ip, sw.ses = "", mock.Mock()
+        sw.ses.listen_port.return_value = 6881
+        with mock.patch.object(session, "_HOST", {"addresses": [], "started": None, "thread": None}), \
+                mock.patch.object(session.socket, "getaddrinfo", side_effect=lookup):
+            t0 = time.time()
+            self.assertEqual(sw.own(), {"127.0.0.1:6881"})
+            self.assertLess(time.time() - t0, 1.0)
+            answer.set()
+            session._HOST["thread"].join(5)
+            self.assertEqual(sw.own(), {"127.0.0.1:6881", "203.0.113.10:6881"})
+
 
 class Cached(Base):
     def test_a_resumed_update_does_not_fetch_its_cached_blobs_again(self):

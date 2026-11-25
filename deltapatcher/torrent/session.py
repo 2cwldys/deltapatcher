@@ -305,6 +305,40 @@ def resolve(seeds, deadline=None, cancel=None):
     return out
 
 
+HOST_AGAIN = 600.0           # seconds before this computer's name is looked up again (its addresses can change)
+_HOST = {"addresses": [], "started": None, "thread": None}
+_HOST_LOCK = threading.Lock()
+
+
+def host_addresses():
+    """The addresses this computer's own name resolves to, never waited for: the name is looked up in a thread of
+    its own (again once HOST_AGAIN seconds have passed), and what the last lookup found is returned meanwhile, []
+    until the first one answers. A resolver can take half a minute for a computer's own name (macOS asks mDNS when
+    the name is not in DNS), and a seed run ends within two seconds of its stop."""
+    with _HOST_LOCK:
+        t = _HOST["thread"]
+        if (t is None or not t.is_alive()) and \
+                (_HOST["started"] is None or time.time() - _HOST["started"] >= HOST_AGAIN):
+            _HOST["started"] = time.time()
+            t = threading.Thread(target=_look_up_host, args=(_HOST,), name="deltapatcher-hostname", daemon=True)
+            _HOST["thread"] = t
+            t.start()
+        return list(_HOST["addresses"])
+
+
+def _look_up_host(into):
+    try:
+        infos = socket.getaddrinfo(socket.gethostname(), None)
+    except (OSError, ValueError, UnicodeError):
+        return
+    found = []
+    for _fam, _t, _p, _c, addr in infos:
+        if addr[0] not in found:
+            found.append(addr[0])
+    with _HOST_LOCK:
+        into["addresses"] = found
+
+
 def endpoint_text(ep):
     host, port = ep[0], ep[1]
     return ("[%s]:%d" % (host, port)) if ":" in host else "%s:%d" % (host, port)
@@ -368,6 +402,7 @@ class Swarm(object):
         self.seen = []                   # alerts kept until a wait() looks at them
         self.said = set()
         self.listen_errors = []
+        host_addresses()                 # this computer's name looked up now, in the background, for own()
 
     @property
     def port(self):
@@ -501,16 +536,14 @@ class Swarm(object):
         return (a.peers or []) if a is not None else []
 
     def own(self):
-        """This session's own addresses as peers would name them (left out of the peer cache)."""
+        """This session's own addresses as peers would name them (left out of the peer cache), at once: the
+        addresses of this computer's name are the ones its lookup has found so far (host_addresses)."""
         port = self.port
         names = {"127.0.0.1:%d" % port}
         if self.ip:
             names.add("%s:%d" % (self.ip, port))
-        try:
-            for fam, _t, _p, _c, addr in socket.getaddrinfo(socket.gethostname(), None):
-                names.add(endpoint_text((addr[0], port)))
-        except OSError:
-            pass
+        for address in host_addresses():
+            names.add(endpoint_text((address, port)))
         return names
 
     def dht_nodes(self):

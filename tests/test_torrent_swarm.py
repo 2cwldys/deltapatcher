@@ -912,5 +912,40 @@ class MeasuredAddress(Base):
         self.assertLess(took, 30)      # about RACE_AFTER (10 s) and the address's own time; the swarm alone: 2 minutes
 
 
+class SlowName(Base):
+    def test_a_seed_run_ends_within_two_seconds_while_this_computers_name_is_looked_up(self):
+        """A resolver can take half a minute for this computer's own name (macOS asks mDNS when the name is not in
+        DNS): a seed run's stop never waits for it."""
+        _pub, p = self.setup_player()
+        from deltapatcher.torrent import seed
+        name, real = socket.gethostname(), socket.getaddrinfo
+        answer = threading.Event()
+        self.cleanups.append(answer.set)
+
+        def lookup(host, *a, **k):
+            if host == name:
+                answer.wait(30)
+            return real(host, *a, **k)
+        stop = threading.Event()
+        with mock.patch.object(self.S, "_HOST", {"addresses": [], "started": None, "thread": None}), \
+                mock.patch.object(self.S.socket, "getaddrinfo", side_effect=lookup):
+            run = seed.Run([(p, config.load(p))], dict(config.load(), torrent_port=0), lambda t, s=None: None,
+                           lambda rows: None, stop, ip="127.0.0.96")
+            t = threading.Thread(target=run.run, daemon=True)
+            t.start()
+            self.cleanups.append(lambda: (stop.set(), t.join(30)))
+            end = time.time() + 60
+            while time.time() < end and not any(s.handle is not None for s in run.seeded):
+                time.sleep(0.05)
+            self.assertTrue(any(s.handle is not None for s in run.seeded))
+            t0 = time.time()
+            stop.set()
+            t.join(30)
+            took = time.time() - t0
+        timing("a seed run's stop while this computer's name is looked up", took)
+        self.assertFalse(t.is_alive())
+        self.assertLess(took, 2.0)
+
+
 if __name__ == "__main__":
     unittest.main()

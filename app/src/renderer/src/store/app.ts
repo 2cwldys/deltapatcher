@@ -9,6 +9,7 @@ import { autoOutcome, madeAt, nextBackup } from './backups'
 import { windowStorage } from './folds'
 import { closeWelcome, welcomeAtStart } from './welcome'
 import { PublisherChange, ReleaseView, settled, withoutPrompt } from './publisher'
+import type { ExportType, HostKeys, PrivateChange, PrivatePart } from './privateFiles'
 import {
   afterRun, PLACE_KEYS, RESTART_KEYS, SEED_KEYS, SeedRow, seedingCount, seedOffArgs, TimedRow, torrentsRefused, wantsSeeding,
   withRow
@@ -67,6 +68,8 @@ export interface ProjectInfo {
   torrent?: boolean
   torrent_only?: boolean
   seed?: boolean
+  // its releases are signed (sign = yes): what a private project file needs
+  sign?: boolean
 }
 
 // a project of a project file being imported: what the file says, and what the person chose. From an update
@@ -91,6 +94,25 @@ export interface ImportEntry {
   // how its publisher shares it by torrent, when it does; seed: the person's yes to seeding it, off at first
   torrent?: { id: string; name: string; seeds: string[] }
   seed: boolean
+  // a private file's project (store/privateFiles.ts): what releasing it needs, the server's host keys, what it
+  // changes in the project here it updates (a file older than the one applied to it, older, shows both times, made
+  // and applied_made, and is applied only with the person's Apply it anyway: applyOlder), a project this computer
+  // only plays, or releases with a signing key DeltaPatcher does not know yet (never changed by the file); and this
+  // computer's own folders and keys, as the person gives them
+  private?: PrivatePart
+  where?: string
+  host_keys?: HostKeys
+  changes?: PrivateChange[]
+  made?: string
+  applied_made?: string
+  applyOlder?: boolean
+  player_here?: { project: string; file: string }
+  key_unknown?: { project: string; file: string }
+  publishSrc: string
+  signingKey: string
+  sshKey: string
+  deployFolder: string
+  trustHostKeys: boolean
 }
 
 export interface Importing {
@@ -105,11 +127,15 @@ export interface Importing {
   entries: ImportEntry[]
   updateNow: boolean
   working: boolean
+  // a publisher's private file, which sets up releasing; asPlayer: the person adds it as a player instead
+  private: boolean
+  asPlayer: boolean
 }
 
-// the export dialog: the projects ticked, the kind of file, update capable or a new project for every file, and
-// the signing key
+// the export dialog: public (for players) or private (for the publisher, on any computer), the projects ticked,
+// the kind of file, update capable or a new project for every file, and the signing key
 export interface Exporting {
+  type: ExportType
   picks: Record<string, boolean>
   kind: 'deltapatch' | 'html'
   updates: boolean

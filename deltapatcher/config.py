@@ -71,6 +71,12 @@ SCHEMA = [
                                  "separated by ; (screenshots/; notes.txt). Patterns like *.log work too."),
     ("publish", "sign", False, "Sign each release (yes/no)."),
     ("publish", "signing_key", default_signing_key(), "The signing key's file (the file's path, never the key)."),
+    ("publish", "signing_public_key", "", "The public key (ed25519:...) of the signing key this project's releases "
+                                          "are signed with, as the private project file it came from names it: "
+                                          "publishing with another signing key is refused. Empty: any signing key."),
+    ("publish", "project_file_made", "", "Kept by DeltaPatcher: when the private project file last applied to this project "
+                                    "(or exported from it here) was made (UTC): an older one, or that one again, is "
+                                    "applied only when you say so."),
     ("publish", "htaccess", True, "Write a .htaccess for Apache into the store (yes/no)."),
     ("publish", "serve_port", 8000, "The port of 'Serve locally'."),
     ("publish", "share_updates", True, "Each release carries this project's details (its name, description, website, "
@@ -280,14 +286,36 @@ def _convert(key, raw):
     return raw
 
 
+# what ends a line of a settings file: "\r\n", "\r" (an old Mac's file) or "\n", and nothing else
+_LINE_END = re.compile(r"\r\n|\r|\n")
+
+
+def lines_of(text):
+    """A settings file's text as its lines, each ended by "\\r\\n", "\\r" or "\\n": no other character str.splitlines()
+    splits at (U+2028, U+2029, \\x0b, \\x85, ...) ever ends a line, so one inside a value never becomes a line of its
+    own."""
+    lines = _LINE_END.split(text)
+    if lines and lines[-1] == "":
+        lines.pop()
+    return lines
+
+
+def read_file(path, encoding="utf-8-sig"):
+    """A settings file read as a ConfigParser, line by line as lines_of() splits it. OSError, UnicodeDecodeError or
+    configparser.Error when it cannot be."""
+    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    with open(path, "r", encoding=encoding, newline="") as f:
+        text = f.read()
+    parser.read_file(lines_of(text), source=path)
+    return parser
+
+
 def file_values(path, keys=None, problems=None):
     """{key: value} of the settings the file has, of `keys` (default: all), each read like load() reads it;
     {} when the file cannot be read, and why is added to the list `problems` when one is given. A UTF-8 byte order
     mark at its start is fine (Windows PowerShell writes one)."""
-    parser = configparser.ConfigParser(interpolation=None, strict=False)
     try:
-        with open(path, "r", encoding="utf-8-sig") as f:
-            parser.read_file(f)
+        parser = read_file(path)
     except (OSError, configparser.Error, UnicodeDecodeError) as e:
         if problems is not None:
             problems.append((str(e).splitlines() or [type(e).__name__])[0])
@@ -342,34 +370,42 @@ _SECT = re.compile(r"^\s*\[([^\]]+)\]\s*$")
 
 def save(cfg, project=None):
     """Write the known settings, changing only their values (comments and order stay). project (a
-    projects.Project; None: Default): its own settings go to its file, DeltaPatcher's own to the main file."""
-    values = {}
+    projects.Project; None: Default): its own settings go to its file, DeltaPatcher's own to the main file. A value
+    that would not stay on one line (any character str.splitlines() splits at) is not written, and the log says so.
+    Returns the keys not written for that."""
+    values, dropped = {}, []
     for k, v in cfg.items():
         if k not in DEFAULTS or any(f in k.lower() for f in FORBIDDEN):
             continue
         text = _text(v)
-        if "\n" in text or "\r" in text:
+        if text and text.splitlines() != [text]:
+            dropped.append(k)
             continue
         values[k] = text
+    if dropped:
+        from . import logs
+        logs.write("Not saved, a line break in the value: %s" % ", ".join(dropped))
     own = own_file(project)
     if own is None:
         _write(ensure(), values, placeholder())
-        return
+        return dropped
     mine = {k: v for k, v in values.items() if SECTION[k] not in APP_SECTIONS}
     app = {k: v for k, v in values.items() if SECTION[k] in APP_SECTIONS}
     if mine:
         _write(own, mine, placeholder(project=True))
     if app:
         _write(ensure(), app, placeholder())
+    return dropped
 
 
 def _write(p, values, template):
-    """Put `values` ({key: text}) into the file p, in place; a file that is not there starts as `template`."""
+    """Put `values` ({key: text}) into the file p, in place; a file that is not there starts as `template`. Its
+    lines are split as lines_of() splits them."""
     try:
-        with open(p, "r", encoding="utf-8") as f:
-            lines = f.read().splitlines()
+        with open(p, "r", encoding="utf-8", newline="") as f:
+            lines = lines_of(f.read())
     except OSError:
-        lines = template.splitlines()
+        lines = lines_of(template)
     bom = bool(lines) and lines[0].startswith("\ufeff")     # kept as the file had it, out of the way of the matching
     if bom:
         lines[0] = lines[0][1:]

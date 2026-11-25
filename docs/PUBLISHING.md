@@ -123,9 +123,10 @@ them: the one before it stays live.
 
 Players need DeltaPatcher and your source address. Common ways:
 
-- **A project file**, the easiest for players: on the **Projects** page, **Export...** (in the **...** menu at the top), tick the projects
-  to put in it, and pick its type: `.deltapatch` opens DeltaPatcher with a double-click, and `.html` is a
-  page anyone can read in a browser (players drag it onto DeltaPatcher). Players then tick the projects and
+- **A project file**, the easiest for players: on the **Projects** page, **Export...** (in the **...** menu at the top), choose
+  **Public: for players**, tick the projects to put in it, and pick its file type: `.deltapatch` opens DeltaPatcher with a
+  double-click, and `.html` is a page anyone can read in a browser (players drag it onto DeltaPatcher). (**Private: for you, on
+  any computer** is the other type: see [Releasing from another computer](#releasing-from-another-computer).) Players then tick the projects and
   pick their folders; nothing to type. For each project the file holds its name, the address players update
   from (*public_url*, else *source_url*), its publisher key, and a description and website when set (the
   *description* and *website* settings); never a folder, a login or a key file. Say where it goes, too:
@@ -171,6 +172,64 @@ The signing key and the SSH key are DeltaPatcher's, shared by every project unle
 name others. Players can keep several of your projects up to date at once: see
 [For players](PLAYERS.md#several-games).
 
+## Releasing from another computer
+
+A project file comes in two types, chosen first when you export one (**Projects** page, **Export...**):
+
+- **Public: for players**: what players need to keep a project up to date ([section 6](#6-give-players-the-updater)).
+- **Private: for you, on any computer**: what releasing the project needs, to keep changing and releasing it from
+  another computer of yours: the release's rules (name, version, the files players keep and the files left out,
+  signing), where it goes (the server's address, its SSH port, your login name and the remote folder, or a folder;
+  the address players update from; the access log), how it is shared by torrent (its torrent id and seeds), how
+  many backups are kept and their size limit, and your server's host keys. Never a folder of this computer, a key
+  or a password, and never when backups are made: each computer sets its own schedule
+  ([Backups](#backups)). Keep it to yourself.
+
+To release from a second computer:
+
+1. Export a private file: **Private: for you, on any computer**, the projects, its file type. It is saved as
+   `My Game (private).deltapatch` and signed with the projects' own signing key (they must sign their releases,
+   all with the same key). Save it outside the folder you release, its store and the folder releases are copied
+   to: DeltaPatcher refuses a place there, and a release leaves out any private project file it finds in the
+   folder it releases. Command line:
+   `deltapatcher project export "My Game" --out "My Game (private).deltapatch" --private`.
+2. Carry your signing key to the other computer yourself, separately: a USB stick, never chat or email. It is the
+   file named by *signing_key*: `%APPDATA%\DeltaPatcher\signing-key.pem` (Windows) or
+   `~/.config/deltapatcher/signing-key.pem`, unless you chose another. Players accept only releases signed with it,
+   so the other computer must sign with this very key.
+3. Open the private file there (drag it onto DeltaPatcher's window, or double-click it). DeltaPatcher shows the
+   signing key it is signed with, and asks for that computer's own: the folder to release (or later), your signing
+   key's file, your SSH key's file (**Make one** makes a key for that computer: add the line it gives to the
+   server's `~/.ssh/authorized_keys`, or use **Put key on server** on the Release page), the folder releases are
+   copied to when they go to a folder, and whether that computer seeds the project. The server's host keys from the
+   file are shown with their fingerprints: trust them, and the first release does not ask about the server. They
+   are added only while that computer trusts no key for the server; when it trusts others, both are shown and
+   none is added.
+   Command line:
+   `deltapatcher project import "My Game (private).deltapatch" --publish-src D:\dev\game --signing-key D:\keys\signing-key.pem --trust-host-keys --yes`
+   (`--trust-host-keys` adds the keys it prints; `--host-key-fingerprints SHA256:...,SHA256:...` only those).
+4. Release as usual. Your signing key is checked against the file's: when you open the file if the key has no
+   passphrase, otherwise at the first release, which asks for the passphrase anyway. Another key is refused, with
+   a plain reason.
+
+- **One source for the folder you release**: a shared drive, or git, so both computers release the same files.
+- **One computer releasing at a time**: a release from one replaces what the other sent.
+- **A change made on one computer** reaches the other with a newer private file: open it there, and the project
+  that computer releases with the same signing key is updated in place, after DeltaPatcher shows what changes.
+  That computer's folders, key files, backup schedule and whether it seeds stay as they are.
+- **An older file is not applied unless you say so.** A file made before the one applied to the project there (or
+  that same file again) shows both times, the file's and the one applied there: the two come from two computers'
+  clocks, so a wrong clock shows. **Apply it anyway** (command line: `--apply-older`; `--yes` alone never does)
+  puts back what it says. An export records its time on the computer that made it too, so opening your own
+  earlier export there is caught the same way.
+- **A private file only ever changes a project released with its own key.** Every other project stays as it is:
+  one signed with another key is set up as a project of its own, never as an update of one you have. When that
+  computer releases a project of the same name but DeltaPatcher does not know its signing key yet (a key with a
+  passphrase, never released or exported there), it says so: release that project once or export a private file
+  from it, then open the file again; or set the file's project up as a separate one.
+- A player who is given a private file by mistake is told what it is, and adds it as a player: only what a public
+  file holds. It never changes a project they already have: they are told they have it as a player.
+
 ## Changing a project later, and patch notes
 
 Each release carries the project's details (description, website, where it goes, the address players
@@ -180,7 +239,8 @@ reaches them only signed with the key they trust now. Change the details on the 
 release: a release with only new details is a new release too. Your own project, the one that releases, is
 never asked about them, also when you test a release from this computer or a folder.
 
-- **Export...** offers **update capable** (players are asked about your later changes) or a one-off file.
+- **Export...** offers, for a public file, **update capable** (players are asked about your later changes) or a
+  one-off file.
 - **Patch notes**: *show_files* (on by default) lets DeltaPatcher show players the names of the files a
   release adds, changes and removes (the manifest is public either way). **What is new, for players** on the
   Release page, or `--notes`, adds your own notes to the release.
@@ -288,6 +348,8 @@ deltapatcher backup schedule daily     the system makes backups without the app:
   Settings page show the last scheduled run. A cron job cannot reach your ssh-agent, so on Linux and macOS
   a scheduled backup over SFTP stops with *key-locked* (DeltaPatcher warns when you schedule it): let the
   app make them instead (**backup_every_hours**).
+- **On each computer**: backups are set on each computer that makes them, as is their folder. A private project
+  file carries how many are kept and the size limit, never when they are made.
 
 A release sent only to this computer (*This computer, to test*) has nothing to back up.
 

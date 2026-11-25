@@ -40,9 +40,9 @@ SEEDING_NAME = "seeding.json"       # beside the main settings file: what the se
 DEFAULT_NAME = "release"
 MAX_SEEDS = 20
 MAX_PEERS = 50
-ID_RE = re.compile(r"^[0-9a-f]{32}$")
-_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
-_LABEL = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?$")
+ID_RE = re.compile(r"^[0-9a-f]{32}\Z")
+_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+_LABEL = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?\Z")
 _DEVICES = set(["con", "prn", "aux", "nul"] + ["com%d" % i for i in range(1, 10)] + ["lpt%d" % i for i in range(1, 10)])
 # the names of a store's own files and folders: a torrent named one of them would hide them from its web seed
 # (deltapatcher serve answers <address>/<name>/... as <address>/...)

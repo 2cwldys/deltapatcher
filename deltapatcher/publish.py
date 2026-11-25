@@ -178,6 +178,13 @@ def walk(src, pats=None, skipped=None, left_out=None):
     return sorted(out)
 
 
+def private_files(src, rels):
+    """The files of the release (rels, relative paths under src) that are private project files
+    (presets.is_private_file()): never sent to players."""
+    from .presets import EXTENSIONS, is_private_file
+    return [r for r in rels if r.lower().endswith(EXTENSIONS) and is_private_file(os.path.join(src, *r.split("/")))]
+
+
 def load_manifest_file(path):
     """The manifest at path, or None when there is none or it cannot be read."""
     try:
@@ -245,7 +252,8 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     `signer` is a signing key
     (signing.load_key) to sign the manifest with; `htaccess` writes the store's .htaccess for Apache.
     `protect` and `leave_out` are rules (manifest.rule_matches): files players keep once they have
-    them, and files the release leaves out (with DEFAULT_IGNORE and the folder's .deltaignore).
+    them, and files the release leaves out (with DEFAULT_IGNORE and the folder's .deltaignore). A private project
+    file in the folder (private_files()) is always left out, with a warning.
     `project`: what the release says about its project (publisher.release_object()); a change to it alone
     makes a new manifest, as a change to a file does.
     `extra`: called as extra(store, manifest bytes, signature bytes or None) once the release's blobs and signature
@@ -269,6 +277,12 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     if res.left_out:
         shown = ", ".join(res.left_out[:8]) + (" and %d more" % (len(res.left_out) - 8) if len(res.left_out) > 8 else "")
         log("left out: %s" % shown)
+    private = private_files(src, rels)
+    if private:
+        rels = [r for r in rels if r not in private]
+        res.left_out += private
+        log("Warning: left out of the release, a private project file (it holds your server's address and login "
+            "name): %s" % ", ".join(private))
     for rel, why in res.skipped:
         log("skipped %s (%s)" % (rel, why))
     for rel in rels:

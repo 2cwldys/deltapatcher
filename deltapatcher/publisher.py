@@ -41,7 +41,7 @@ LABELS = {"description": "description", "website": "website", "install_hint": "w
 WORDS = {"description": "description", "website": "website", "install_hint": "where it goes",
          "install_folder": "where it goes", "source_url": "the address", "trust_key": "the publisher key",
          "torrent": "the torrent"}
-_TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ$")
+_TIME = re.compile(r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ\Z")
 
 
 # ---- release notes --------------------------------------------------------------------------------
@@ -93,6 +93,8 @@ def release_object(project, cfg, signer_text="", notes="", log=None):
             obj["title"] = project.title
         for k in DETAILS:
             value = str(cfg.get(k) or "").strip()
+            if k in ("description", "install_hint"):
+                value = presets.one_line(value).strip()      # a line separator pasted into it: a space
             if value:
                 problem = _detail_problem(k, value)
                 if problem:
@@ -142,6 +144,8 @@ def read_object(raw):
             except signing.SignError:
                 problem = "not a key"
         elif k in ("description", "install_hint", "install_folder"):
+            if k != "install_folder" and isinstance(v, str):
+                v = presets.one_line(v)                     # a line separator in it reads as a space
             problem = _detail_problem(k, v) if isinstance(v, str) else "not a text"
         elif k == "show_files":
             problem = "" if isinstance(v, bool) else "not yes or no"

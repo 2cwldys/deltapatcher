@@ -1,11 +1,15 @@
 // What the project picker, the Projects page and the Settings page do with projects, with the same questions
-// everywhere: make, rename and remove them; add a project file (imported, or updating the project it is for) or a
-// settings file (listed); export a project file; apply a publisher's change or answer it Not now; show what a
-// release changed; seed a project or stop seeding it; remove every project; reset DeltaPatcher.
-import { ImportEntry, ProjectInfo, seedSettingsChanged, UpdateResult, useApp } from './app'
+// everywhere: make, rename and remove them; add a project file (imported, or updating the project it is for; a
+// publisher's private file sets up releasing) or a settings file (listed); export a project file, public or
+// private; apply a publisher's change or answer it Not now; show what a release changed; seed a project or stop
+// seeding it; remove every project; reset DeltaPatcher.
+import { Exporting, ImportEntry, ProjectInfo, seedSettingsChanged, UpdateResult, useApp } from './app'
 import { ask } from './modal'
 import { nameRules } from './folders'
 import { acceptArgs, applyQuestion, inPlace, PublisherChange, updatesDefault } from './publisher'
+import {
+  exportChosen, exportName, PRIVATE_EXPORT, privateExportArgs, privateImportArgs, privateRuns, seedAfterSetUp, setUpNotes
+} from './privateFiles'
 
 const PROJECT_FILE = /\.(deltapatch|html?)$/i
 
@@ -152,10 +156,11 @@ async function addSettingsFile(file: string): Promise<void> {
   await useApp.getState().selectProject(String(r.data.file))
 }
 
-// a project file: read and checked by the engine, then the import dialog
-export async function startImport(path: string): Promise<void> {
+// a project file: read and checked by the engine, then the import dialog. A publisher's private file opens on
+// setting up releasing; asPlayer: it is added as a player instead, with only what a public file holds
+export async function startImport(path: string, asPlayer = false): Promise<void> {
   const st = useApp.getState()
-  const r = await st.side(['project', 'import', path, '--dry-run'])
+  const r = await st.side(['project', 'import', path, '--dry-run', ...(asPlayer ? ['--as-player'] : [])])
   if (!r.ok) {
     const why =
       r.code === 'tampered'
@@ -168,13 +173,21 @@ export async function startImport(path: string): Promise<void> {
   // Force stop came while the file was read: no dialog opens
   if (useApp.getState().stopped) return
   const taken = st.projects.map((p) => p.title)
+  // this computer's keys, as a project gets them unless the person picks others
+  const fallback = (key: string): string => String(st.schema.find((x) => x.key === key)?.default ?? '')
   const entries: ImportEntry[] = (r.data.projects ?? []).map((e: ImportEntry) => ({
     ...e,
     pick: true,
     name: e.taken ? freeName(e.title, taken) : e.title,
     folder: '',
     asNew: false,
-    seed: false
+    seed: false,
+    publishSrc: '',
+    signingKey: fallback('signing_key'),
+    sshKey: fallback('ssh_key'),
+    deployFolder: '',
+    trustHostKeys: false,
+    applyOlder: false
   }))
   useApp.setState({
     importing: {
@@ -186,9 +199,45 @@ export async function startImport(path: string): Promise<void> {
       torrentsRefused: Boolean(r.data.torrents_refused),
       entries,
       updateNow: true,
-      working: false
+      working: false,
+      private: Boolean(r.data.private),
+      asPlayer
     }
   })
+}
+
+// Set up releasing in the import dialog of a private file: each ticked project with this computer's folders and
+// keys (or the project here it updates, which keeps its own; from an older file only after Apply it anyway), the
+// host keys only when the person said so; then the first project set up is shown on the Release page, with what it
+// still needs
+async function finishPrivateImport(): Promise<void> {
+  const st = useApp.getState()
+  const im = st.importing
+  if (!im) return
+  useApp.setState({ importing: { ...im, working: true } })
+  const added: { project: string; file: string; key_check?: string; host_keys?: string; publish_src?: string; seed?: boolean }[] = []
+  const updated: string[] = []
+  const problems: string[] = []
+  for (const e of privateRuns(im.entries)) {
+    const r = await st.side(privateImportArgs(im.file, e, im.torrentsRefused))
+    if (r.ok) {
+      for (const a of r.data.added ?? []) added.push(a)
+      for (const u of r.data.updated ?? []) updated.push(String(u.file))
+    } else {
+      problems.push(`${e.title}: ${r.message}`)
+    }
+  }
+  useApp.setState({ importing: null })
+  await st.loadProjects()
+  if (seedAfterSetUp(added)) void seedSettingsChanged(['seed'])
+  const first = added[0]?.file ?? updated[0]
+  if (first) {
+    await useApp.getState().selectProject(first)
+    useApp.getState().setPage('release')
+  }
+  if (problems.length) await ask.info('Not every project was set up', problems.join('\n'))
+  const notes = setUpNotes(added)
+  if (notes.length) await ask.info('Set up for releasing', notes.join('\n'))
 }
 
 // Add (or Update) in the import dialog: each ticked project with its name and folder (and seeding, when the person
@@ -197,12 +246,13 @@ export async function finishImport(): Promise<void> {
   const st = useApp.getState()
   const im = st.importing
   if (!im) return
+  if (im.private && !im.asPlayer) return finishPrivateImport()
   useApp.setState({ importing: { ...im, working: true } })
   const added: { file: string; folder: string; seed: boolean }[] = []
   const updated: string[] = []
   const problems: string[] = []
   for (const e of im.entries.filter((x) => x.pick)) {
-    const args = ['project', 'import', im.file, `--only=${e.title}`, '--yes']
+    const args = ['project', 'import', im.file, `--only=${e.title}`, '--yes', ...(im.asPlayer ? ['--as-player'] : [])]
     if (!inPlace(e)) {
       if (e.updates) args.push('--as-new')
       if (e.name.trim() !== e.title) args.push(`--name=${e.name.trim()}`)
@@ -243,6 +293,7 @@ export async function startExport(file?: string): Promise<void> {
   const picked = file ?? st.project
   useApp.setState({
     exporting: {
+      type: 'public',
       picks: { [picked]: true },
       kind: 'deltapatch',
       updates: updatesDefault(st.projects.filter((p) => p.file === picked)),
@@ -254,15 +305,46 @@ export async function startExport(file?: string): Promise<void> {
   })
 }
 
+// Export of a private file: always signed with the projects' own signing key (its passphrase asked when it has
+// one, never kept), saved as "<project> (private)", then what it holds and that the key moves by hand
+async function finishPrivateExport(chosen: ProjectInfo[], kind: Exporting['kind']): Promise<void> {
+  const st = useApp.getState()
+  const cfg = await st.side(['config', 'get', `--project=${chosen[0].file}`])
+  if (!cfg.ok) return failed('The private project file was not saved', cfg.message)
+  const key = String(cfg.data.settings?.signing_key ?? '')
+  const status = await st.side(['sign', 'status', `--path=${key}`])
+  if (!status.ok || !status.data.exists || !status.data.can_sign) {
+    return ask.info('The private project file was not saved', `There is no signing key at\n${key}\n\nA private project file is signed with its projects' signing key.`)
+  }
+  let passphrase: string | undefined
+  if (status.data.has_passphrase) {
+    const p = await ask.passphrase('Sign the private project file', `The passphrase of the signing key\n${key}`)
+    if (p === null) return
+    passphrase = p
+  }
+  const out = await window.api.saveProjectFile(exportName(chosen.map((p) => p.title), 'private'), kind)
+  if (!out) return
+  const r = await st.side(privateExportArgs(chosen.map((p) => p.file), out, passphrase !== undefined), passphrase)
+  if (!r.ok) return failed('The private project file was not saved', sentences(String(r.message ?? '')))
+  const show = await ask.confirm(
+    'Private project file saved',
+    `${out}\n\n${chosen.length === 1 ? 'One project' : `${chosen.length} projects`}: ${chosen.map((p) => p.title).join(', ')}.\n` +
+      `It is signed with your signing key.\n${PRIVATE_EXPORT}\nOn your other computer, open it with DeltaPatcher.`,
+    'Show the file'
+  )
+  if (show) await window.api.show(out)
+}
+
 // Export in the dialog: the passphrase when it is signed (asked, never kept), where to save it, then the engine
 // writes it
 export async function finishExport(): Promise<void> {
   const st = useApp.getState()
   const ex = st.exporting
   if (!ex) return
-  const chosen = st.projects.filter((p) => ex.picks[p.file])
+  const chosen = exportChosen(st.projects, ex.picks, ex.type)
   if (!chosen.length) return
   useApp.setState({ exporting: null })
+  if (ex.type === 'private') return finishPrivateExport(chosen, ex.kind)
   const signing = ex.sign && ex.keyExists
   let passphrase: string | undefined
   if (signing && ex.keyLocked) {

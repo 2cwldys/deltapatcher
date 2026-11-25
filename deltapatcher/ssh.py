@@ -32,8 +32,8 @@ NOWINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
 if os.name == "nt":
     os.environ.setdefault("NoDefaultCurrentDirectoryInExePath", "1")
 
-HOST_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[0-9A-Fa-f:]+:[0-9A-Fa-f:.]*|[A-Za-z0-9]([A-Za-z0-9.\-_]*[A-Za-z0-9])?)$")
-USER_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._\-$]*$")
+HOST_RE = re.compile(r"^(\[[0-9A-Fa-f:.]+\]|[0-9A-Fa-f:]+:[0-9A-Fa-f:.]*|[A-Za-z0-9]([A-Za-z0-9.\-_]*[A-Za-z0-9])?)\Z")
+USER_RE = re.compile(r"^[A-Za-z0-9._][A-Za-z0-9._\-$]*\Z")
 SFTP_UNSAFE = set('"\'\\*?[]\r\n\t')
 
 

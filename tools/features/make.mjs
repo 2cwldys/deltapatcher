@@ -58,7 +58,7 @@ const GROUPS = [
     name: 'Share', icon: 'share-2', colour: 'teal',
     line: 'One file sets players up.\nPlayers can share too.',
     features: [
-      ['file-key', 'Project presets', 'Share projects as one .deltapatch or .html file: players open it and are set up, signed so they know it is yours.'],
+      ['file-key', 'Project presets', 'Share projects as one .deltapatch or .html file: players open it and are set up, signed so they know it is yours. Private ones are for you.'],
       ['refresh-cw', 'Presets that follow you', 'Change a project later and players are asked before anything changes; one-off files stay possible.'],
       ['network', 'Torrents, if you want them', 'Players can download from each other and seed, no server needed; off unless you turn it on, and anyone can refuse it.']
     ]

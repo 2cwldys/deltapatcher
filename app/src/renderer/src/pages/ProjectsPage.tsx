@@ -298,7 +298,7 @@ export default function ProjectsPage(): JSX.Element {
           )}
           <InfoTip text={`Update all brings every project with a folder and a source up to date, ${parallel === 1 ? 'one at a time' : `${parallel} at the same time`} (parallel_updates, on the Settings page).\n` +
             "Add a project file takes a .deltapatch or .html file from a publisher, or (advanced) a project's .ini settings file.\n" +
-            'Export... writes a project file to give to players.'} />
+            'Export... writes a project file: public, to give to players, or private, for you on another computer.'} />
           <div className="ml-auto flex items-center gap-2">
             <Menu label="Add..." icon={Plus} title="Add a project" items={[
               { label: 'Add a project file...', icon: FilePlus, title: 'A .deltapatch or .html file from a publisher, or a .ini settings file',

@@ -85,7 +85,7 @@ function schema() {
 }
 
 test('the Settings page leaves out only what DeltaPatcher or the Projects page keeps', () => {
-  assert.deepEqual(HIDDEN, ['title', 'project_files', 'current_project', 'publisher_accepted', 'publisher_not_now'])
+  assert.deepEqual(HIDDEN, ['title', 'project_files', 'current_project', 'publisher_accepted', 'publisher_not_now', 'project_file_made'])
   const keys = schema().map(([, k]) => k)
   for (const key of HIDDEN) assert.ok(keys.includes(key), `${key} is a setting`)
 })

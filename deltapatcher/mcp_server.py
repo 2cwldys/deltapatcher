@@ -503,7 +503,9 @@ def b_project_remove(a):
 
 
 def b_project_import(a):
-    argv = ["project", "import", path_of(a["file"])]
+    """The engine run of project_import, its dry run and its real one alike: always as a player (--as-player), so a
+    private project file (one swapped in after the dry run too) never sets up releasing here."""
+    argv = ["project", "import", path_of(a["file"]), "--as-player"]
     for name in a.get("projects") or []:
         argv += ["--only", name]
     opt(argv, "--folder", a.get("folder"), path_of)
@@ -600,12 +602,18 @@ def t_selftest(server, a, key, progress):
 
 def t_project_import(server, a, key, progress):
     """A dry run first: a project this computer has that the file would move to another address or publisher key
-    is left to the person, and nothing is added."""
+    is left to the person, and nothing is added. So is a publisher's private project file, which sets up releasing
+    with this computer's keys and the server's host keys."""
     if a.get("dry_run"):
         return engine_result(server.engine.run(b_project_import(a), key=key))
     look = server.engine.run(b_project_import(dict(a, dry_run=True)), key=key)
     if not look.ok:
         return engine_result(look)
+    if look.data.get("private"):
+        raise ToolProblem("%s is a publisher's private project file: it sets up releasing from this computer, with its "
+                          "own key files and the server's host keys to trust. That is for the person: nothing was set up. "
+                          "They open it in the DeltaPatcher app, or with  deltapatcher project import FILE."
+                          % os.path.basename(str(a["file"])))
     moving = [r for r in look.data.get("projects") or [] if r.get("updates") and for_the_person(r.get("change"))]
     if moving:
         text = "\n\n".join(change_text(r["updates"]["project"], r["change"]) for r in moving)
@@ -828,7 +836,9 @@ TOOLS_LIST = [
          "out ending in .deltapatch opens DeltaPatcher with a double-click; .html is a page anyone can read in a "
          "browser. It is not signed: signing needs the passphrase, which this server never handles (export it from "
          "the DeltaPatcher app or its command line to sign it). An update capable file (updates) lets players be "
-         "asked when the projects change later; the DeltaPatchers before it cannot read one.",
+         "asked when the projects change later; the DeltaPatchers before it cannot read one. It is always the public "
+         "file, for players: a private project file (what releasing them from another computer needs) is always signed, "
+         "so it is made in the app or with  deltapatcher project export NAME --out FILE --private.",
          schema(["projects", "out"], projects=s_list("The projects: their names or settings files."),
                 out=s_str("The file to write: NAME.deltapatch or NAME.html."),
                 updates=s_bool("Update capable (true) or a new project for every file (false). Left out: update capable "
@@ -842,7 +852,9 @@ TOOLS_LIST = [
          "for it (install_folder) goes into that folder inside the one given, unless the one given already is it; its "
          "install_hint says where it goes. A project of an update capable file that is here already is updated "
          "instead (only what its publisher changed; never its folder or name here), unless as_new; one the file "
-         "would move to another address or publisher key is left to the person, and then nothing is imported.",
+         "would move to another address or publisher key is left to the person, and then nothing is imported. A "
+         "publisher's private project file (dry_run says private) is only read here: setting up releasing from it is "
+         "for the person.",
          schema(["file"], file=s_str("The project file."),
                 folder=s_str("The folder to keep up to date (several projects: a folder each inside it, named by "
                              "install_folder or after the project). Left out: chosen later, with set_settings "

@@ -103,6 +103,30 @@ later), or version 3 when a project in it is shared by torrent: that project's e
 have no address (it updates by torrent only). A file is written with the lowest version its contents need,
 and a DeltaPatcher asks to be updated for a version newer than it reads.
 
+A private project file, the publisher's own (to keep releasing a project from another computer), is version 4:
+`"private": true` at the top, beside `"updates"`, and every project's entry has one more part, `"private"`, what
+releasing it needs. It must be signed, with the signing key every private part names; an unsigned file, one
+signed with another key, version 4 without `"private": true`, and a public file with a private part are refused.
+The private part has four sections, each holding exactly these fields, each the setting of the same name (a field
+missing or unknown is refused, never passed over):
+
+| Section | Fields |
+| --- | --- |
+| `publish` | `name`, `version` (text), `protect`, `leave_out` (paths inside the folder released and patterns, separated by `;`: never a drive, a leading `/`, `\` or `~`, a `:` or a `..`), `sign`, `htaccess`, `share_updates`, `show_files` (true or false), `signing_public_key` (`ed25519:...`: the key the file is signed with) |
+| `server` | `deploy_mode` (`sftp`, `folder` or `local`), `ssh_host` (a host name or address, or empty), `ssh_user` (a user name, or empty), `ssh_port` (1 to 65535), `remote_root` (a path on the server), `public_url` (an http(s) address, or empty), `access_log` (only with `sftp`: a path on the server), `host_keys` (at most 16 `{"type", "key"}`: a key type OpenSSH knows, and the key in base64, which names that type; only with `ssh_host`) |
+| `torrent` | `torrent` (true or false; true needs a torrent id, and the entry's `"torrent"` then has the same id), `torrent_id` (32 hex characters, or empty), `torrent_name` (a torrent's name, or empty), `seeds` (`host:port`, separated by commas) |
+| `backup` | `backup_keep_daily`, `backup_keep_weekly`, `backup_keep_monthly` (0 to 100000), `backup_max_size` (a size such as `10 GB`, or empty); never `backup_every_hours`: when backups are made is each computer's own |
+
+A host name, a user name and a torrent id or name are taken whole: one with a line end after it is refused.
+The rest of the entry is what a public file holds, and a player who adds the file as a player gets only that.
+
+In every project file, public or private, a text is one line: a character `str.splitlines()` ends a line at (a
+line feed or carriage return, `\x0b`, `\x0c`, `\x1c` to `\x1e`, `\x85`, U+2028, U+2029) is refused, as is any other
+control character. A public file's texts (`description`, `install_hint`) and a release's details are read and
+written with each line or paragraph separator (U+2028, U+2029) as a space, so an older file holding one still
+reads; in a private file one is refused. A settings file is read and written line by line, a line ending at `\r\n`,
+`\r` or `\n` and at nothing else.
+
 ### Path rules
 
 A client must refuse the whole manifest if any path:

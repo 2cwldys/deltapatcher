@@ -134,11 +134,10 @@ def all_projects():
 
 
 def check_file(path):
-    """A file that can be a project: it reads as a settings file, and has a project's sections or none."""
-    parser = configparser.ConfigParser(interpolation=None, strict=False)
+    """A file that can be a project: it reads as a settings file (as config.read_file() reads one), and has a
+    project's sections or none."""
     try:
-        with open(path, "r", encoding="utf-8-sig") as f:            # a byte order mark at its start is fine
-            parser.read_file(f)
+        parser = config.read_file(path)                              # a byte order mark at its start is fine
     except (OSError, UnicodeDecodeError) as e:
         raise ProjectError("cannot read %s: %s" % (path, e), "unreadable")
     except configparser.Error as e:
@@ -356,7 +355,7 @@ def describe(project, cfg=None):
     http(s) address a project file would give for it ('' when it has none); how often the app backs it up and
     when its newest backup was made; whether it asks about its publisher's changes, and whether its releases
     share its details and show file names; whether it is shared by torrent (by torrent only, with no address) and
-    is set to seed."""
+    is set to seed; whether its releases are signed (sign: a private project file needs it)."""
     from .backup import newest
     from .presets import address
     from . import torrent
@@ -377,4 +376,4 @@ def describe(project, cfg=None):
                 (cfg["deploy_mode"] == "sftp" and bool(cfg["ssh_host"]) and bool(cfg["remote_root"]))),
             "follow_publisher": bool(cfg["follow_publisher"]), "share_updates": bool(cfg["share_updates"]),
             "show_files": bool(cfg["show_files"]), "torrent": torrent.info(cfg) is not None,
-            "torrent_only": torrent.torrent_only(cfg), "seed": bool(cfg["seed"])}
+            "torrent_only": torrent.torrent_only(cfg), "seed": bool(cfg["seed"]), "sign": bool(cfg["sign"])}

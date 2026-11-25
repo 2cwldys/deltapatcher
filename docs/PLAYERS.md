@@ -22,6 +22,12 @@ The address and the publisher key come from the file, so even the first download
 publisher's key. A file changed after it was signed is refused. An unsigned file can be added, with a
 warning: add it only if you trust where it came from.
 
+A **private** project file is a publisher's own, for releasing from their other computers, and DeltaPatcher says
+so when you open one. Given one by mistake? **Add it as a player** adds its projects with only what a public file
+holds: the address, the publisher key and their details. A private file never changes a project you already have:
+DeltaPatcher says you have it as a player, and the file could only set up a project of its own. Let the publisher
+know, so they keep it to themselves.
+
 ## First time, with an address
 
 1. Start DeltaPatcher. It opens on the **Update** page.

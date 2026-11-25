@@ -12,8 +12,8 @@ export interface SettingWords {
 
 // the settings the Settings page leaves out: kept by the Projects page and the project picker (the name, the added
 // files, the one shown), or by DeltaPatcher itself (the publisher's details last accepted, the change answered Not
-// now)
-export const HIDDEN = ['title', 'project_files', 'current_project', 'publisher_accepted', 'publisher_not_now']
+// now, when the private project file applied was made)
+export const HIDDEN = ['title', 'project_files', 'current_project', 'publisher_accepted', 'publisher_not_now', 'project_file_made']
 
 export const WORDS: Record<string, SettingWords> = {
   // Project
@@ -36,6 +36,7 @@ export const WORDS: Record<string, SettingWords> = {
   leave_out: { label: 'Leave out of the release', line: 'Paths players never get, separated by ;' },
   sign: { label: 'Sign each release', line: "Players' updaters then refuse anything not signed by your key." },
   signing_key: { label: 'Signing key', line: "The key file's path, never the key.", more: true },
+  signing_public_key: { label: "Signing key's public key", line: 'Releases must be signed with it; set by a private project file.', more: true },
   htaccess: { label: '.htaccess for Apache', line: 'Serve only the release: no listings, the right cache headers.', more: true },
   serve_port: { label: 'Port on this computer', line: 'The port for This computer, to test.', more: true },
   share_updates: { label: 'Players follow this project', line: 'Releases carry its details; players are asked before a change.' },

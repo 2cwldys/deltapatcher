@@ -374,6 +374,23 @@ def confirm_host(target):
     say("Trusted; kept in %s" % target.known_hosts, "ok")
 
 
+def check_signer(project, cfg, path, signer_text):
+    """A project whose settings name the key its releases are signed with (signing_public_key, set by the private
+    project file it came from) is signed with that key only: CliError, saying which, for another."""
+    want = str(cfg.get("signing_public_key") or "").strip()
+    if not want:
+        return
+    try:
+        want = signing.key_text(signing.parse_key(want))
+        named = "%s (%s)" % (want, signing.fingerprint(signing.parse_key(want)))
+    except signing.SignError:
+        named = "%s, which is not a public key" % want
+    if want != signer_text:
+        raise CliError("the signing key %s is not the one %s's releases are signed with: %s. Pick that key's file, or "
+                       "empty signing_public_key in its settings to sign with another key" % (path, project.title, named),
+                       "wrong-key", project.tag())
+
+
 def load_signer(a, path):
     """The signing key at path, with its passphrase when it has one."""
     if not signing.can_sign():
@@ -449,7 +466,9 @@ def cmd_publish(a, cfg):
     notes = release_notes(a)
     signer = None
     if a.sign is not None:
-        signer = load_signer(a, a.sign or cfg["signing_key"] or signing.default_key_path())
+        key_path = a.sign or cfg["signing_key"] or signing.default_key_path()
+        signer = load_signer(a, key_path)
+        check_signer(project_of(a), cfg, key_path, signing.public_key_text(signer))
     name = a.name if a.name is not None else cfg["name"]
     version = a.version if a.version is not None else cfg["version"]
     shared, made = torrent_release(a, cfg, signer)
@@ -1457,6 +1476,12 @@ def cmd_config(a, cfg):
                 backup.parse_size(changes["backup_max_size"])
             except ValueError as e:
                 raise CliError(str(e), "bad-setting")
+        if str(changes.get("signing_public_key") or "").strip():
+            try:
+                changes["signing_public_key"] = signing.key_text(signing.parse_key(changes["signing_public_key"]))
+            except signing.SignError:
+                raise CliError("signing_public_key: a public key (ed25519:...), or empty for any signing key",
+                               "bad-setting")
         if set(changes) & set(FOLDER_SETTINGS):
             after = dict(config.load(project), **changes)
             problem = backup.folder_problem(after)
@@ -1469,10 +1494,12 @@ def cmd_config(a, cfg):
             problem = seedcopy.copies_problem(changes["seed_copies"])
             if problem:                   # refused: nothing changes, nothing is deleted
                 raise CliError(problem, "bad-setting")
-        config.save(changes, project)     # only these keys change, each in its own file; everything else stays
+        dropped = config.save(changes, project)     # only these keys change, each in its own file; everything else stays
+        for k in dropped:
+            say("Warning: %s was not saved: its value holds a line break, and a setting is one line" % k, "warn")
         if set(changes) & set(COPY_SETTINGS):
             clean_seed_copies()
-        return {"path": own, "settings": config.load(project)}
+        return {"path": own, "settings": config.load(project), "not_saved": dropped}
     data = {"path": own, "main_path": p, "project": dict(project.tag(), kind=project.kind),
             "log": logs.path() or logs.default_path(), "log_dir": os.path.dirname(logs.path() or logs.default_path()),
             "settings": config.load(project), "schema": [{"section": s, "key": k, "default": d, "what": w}
@@ -1641,8 +1668,35 @@ def loopback(url):
     return (urllib.parse.urlsplit(url).hostname or "").lower() in presets.LOOPBACK
 
 
+def private_signing_key(a, chosen):
+    """The signing key a private project file of these projects is signed with: their own (signing_key), the same
+    for every one of them, and only when their releases are signed (sign = yes). CliError saying why otherwise."""
+    paths = []
+    for p in chosen:
+        cfg = config.load(p)
+        if not cfg["sign"]:
+            raise CliError("%s does not sign its releases (sign = no): a private project file is signed with the "
+                           "project's signing key. Turn on Sign each release first" % p.title, "not-signed", p.tag())
+        path = os.path.abspath(os.path.expanduser(cfg["signing_key"] or signing.default_key_path()))
+        if not os.path.isfile(path):
+            raise CliError("there is no signing key at %s, the signing key of %s: a private project file is signed "
+                           "with it" % (path, p.title), "no-signing-key", p.tag())
+        paths.append((p, path))
+    first = paths[0][1]
+    for p, path in paths[1:]:
+        if os.path.normcase(path) != os.path.normcase(first):
+            raise CliError("the projects of one private project file share one signing key: %s signs with %s, %s with "
+                           "%s" % (paths[0][0].title, first, p.title, path), "mixed-keys")
+    if a.sign and os.path.normcase(os.path.abspath(os.path.expanduser(a.sign))) != os.path.normcase(first):
+        raise CliError("a private project file is signed with its projects' own signing key, %s, not %s"
+                       % (first, a.sign), "other-key")
+    return first
+
+
 def project_export(a):
-    """project export NAME... --out FILE: a project file with these projects, signed with --sign."""
+    """project export NAME... --out FILE: a project file with these projects, signed with --sign. --private: a
+    private project file, for the publisher on any computer: what releasing them needs (presets.private_part()),
+    always signed with their own signing key, the same for all."""
     out = os.path.abspath(os.path.expanduser(a.out))
     if not presets.is_project_file(out):
         raise CliError("a project file's name ends in .deltapatch (it opens DeltaPatcher with a double-click) or "
@@ -1652,6 +1706,8 @@ def project_export(a):
         p = projects.resolve(name)
         if not any(projects.same(p, q) for q in chosen):
             chosen.append(p)
+    if getattr(a, "private", False):
+        return private_export(a, out, chosen)
     signer, key_path = None, ""
     if a.sign is not None:
         key_path = a.sign or config.load(chosen[0])["signing_key"] or signing.default_key_path()
@@ -1677,7 +1733,63 @@ def project_export(a):
             say("%s updates from this computer (%s): the file works on this computer only." % (e["title"], e["source_url"]),
                 "warn")
     return {"file": out, "projects": [e["title"] for e in entries], "signed": signer is not None, "signer": signer_text,
-            "updates": updates}
+            "updates": updates, "private": False}
+
+
+def released_folder(out, chosen):
+    """The folder a private project file at `out` would be released from or sent to (a project's publish_src, its
+    store, its deploy_folder), with the project; (None, None) when it is outside them all."""
+    def inside(path, folder):
+        folder = os.path.normcase(os.path.abspath(os.path.expanduser(folder))).rstrip("\\/")
+        return os.path.normcase(path).startswith(folder + os.sep)
+    for p in chosen:
+        cfg = config.load(p)
+        src = str(cfg["publish_src"] or "").strip()
+        for folder in (src, str(cfg["store_dir"] or "").strip() or (config.default_store(src) if src else ""),
+                       str(cfg["deploy_folder"] or "").strip()):
+            if folder and inside(out, folder):
+                return folder, p
+    return None, None
+
+
+def private_export(a, out, chosen):
+    """project export NAME... --out FILE --private: see project_export(). Never into a folder one of these projects
+    releases or sends to players. Each project exported here gets the key it is signed with as its
+    signing_public_key, so this computer knows its own project in a later private file, and the time the file was
+    made as its project_file_made, so this file (or an older one) opened here again is not applied by itself."""
+    folder, p = released_folder(out, chosen)
+    if folder:
+        raise CliError("%s is inside %s, which %s releases: a private project file there would go to players. Save it "
+                       "somewhere else" % (out, folder, p.title), "released-folder", p.tag())
+    key_path = private_signing_key(a, chosen)
+    for p in chosen:
+        cfg = config.load(p)
+        if cfg["torrent"] and not torrent.ID_RE.match(str(cfg["torrent_id"] or "").strip().lower()):
+            raise CliError("%s is shared by torrent and has no torrent id yet: release it once here first (that makes "
+                           "its id, which players find it by), then export it" % p.title, "no-torrent-id", p.tag())
+    signer = load_signer(a, key_path)
+    signer_text = signing.public_key_text(signer)
+    entries = []
+    for p in chosen:
+        cfg = config.load(p)
+        check_signer(p, cfg, key_path, signer_text)
+        e = presets.entry(p, cfg, signer_text, key_path)
+        e[presets.PRIVATE_FIELD] = presets.private_part(cfg, signer_text, say)
+        entries.append(e)
+    updates = a.updates if a.updates is not None else all(config.load(p)["share_updates"] for p in chosen)
+    made = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    presets.write(out, presets.build(entries, signer, made=made, updates=updates))
+    for p in chosen:
+        config.save({"signing_public_key": signer_text, "project_file_made": made}, p)
+    titles = ", ".join(e["title"] for e in entries)
+    say("Wrote the private project file %s: %s, signed by %s." % (paint(out, "code"), titles,
+                                                                  signing.fingerprint(signing.parse_key(signer_text))), "ok")
+    say("It holds what releasing needs: the server's address and login name, never a key or a password. Keep it to "
+        "yourself.")
+    say("Open it with DeltaPatcher on your other computer, and bring your signing key there separately: a USB stick, "
+        "not chat or email.", "warn")
+    return {"file": out, "projects": [e["title"] for e in entries], "signed": True, "signer": signer_text,
+            "updates": updates, "private": True}
 
 
 def import_rows(entries, found, a):
@@ -1714,14 +1826,30 @@ def import_question(rows):
     return "Add %d and update %d" % (new, upd)
 
 
+def private_options(a):
+    """The options of project import that only setting up releasing from a private project file takes, as given."""
+    return [o for o, v in (("--publish-src", a.publish_src), ("--signing-key", a.signing_key), ("--ssh-key", a.ssh_key),
+                           ("--deploy-folder", a.deploy_folder), ("--trust-host-keys", a.trust_host_keys),
+                           ("--host-key-fingerprints", a.host_key_fingerprints is not None),
+                           ("--apply-older", a.apply_older)) if v]
+
+
 def project_import(a):
     """project import FILE: the projects of a project file become projects here, after one question. A project of
     an update capable file that this computer has already (publisher.match) is updated instead, unless --as-new:
-    only what its publisher changed, never its folder, its name here or a setting of the player's own."""
+    only what its publisher changed, never its folder, its name here or a setting of the player's own. A private
+    project file sets up releasing instead (private_import()), unless --as-player: then it is added as a public
+    file is, with only what a public file holds."""
     path = os.path.abspath(os.path.expanduser(a.file))
     if path.lower().endswith(".ini"):
         raise CliError("%s is a settings file: add it with  deltapatcher project add FILE" % path, "settings-file")
     found = presets.read(path)
+    if found["private"] and not a.as_player:
+        return private_import(a, path, found)
+    if private_options(a):
+        raise CliError("%s set up releasing from a private project file: %s" % (
+            ", ".join(private_options(a)), "--as-player adds it as a player, without them" if found["private"]
+            else "%s is a public one" % os.path.basename(path)), "bad-arguments")
     entries = found["projects"]
     if a.only:
         wanted = [n.strip().lower() for n in a.only]
@@ -1739,7 +1867,8 @@ def project_import(a):
         raise CliError("%s updates the project %s here, which keeps its name: add --as-new to add it as a new project "
                        "named %s" % (rows[0]["title"], rows[0]["updates"]["project"], a.name), "bad-arguments")
     info = {"file": path, "signed": bool(signer), "signer": signer, "made": found["made"], "updates": found["updates"],
-            "fingerprint": signing.fingerprint(signing.parse_key(signer)) if signer else "", "projects": rows}
+            "fingerprint": signing.fingerprint(signing.parse_key(signer)) if signer else "", "projects": rows,
+            "private": found["private"]}
     by_torrent = [e for e in entries if e.get("torrent")]
     refused_now = bool(by_torrent) and torrent.refused(config.load())
     info["torrents_refused"] = refused_now
@@ -1750,6 +1879,9 @@ def project_import(a):
         else:
             say("%s holds %d project%s. It is not signed: anyone could have made or changed it." %
                 (os.path.basename(path), len(entries), "" if len(entries) == 1 else "s"), "warn")
+        if found["private"]:
+            say("It is a publisher's private project file, for releasing: added as a player, it takes only what a "
+                "public file holds.")
         if found["updates"]:
             say("It is update capable: its publisher can change these projects later, and you are asked first.")
         for e in rows:
@@ -1837,6 +1969,339 @@ def project_import(a):
                                                                  ", ".join(s["title"] for s in skipped)), "not-added", result)
     if added and not OUT.json:
         say("Update them:  %s" % paint(prog_name() + " update --all", "code"))
+    return result
+
+
+def host_keys_here(part):
+    """The server's host keys a private file's project gives, against this computer's known_hosts for that host and
+    port: (the server, as a Target, or None; the file's keys [(type, key, fingerprint)]; the keys trusted here for it,
+    the same way; the state; why). The state: "new" (this computer trusts no key for that server yet), "known" (it
+    trusts every key the file gives), "other" (it trusts keys for that server, and not all of the file's: nothing
+    is added), "unreadable" (why says why), or "" when the file gives none."""
+    s = part["server"]
+    keys = [(k["type"], k["key"], ssh.fingerprint(k["key"])) for k in s["host_keys"]]
+    if not keys:
+        return None, [], [], "", ""
+    target = ssh.Target(s["ssh_host"], s["ssh_user"], s["ssh_port"])
+    try:
+        here = []
+        for kind, blob in ssh.known_keys(target):
+            try:
+                here.append((kind, blob, ssh.fingerprint(blob)))
+            except (ValueError, TypeError):
+                here.append((kind, blob, "(not readable)"))
+    except ssh.SshError as e:
+        return target, keys, [], "unreadable", str(e)
+    if not here:
+        return target, keys, here, "new", ""
+    if set((t, b) for t, b, _f in keys) <= set((t, b) for t, b, _f in here):
+        return target, keys, here, "known", ""
+    return target, keys, here, "other", ""
+
+
+def host_keys_allowed(a):
+    """Which of a private file's host keys the options let in: the fingerprints --host-key-fingerprints gives (only
+    keys with one of those: what the app passes, the keys it showed), else "all" with --trust-host-keys (they were
+    printed first), else None."""
+    if a.host_key_fingerprints is not None:
+        return set(x.strip() for x in str(a.host_key_fingerprints).split(",") if x.strip())
+    return "all" if a.trust_host_keys else None
+
+
+def trust_host_keys(part, allowed):
+    """Add a private file's host keys to this computer's known_hosts, only while it trusts no key for that server
+    (state "new"), and only those the person let in (allowed: "all", a set of fingerprints, or None). Returns what
+    became of them: "added", "known", "not added", "other", "unreadable", or "" when the file gives none."""
+    target, keys, _here, state, _why = host_keys_here(part)
+    if state != "new":
+        return state
+    chosen = [k for k in keys if allowed == "all" or (isinstance(allowed, set) and k[2] in allowed)]
+    if not chosen:
+        return "not added"
+    ssh.trust(target, chosen)
+    return "added"
+
+
+def say_host_keys(kept, host):
+    """What became of a private file's host keys, when it is more than nothing to do (trust_host_keys())."""
+    if kept == "added":
+        say("  The host keys of %s are trusted on this computer now." % host)
+    elif kept == "not added":
+        say("  Its next release asks about the server %s, as for any server not confirmed yet." % host)
+    elif kept == "other":
+        say("  This computer trusts other host keys for %s: the file's were not added." % host, "warn")
+    elif kept == "unreadable":
+        say("  The host keys of %s could not be checked here: its next release asks about the server." % host, "warn")
+
+
+def signing_key_check(path, want, file_name):
+    """The signing key's file given for a private file's projects, against the key the file is signed with:
+    "matches" (read now: it has no passphrase), or "first release" (it has one, or is not there yet: the first
+    release opens it and checks it then). CliError, before anything changes, when it is another key."""
+    if not os.path.isfile(path):
+        say("Warning: there is no signing key at %s yet: bring it there before the first release" % path, "warn")
+        return "first release"
+    try:
+        if not signing.can_sign() or signing.needs_passphrase(path):
+            return "first release"
+        key = signing.public_key_text(signing.load_key(path))
+    except signing.SignError as e:
+        raise CliError("the signing key %s cannot be read: %s" % (path, e), "no-signing-key")
+    if key != want:
+        raise CliError("the signing key %s is not the one %s is signed with: it is %s, and the file's is %s (%s). Pick "
+                       "the key you carried from your other computer" % (
+                           path, file_name, signing.fingerprint(signing.parse_key(key)),
+                           signing.fingerprint(signing.parse_key(want)), want), "wrong-key")
+    return "matches"
+
+
+def private_rows(pairs, made, a):
+    """What project import says of each project of a private file made at `made`: what it holds (its private part,
+    setting by setting, and where its releases go), the server's host keys against this computer's, whether its name
+    is taken here, and, for the project this computer releases with the file's own key (presets.private_match(),
+    unless --as-new), the project it updates and what that changes. older: the file was made before the one applied
+    to that project, or is that one again (presets.private_older()); made and applied_made are the two times, and it
+    is applied only with --apply-older. A project this computer only plays (presets.played_here()) is named, never
+    changed; so is one it releases with a signing key DeltaPatcher does not know yet (presets.key_unknown())."""
+    every = [p for p in projects.all_projects() if not p.missing]
+    taken = {p.title.lower() for p in every}
+    candidates = [(p, config.load(p)) for p in every]
+    rows = []
+    for e, part in pairs:
+        _t, keys, here, state, why = host_keys_here(part)
+        s = part["server"]
+        flat = {k: v for section, _f in presets.PRIVATE_FIELDS for k, v in part[section].items() if k != "host_keys"}
+        row = dict(e, taken=(a.name or e["title"]).lower() in taken, private=flat, where=presets.where_words(part),
+                   host_keys={"host": ssh.Target(s["ssh_host"], port=s["ssh_port"]).known_name() if s["ssh_host"] else "",
+                              "keys": [{"type": t, "fingerprint": fp} for t, _b, fp in keys],
+                              "here": [{"type": t, "fingerprint": fp} for t, _b, fp in here], "state": state, "why": why})
+        hit = None if a.as_new else presets.private_match(e, part, candidates)
+        if hit:
+            p, pcfg = hit
+            applied = str(pcfg.get("project_file_made") or "")
+            row.update(updates=p.tag(), older=presets.private_older(made, applied), made=made, applied_made=applied,
+                       changes=presets.private_changes(pcfg, e, part))
+        else:
+            played = presets.played_here(e, part, candidates)
+            if played:
+                row["player_here"] = played[0].tag()
+            unknown = None if a.as_new else presets.key_unknown(e, part, candidates)
+            if unknown:
+                row["key_unknown"] = unknown[0].tag()
+        rows.append(row)
+    return rows
+
+
+def older_line(row):
+    """What a private file older than the one applied to the project it updates says: both times, so a computer
+    whose clock is wrong shows."""
+    return "this file was made %s; the one applied here was made %s: opening it puts back what it says" % (
+        presets.made_words(row["made"]), presets.made_words(row["applied_made"]))
+
+
+def key_unknown_line(name):
+    """Why a private file does not update a project here of its name that releases here: its signing key is not
+    known yet."""
+    return ("%s releases here too, but DeltaPatcher does not know its signing key yet: release it once or export a "
+            "private file from it, then open this file again; or set this one up as a separate project" % name)
+
+
+def left_as_is(row, a):
+    """A project here a private file would update, left as it is: the file is older than the one applied to it, and
+    --apply-older was not given (plain --yes never applies an older file)."""
+    return "updates" in row and bool(row.get("older")) and not a.apply_older
+
+
+def private_question(rows):
+    """The one question a private file's import asks: Set it up, Update it, Set up 1 and update 1, ..."""
+    upd = len([r for r in rows if "updates" in r])
+    new = len(rows) - upd
+    if not upd:
+        return "Set %s up for releasing from this computer" % ("it" if new == 1 else "them")
+    if not new:
+        return "Update %s" % ("it" if upd == 1 else "them")
+    return "Set up %d and update %d" % (new, upd)
+
+
+def say_private(path, info, rows, apply_older=False):
+    """A private file's import in a terminal: what the file is, who signed it, and each project: where its releases
+    go, the server's host keys, and what it changes in a project here (a file older than the one applied there: both
+    times, and whether --apply-older applies it)."""
+    say("%s is a private project file, signed by %s:" % (os.path.basename(path), info["fingerprint"]), "ok")
+    say("  " + paint(info["signer"], "code"))
+    say("It sets up releasing %s from this computer: it holds no key and no password." % (
+        "its project" if len(rows) == 1 else "its %d projects" % len(rows)))
+    say("Bring your signing key's file from your other computer by hand: a USB stick, not chat or email.", "warn")
+    for r in rows:
+        note = ("  (updates the project %s here)" % r["updates"]["project"]) if "updates" in r else \
+            "  (a project has this name already)" if r["taken"] else ""
+        say("  %s  releases to %s%s" % (paint(r["title"], "head"), r["where"], note))
+        if r["private"]["public_url"]:
+            say("    players update from %s" % paint(r["private"]["public_url"], "code"))
+        if r.get("player_here"):
+            say("    You have %s as a player: this file sets up releasing it, as a project of its own (--as-player adds "
+                "it as a player instead)." % r["player_here"]["project"], "warn")
+        if r.get("key_unknown"):
+            say("    %s." % key_unknown_line(r["key_unknown"]["project"]), "warn")
+        h = r["host_keys"]
+        if h["state"]:
+            say("    the server's host keys (%s), %s:" % (h["host"], {
+                "new": "not trusted here yet", "known": "trusted here already",
+                "other": "which differ from the ones this computer trusts for it: these are not added",
+                "unreadable": "which cannot be checked here (%s)" % h["why"]}[h["state"]]))
+            for k in h["keys"]:
+                say("      %-22s %s" % (k["type"], paint(k["fingerprint"], "code")))
+            if h["state"] == "other":
+                say("    the host keys this computer trusts for it:")
+                for k in h["here"]:
+                    say("      %-22s %s" % (k["type"], paint(k["fingerprint"], "code")))
+        if r.get("older"):
+            say("    %s: %s." % ("Applied anyway (--apply-older)" if apply_older else
+                                 "Not applied without --apply-older", older_line(r)), "warn")
+        for c in r.get("changes") or []:
+            say("    %s:  %s  ->  %s" % (c["label"], publisher.shown(c["from"]), publisher.shown(c["to"])))
+        if "updates" in r and not r["changes"]:
+            say("    nothing in it changes")
+
+
+def private_import(a, path, found):
+    """project import FILE, of a private project file: each of its projects is set up for releasing from this
+    computer, after one question: what releasing it needs, from the file (presets.private_values()), and this
+    computer's own folders and key files, from --publish-src, --signing-key, --ssh-key, --deploy-folder (a terminal
+    asks for them) and --seed. --signing-key is checked against the key the file is signed with: now when it has no
+    passphrase, else at the first release; no key file is read when none is given. The project this computer releases
+    with the file's own key (presets.private_match()) is updated in place instead, unless --as-new: only what the
+    file changes, never its folders, keys or whether it seeds. A file made before the one applied to it
+    (project_file_made), or that same one again, is applied only with --apply-older (plain --yes never does), and
+    says both times. The server's host keys go to this computer's known_hosts only with --trust-host-keys (all of
+    them; a terminal asks) or --host-key-fingerprints (those), and only while it trusts no key for that server."""
+    name_of = os.path.basename(path)
+    pairs = list(zip(found["projects"], found["parts"]))
+    if a.only:
+        titles = {e["title"].lower() for e, _p in pairs}
+        missing = [n for n in a.only if n.strip().lower() not in titles]
+        if missing:
+            raise CliError("%s holds no project named %s" % (name_of, ", ".join(missing)), "no-such-project")
+        wanted = [n.strip().lower() for n in a.only]
+        pairs = [(e, part) for e, part in pairs if e["title"].lower() in wanted]
+    if a.name and len(pairs) != 1:
+        raise CliError("--name names one project: pick it with --only", "bad-arguments")
+    if a.as_is and (len(pairs) != 1 or not a.folder):
+        raise CliError("--as-is takes --folder and one project: pick it with --only", "bad-arguments")
+    if (a.publish_src or a.deploy_folder) and len(pairs) != 1:
+        raise CliError("--publish-src and --deploy-folder name one project's folders: pick it with --only",
+                       "bad-arguments")
+    signer = found["signer"]
+    rows = private_rows(pairs, found["made"], a)
+    if a.name and "updates" in rows[0]:
+        raise CliError("%s updates the project %s here, which keeps its name: add --as-new to set it up as a new "
+                       "project named %s" % (rows[0]["title"], rows[0]["updates"]["project"], a.name), "bad-arguments")
+    refused_now = any(e.get("torrent") for e, _p in pairs) and torrent.refused(config.load())
+    info = {"file": path, "signed": True, "signer": signer, "made": found["made"], "updates": found["updates"],
+            "fingerprint": signing.fingerprint(signing.parse_key(signer)), "projects": rows, "private": True,
+            "torrents_refused": refused_now}
+    if not OUT.json:
+        say_private(path, info, rows, a.apply_older)
+    if a.dry_run:
+        return info
+    ask_here = not a.yes and interactive()
+    doing = [r for r in rows if not left_as_is(r, a)]
+    if not a.yes:
+        if not ask_here:
+            raise CliError("setting up releasing asks first: add --yes to set it up without asking", "confirm-needed", info)
+        if doing and not ask_sure(private_question(doing)):
+            if ask_sure("Add it as a player instead, with only what a public file holds"):
+                a.as_player = True
+                return project_import(a)
+            raise CliError("nothing was set up", "cancelled")
+    # what this computer gives each project added: its folders and key files, checked before anything changes
+    allowed = host_keys_allowed(a)
+    plans = []
+    for (e, part), row in zip(pairs, rows):
+        if "updates" in row:
+            trust = allowed or ("all" if not left_as_is(row, a) and ask_here and row["host_keys"]["state"] == "new" and
+                                ask_sure("Are these the host keys of your server %s? Trust them"
+                                         % row["host_keys"]["host"]) else None)
+            plans.append({"trust": trust})
+            continue
+        name = a.name or e["title"]
+        given = {"publish_src": a.publish_src, "signing_key": a.signing_key, "ssh_key": a.ssh_key,
+                 "deploy_folder": a.deploy_folder}
+        mode = part["server"]["deploy_mode"]
+        if ask_here:
+            say("%s on this computer:" % name, "head")
+            if not given["publish_src"]:
+                given["publish_src"] = ask_text("The folder to release (Enter: choose it later)")
+            if not given["signing_key"]:
+                given["signing_key"] = ask_text("Your signing key's file (Enter: %s)" % config.DEFAULTS["signing_key"])
+            if mode == "sftp" and not given["ssh_key"]:
+                given["ssh_key"] = ask_text("Your SSH key's file (Enter: %s)" % config.DEFAULTS["ssh_key"])
+            if mode == "folder" and not given["deploy_folder"]:
+                given["deploy_folder"] = ask_text("The folder releases are copied to (Enter: choose it later)")
+        here = {k: os.path.abspath(os.path.expanduser(v)) for k, v in given.items() if v}
+        for k in ("publish_src", "deploy_folder"):
+            if k in here and not os.path.isdir(here[k]):
+                say("Warning: %s is not a folder yet: %s" % (here[k], "release it once it is there" if k == "publish_src"
+                                                            else "releases go there once it is"), "warn")
+        check = signing_key_check(here["signing_key"], part["publish"]["signing_public_key"], name_of) \
+            if "signing_key" in here else "first release"
+        if a.folder:
+            folder = a.folder if a.as_is else presets.folder_for(e, a.folder, name, len(pairs) > 1)
+        else:
+            folder = ""
+        after = dict(config.DEFAULTS, **presets.private_values(e, part))
+        after.update(here, install_dir=os.path.abspath(os.path.expanduser(folder)) if folder else "")
+        problem = backup.folder_problem(after)
+        if problem:
+            raise CliError("%s: %s" % (name, problem), "bad-setting")
+        seed = bool(e.get("torrent")) and not refused_now and (a.seed or (ask_here and ask_sure(
+            "Seed %s from this computer, sharing its files with players while DeltaPatcher runs" % name)))
+        trust = allowed or ("all" if ask_here and row["host_keys"]["state"] == "new" and
+                            ask_sure("Are these the host keys of your server %s? Trust them"
+                                     % row["host_keys"]["host"]) else None)
+        plans.append({"name": name, "here": here, "check": check, "folder": folder, "seed": seed, "trust": trust})
+    added, skipped, updated = [], [], []
+    for (e, part), row, plan in zip(pairs, rows, plans):
+        if "updates" in row:
+            p = projects.resolve(row["updates"]["file"])
+            if left_as_is(row, a):
+                updated.append(dict(p.tag(), applied={}, older=True, host_keys=""))
+                say("Nothing changed in the project %s: %s. --apply-older applies it anyway." % (p.title, older_line(row)),
+                    "warn")
+                continue
+            values = presets.private_values(e, part, config.load(p))
+            applied = {c["key"]: values[c["key"]] for c in row["changes"]}
+            config.save(dict(applied, publisher_accepted=publisher.accepted_text(e, found["made"]), publisher_not_now="",
+                             project_file_made=found["made"]), p)
+            kept = trust_host_keys(part, plan["trust"])
+            updated.append(dict(p.tag(), applied=applied, older=bool(row["older"]), host_keys=kept))
+            say("Updated the project %s: %s" % (p.title, ", ".join(presets.PRIVATE_LABELS[k] for k in applied)
+                                                 or "nothing changed"), "ok")
+            say_host_keys(kept, row["host_keys"]["host"])
+            continue
+        try:
+            p = presets.add_private(e, part, plan["name"], plan["here"], plan["folder"], updates=found["updates"],
+                                    made=found["made"], seed=plan["seed"])
+        except projects.ProjectError as x:
+            skipped.append({"title": e["title"], "reason": str(x), "code": x.code})
+            say("Not set up: %s: %s" % (e["title"], x), "warn")
+            continue
+        cfg = config.load(p)
+        kept = trust_host_keys(part, plan["trust"])
+        added.append(dict(p.tag(), install_dir=cfg["install_dir"], publish_src=cfg["publish_src"],
+                          signing_key=cfg["signing_key"], key_check=plan["check"], host_keys=kept,
+                          torrent=bool(e.get("torrent")), seed=plan["seed"]))
+        say("Set up the project %s for releasing%s" % (p.title, (": it releases %s" % cfg["publish_src"])
+                                                       if cfg["publish_src"] else "; choose the folder to release later"),
+            "ok")
+        if plan["check"] == "first release":
+            say("  Its first release checks the signing key %s, when it asks its passphrase." % cfg["signing_key"])
+        say_host_keys(kept, row["host_keys"]["host"])
+    result = dict(info, added=added, skipped=skipped, updated=updated)
+    if skipped:
+        raise CliError("%d of %d projects were not set up: %s" % (len(skipped), len(pairs),
+                                                                  ", ".join(s["title"] for s in skipped)), "not-added",
+                       result)
     return result
 
 
@@ -2402,8 +2867,31 @@ def build_parser():
     k.add_argument("--seed", action="store_true", help="seed the projects of the file shared by torrent: share their "
                                                        "files with other players while DeltaPatcher runs (default: no; "
                                                        "asked in a terminal)")
-    k = ss.add_parser("export", help="write a project file with these projects, to give to players: NAME.deltapatch "
-                                     "opens DeltaPatcher with a double-click, NAME.html is a page anyone can read")
+    k.add_argument("--publish-src", metavar="DIR", help="a private project file: the folder to release, for a project "
+                                                        "it adds (default: chosen later)")
+    k.add_argument("--signing-key", metavar="FILE", help="a private project file: your signing key's file, for a "
+                                                         "project it adds; it must be the key the file is signed with "
+                                                         "(checked now, or at the first release when it has a "
+                                                         "passphrase)")
+    k.add_argument("--ssh-key", metavar="FILE", help="a private project file: your SSH key's file, for a project it "
+                                                     "adds")
+    k.add_argument("--deploy-folder", metavar="DIR", help="a private project file: the folder releases are copied to "
+                                                          "(folder mode), for a project it adds")
+    k.add_argument("--trust-host-keys", action="store_true",
+                   help="a private project file: add the server's host keys it gives to this computer's known_hosts "
+                        "(they are printed first), when it trusts no key for that server yet. Without it (or "
+                        "--host-key-fingerprints) the first release asks about the server")
+    k.add_argument("--host-key-fingerprints", metavar="FINGERPRINTS",
+                   help="a private project file: add only the server's host keys it gives with these fingerprints "
+                        "(SHA256:..., separated by commas), when this computer trusts no key for that server yet")
+    k.add_argument("--apply-older", action="store_true",
+                   help="a private project file: apply it to a project here even when it was made before the one "
+                        "applied there (or is that one again); --yes alone never does")
+    k.add_argument("--as-player", action="store_true", help="a private project file: add its projects as a player, "
+                                                            "with only what a public file holds")
+    k = ss.add_parser("export", help="write a project file with these projects: public, to give to players "
+                                     "(NAME.deltapatch opens DeltaPatcher with a double-click, NAME.html is a page "
+                                     "anyone can read), or private (--private), for you on any computer")
     k.add_argument("names", nargs="+", metavar="NAME", help="a project: its name or its settings file")
     k.add_argument("--out", required=True, metavar="FILE", help="the file to write: .deltapatch or .html")
     k.add_argument("--sign", nargs="?", const="", metavar="KEYFILE",
@@ -2415,6 +2903,11 @@ def build_parser():
     g.add_argument("--no-updates", dest="updates", action="store_false", default=None,
                    help="a new project for every file: players are not asked about later changes, and every "
                         "DeltaPatcher reads it")
+    k.add_argument("--private", action="store_true",
+                   help="a private project file, for you: what releasing these projects needs (their rules, server "
+                        "address and login name, torrent id and seeds, backup limits, the server's host keys), "
+                        "never a folder, a key or a password; signed with their signing key, which you carry to the "
+                        "other computer by hand. Never into a folder they release")
     pass_stdin(k)
     k = ss.add_parser("changes", help="what the publisher changed in a project (its description, website, where it "
                                       "goes, its address or key), read from its release now")

@@ -306,7 +306,8 @@ it releases and where that goes.
 ```
 deltapatcher project new NAME
 deltapatcher project import FILE [--folder DIR [--as-is]] [--only NAME]... [--name NEW] [--dry-run] [--yes] [--as-new] [--seed]
-deltapatcher project export NAME... --out FILE [--sign [KEYFILE]] [--updates | --no-updates]
+deltapatcher project import FILE [--publish-src DIR] [--signing-key FILE] [--ssh-key FILE] [--deploy-folder DIR] [--trust-host-keys | --host-key-fingerprints FINGERPRINTS] [--apply-older] [--as-player]
+deltapatcher project export NAME... --out FILE [--sign [KEYFILE]] [--updates | --no-updates] [--private]
 deltapatcher project changes NAME
 deltapatcher project accept NAME [--yes] [--not-now] [--expect HASH]
 deltapatcher project add FILE [--name NAME]
@@ -335,6 +336,37 @@ deltapatcher project remove --all [--yes]
   key, and a description and website when set; for a project shared by torrent, also its torrent id, name
   and seeds (the file must then name the publisher key). Never a folder, a server login or a key file. `--sign` signs
   it with your signing key (it asks the passphrase; `--passphrase-stdin` for programs).
+- `export --private`: a private project file instead, for you, to keep releasing these projects from another
+  computer of yours: what a public file holds, and what releasing needs (the release's rules, the server's address,
+  SSH port, login name and remote folder, the address players update from, the access log, the torrent id and
+  seeds, how many backups are kept and their size limit, the server's host keys this computer trusts), never a
+  folder, a key, a password or the backup schedule (each computer's own). It is always signed with the projects' own
+  signing key (`signing_key`), asked as `--sign` asks: a project that does not sign its releases (`sign = no`, or no
+  key there) cannot go into one, and the projects of one file share one signing key; each project exported gets that
+  key as its `signing_public_key`, so this computer knows its own project in a later file, and the time the file was
+  made as its `project_file_made`, so opening this file (or an older one) here again applies nothing by itself. FILE
+  may not be inside a folder one of these projects releases, its store or the folder its releases are copied to
+  (`publish` leaves out any private project file it finds in the folder it releases, with a warning). Carry the key to the other computer yourself,
+  apart from the file. See [Releasing from another computer](PUBLISHING.md#releasing-from-another-computer).
+- `import` of a private project file sets up releasing each of its projects from this computer, after one
+  question (or `--yes`); a terminal asks for what the options give. `--publish-src DIR` is the folder to release,
+  `--signing-key FILE` your signing key's file (checked against the key the file is signed with: now when it has no
+  passphrase, else at the first release; another key is refused; no key file is read when none is given),
+  `--ssh-key FILE` your SSH key's file, and `--deploy-folder DIR` the folder releases are copied to in folder mode;
+  they are for a project it adds, and `--seed` seeds one shared by torrent. `--trust-host-keys` (a switch) adds the
+  server's host keys from the file to this computer's known_hosts (they are printed first);
+  `--host-key-fingerprints SHA256:...,SHA256:...` adds only those with these fingerprints (what the app passes: the
+  keys it showed). Either adds nothing while this computer trusts any key for that server and port: when they
+  differ, both are shown. Without them the first release asks about the server, as for any server. The project this
+  computer releases with the very key the file is signed with (the same torrent id, else the same name) is updated
+  in place instead, unless `--as-new`: only what the file changes, never its folders, its key files, its backup
+  schedule or whether it seeds. A file made before the one applied to it (`project_file_made`), or that same file
+  again, is not applied: both times are shown, as two computers' clocks give them, and `--apply-older` applies it
+  anyway (`--yes` alone never does). A project that only plays the game (a player's) is never changed: it is named,
+  and the file's project is set up as one of its own. So is a project of the file's name this computer releases with
+  a signing key DeltaPatcher does not know yet (a key with a passphrase, never released or exported here): release
+  it once or export a private file from it, then open the file again. `--as-player` adds a private file as a player
+  would: only what a public file holds.
 - `add`: list a project's settings file (`.ini`) kept somewhere else (in a game's folder, on a share).
   `--name` gives it a name, written into that file. A project file is added with `import`.
 - `rename`: the project's name changes; its file stays where it is.

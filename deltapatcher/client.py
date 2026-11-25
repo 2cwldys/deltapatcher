@@ -3,7 +3,11 @@
 Everything the client keeps lives in <install>/.deltapatcher/:
     state.json        the files this program installed: {path: [size, sha256]}, and the source
     hashes.json       a cache of the folder's hashes (size + modification time)
-    cache/<sha256>    downloaded blobs, until they are in place (a cut download resumes from here)
+    cache/<sha256>    downloaded blobs, until they are in place (a cut download resumes from here); an archive being
+                      rebuilt from what the folder has is cache/<sha256>.rebuild until it is checked (rebuild.py)
+    parts/<sha256>    the parts indexes the current plan needs, so a check and the update after it fetch each once
+                      (<sha256>.refused: one that was refused, never fetched again while a release names it)
+    members.json      the members of the folder's zip-structured files, for rebuilding archives (rebuild.py)
     rollback/         the last completed update: its journal and the files it replaced
     rollback.new/     the update in progress (it becomes rollback/ when it completes)
     lock              held (an operating-system lock) while an update or a rollback runs
@@ -13,6 +17,10 @@ Rules:
   two names is fetched once.
 - Every blob is checked against its SHA-256 before anything in the folder changes. A missing or
   damaged blob on the source stops the update with the folder untouched.
+- A changed archive with a parts index, read from an http(s) address, is rebuilt from the pieces the
+  folder has and the pieces it lacks, fetched with Range requests (rebuild.py); it is used only when it
+  is the manifest's SHA-256, and anything that does not work out downloads it whole. One whose cut whole download
+  lacks no more than the rebuild would fetch has that download resumed instead.
 - A file the manifest no longer lists is removed only when this program installed it AND it is
   unchanged since. Files that were already there, and files added by hand, are never removed.
 - A file matching one of the manifest's `protect` patterns is created when missing and otherwise
@@ -30,7 +38,7 @@ import sys
 import threading
 import time
 
-from . import hashing, logs, signing
+from . import hashing, logs, rebuild, signing
 from .manifest import Manifest, ManifestError
 from .publish import human
 from .source import Source, SourceError
@@ -113,6 +121,8 @@ class Plan(object):
         self.same = 0
         self.manifest = None     # the release it was made for
         self.signer = ""         # the publisher key that signed it ("ed25519:..."), '' when not signed or not checked
+        self.rebuilds = {}       # {sha: rebuild.Rebuild}: the archives rebuilt from what the folder has
+        self.resumes = {}        # {sha: bytes it lacks}: archives a cut download of which is resumed, not rebuilt
 
     def empty(self):
         return not (self.add or self.replace or self.remove)
@@ -124,12 +134,29 @@ class Plan(object):
             out[e.sha256] = e.size
         return out
 
+    def amounts(self):
+        """{sha: the bytes it takes to fetch} of the blobs this plan needs: an archive rebuilt from what the folder has
+        takes what it fetches, one whose cut download is resumed instead what that download lacks, any other blob its
+        size."""
+        return {sha: self.rebuilds[sha].fetch_bytes if sha in self.rebuilds else self.resumes.get(sha, size)
+                for sha, size in self.download().items()}
+
+    def fetch_bytes(self):
+        """What this plan downloads: download() as a whole, less what the folder has of the archives it rebuilds and
+        what the cut downloads it resumes have."""
+        return sum(self.amounts().values())
+
     def summary(self):
         need = self.download()
-        return ("new %d, changed %d, removed %d, unchanged %d%s; to download: %d blobs, %s"
+        whole = sum(need.values())
+        n, m = len(self.rebuilds), len(self.resumes)
+        why = (["%d archive%s rebuilt from what is here" % (n, "" if n == 1 else "s")] if n else []) + \
+              (["%d cut download%s resumed" % (m, "" if m == 1 else "s")] if m else [])
+        return ("new %d, changed %d, removed %d, unchanged %d%s; to download: %d blobs, %s%s"
                 % (len(self.add), len(self.replace), len(self.remove), self.same,
                    (", protected %d" % len(self.protected)) if self.protected else "",
-                   len(need), human(sum(need.values()))))
+                   len(need), human(self.fetch_bytes()),
+                   " (%s: %s whole)" % (", ".join(why), human(whole)) if why else ""))
 
 
 class State(object):
@@ -411,18 +438,20 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
            keep_cache=False, trust_key=None, source=None, torrent=None):
     """Bring `install` up to the release at `url`. Returns the Plan.
 
-    With check_only, nothing in the folder changes (an interrupted update is reported, not undone).
-    progress(done, total, label) and log(text) are optional callbacks; `cancel` is an optional
-    threading.Event that stops the update before anything in the folder changes: during the download, or
-    once every blob is here and before the first file is put in place. `trust_key`
-    ("ed25519:...") is the publisher key the release must be signed with (see signing.py).
+    With check_only, nothing in the folder changes (an interrupted update is reported, not undone); its
+    plan still says what an update would fetch, archives rebuilt from what the folder has included.
+    progress(done, total, label) and log(text) are optional callbacks (progress counts the bytes fetched, against
+    what the plan fetches in all); `cancel` is an optional threading.Event that stops the update before anything
+    in the folder changes: during the download, or once every blob is here and before the first file is put in
+    place. `trust_key` ("ed25519:...") is the publisher key the release must be signed with (see signing.py).
     `source`: where the release is read, instead of Source(url) (a project with no address: the swarm); one with a
     prepare() finds its release with it before the folder is locked.
-    `torrent`: the update's BitTorrent side (torrent/session.py): before the download, fetch() fills the cache
-    with what the swarm gives of the blobs the cache lacks, told the manifest and the key that signed it (each blob
-    is still checked against its SHA-256 before it is used, and what is missing comes from the source); once the
-    folder has the release, keep() keeps its manifest, signature, torrent and item in .deltapatcher/release/ for
-    seeding. A seed run of the folder pauses while it changes.
+    `torrent`: the update's BitTorrent side (torrent/session.py): before the download, after the archives rebuilt
+    from what the folder has, fetch() fills the cache with what the swarm gives of the blobs the cache still lacks,
+    told the manifest and the key that signed it (each blob is still checked against its SHA-256 before it is used,
+    and what is missing comes from the source); once the folder has the release, keep() keeps its manifest,
+    signature, torrent and item in .deltapatcher/release/ for seeding. A seed run of the folder pauses while it
+    changes.
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -467,6 +496,9 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         plan = make_plan(man, install, state, cache)
         plan.manifest, plan.signer = man, signer or ""
         _save_cache(cache)
+        plan.rebuilds = _rebuilds(src, plan, state, install, state_dir, log, cancel,
+                                  _space_needed(sum(plan.download().values())), check_only)
+        plan.resumes = _resumes(plan, state_dir, log)
         log(plan.summary())
         for p in plan.kept_changed:
             log("  kept (edited here, no longer in the release): %s" % p)
@@ -486,31 +518,71 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
 
         need = plan.download()
         total = sum(need.values())
-        free = shutil.disk_usage(install).free
-        if free < total * 2 + (64 << 20):
-            raise UpdateError("not enough free space: %s needed while the update runs, %s free%s"
-                              % (human(total * 2 + (64 << 20)), human(free), _copies_note(install)))
-
-        # 1. download every blob into the cache and check it; the folder is not touched yet
+        # a half-built archive a stopped update left goes before the free space is measured: it is never resumed, and
+        # on a nearly full drive it alone could refuse every update after it
         cdir = os.path.join(state_dir, "cache")
         os.makedirs(cdir, exist_ok=True)
+        rebuild.clear(cdir)
+        free = shutil.disk_usage(install).free
+        if free < _space_needed(total):
+            raise UpdateError("not enough free space: %s needed while the update runs, %s free%s"
+                              % (human(_space_needed(total)), human(free), _copies_note(install)))
+
+        # 1. download every blob into the cache and check it; the folder is not touched yet. An archive the folder can
+        #    rebuild comes first, from what the folder has and the pieces it lacks (rebuild.py); one that does not work
+        #    out is downloaded whole with the rest
+        amounts = plan.amounts()
+        planned = [sum(amounts.values())]       # what is fetched in all: progress counts against it
         done = [0]
         lock = threading.Lock()
 
         def tick(n):
             with lock:
                 done[0] += n
-                progress(done[0], total, "downloading")
+                progress(done[0], planned[0], "downloading")
+
+        rebuilt = set()
+        locate = lambda rel: _xp(target_path(install, rel))      # noqa: E731
+        for sha in sorted(plan.rebuilds, key=lambda s: plan.rebuilds[s].entry.path):
+            if cancel.is_set():
+                raise SourceError("stopped")
+            rb = plan.rebuilds[sha]
+            ok = rebuild.run(rb, src, cdir, locate, workers, tick, cancel, log)
+            with lock:
+                # what it fetched (more when a piece here no longer matched), and the whole blob when it did not
+                # work out
+                planned[0] += rb.fetched + (0 if ok else need[sha]) - amounts[sha]
+            if ok:
+                rebuilt.add(sha)
+            else:
+                del plan.rebuilds[sha]
+
+        paths = {e.sha256: e.path for e in plan.add + plan.replace}
 
         def fetch(sha):
             if cancel.is_set():
                 raise SourceError("stopped")
+            if sha in rebuilt:
+                return                  # rebuilt here and checked: its fetched bytes were counted as they came
+            count = tick
+            if sha in plan.resumes:
+                # what its cut download had is not part of what the plan fetches: progress hears of the rest
+                count = _less(tick, need[sha] - plan.resumes[sha])
             dest = os.path.join(cdir, sha)
             if os.path.isfile(dest) and hashing.sha256_file(dest)[0] == sha:
-                tick(need[sha])
+                count(need[sha])
                 return
-            src.fetch_blob(sha, dest, need[sha], tick, cancel)
+            cut = os.path.isfile(dest + ".part")        # a cut download of it, which fetch_blob resumes
+            src.fetch_blob(sha, dest, need[sha], count, cancel)
             got, size = hashing.sha256_file(dest)
+            if (got != sha or size != need[sha]) and cut:
+                # what the cut download had was damaged: once more, whole, before the source is blamed
+                log("the cut download of %s was damaged: it is downloaded again, whole" % paths.get(sha, sha[:12]))
+                os.remove(dest)
+                with lock:
+                    planned[0] += need[sha]
+                src.fetch_blob(sha, dest, need[sha], tick, cancel)
+                got, size = hashing.sha256_file(dest)
             if got != sha or size != need[sha]:
                 os.remove(dest)
                 raise UpdateError("blob %s from the source does not match its SHA-256 (got %s, %d bytes)"
@@ -522,6 +594,10 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
             # no address has no other source)
             missing = {}
             for sha, size in need.items():
+                # the swarm gets only what is still missing: not a rebuilt archive, nor one whose cut download
+                # resumes from the address
+                if sha in rebuilt or sha in plan.resumes:
+                    continue
                 cached = os.path.join(cdir, sha)
                 if os.path.isfile(cached) and os.path.getsize(cached) == size:
                     if hashing.sha256_file(cached)[0] == sha:
@@ -535,7 +611,7 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
                 if cancel.is_set():
                     raise SourceError("stopped")
                 log("Warning: the torrent stopped (%s): the rest comes from the source" % e)
-        progress(0, total, "downloading")
+        progress(done[0], planned[0], "downloading")
         with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
             futs = [pool.submit(fetch, sha) for sha in sorted(need)]
             try:
@@ -544,7 +620,11 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
             except BaseException:
                 cancel.set()       # the queued ones stop at once
                 raise
-        log("downloaded and checked %d blobs (%s)" % (len(need), human(total)))
+        if rebuilt:
+            log("downloaded and checked %d blobs (%s fetched; %d archive%s rebuilt from what is here, %s whole)"
+                % (len(need), human(plan.fetch_bytes()), len(rebuilt), "" if len(rebuilt) == 1 else "s", human(total)))
+        else:
+            log("downloaded and checked %d blobs (%s)" % (len(need), human(total)))
         # a stop asked for now still finds the folder as it was
         if cancel.is_set():
             raise SourceError("stopped")
@@ -622,6 +702,7 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
                     os.remove(os.path.join(cdir, sha))
                 except OSError:
                     pass
+        rebuild.tidy(state_dir)          # the parts indexes it used: the folder has the release, no plan needs them
         progress(len(ops), len(ops), "done")
         title = " ".join(x for x in (man.name, man.version) if x) or "the new release"
         record = ["updated to %s from %s (%s): %s" % (title, src, ("signed by " + signing.fingerprint(signing.parse_key(signer)))
@@ -633,6 +714,61 @@ def update(url, install, check_only=False, workers=4, headers=None, progress=Non
         logs.folder_record(state_dir, record)
         log("updated to %s" % title)
         return plan
+
+
+def _space_needed(total):
+    """The free space an update that downloads `total` bytes needs while it runs: the blobs in the cache, the files
+    they replace kept for rollback, and a margin."""
+    return total * 2 + (64 << 20)
+
+
+def _rebuilds(src, plan, state, install, state_dir, log, cancel, space=0, check=False):
+    """The archives `plan` rebuilds from what the folder has (rebuild.prepare); {} when it rebuilds none, or when
+    working that out fails: a rebuild only ever saves downloading, so every file then comes whole. `space`: the free
+    space the update needs (_space_needed()); an index is kept on disk only when that much stays free after it, and a
+    check (`check`) fetches none it could not keep."""
+    try:
+        return rebuild.prepare(src, plan, state, state_dir, lambda rel: _xp(target_path(install, rel)), log, cancel,
+                               space, check)
+    except Exception as e:
+        if cancel is not None and cancel.is_set():
+            raise SourceError("stopped")
+        log("Warning: the archives that changed come whole: what is here could not be read (%s: %s)"
+            % (type(e).__name__, e))
+        return {}
+
+
+def _resumes(plan, state_dir, log):
+    """{sha: the bytes it lacks} of the archives `plan` would rebuild whose cut whole download (cache/<sha>.part) lacks
+    no more than the rebuild would fetch: they leave plan.rebuilds, and fetch_blob resumes their download instead."""
+    out = {}
+    for sha, rb in sorted(plan.rebuilds.items(), key=lambda kv: kv[1].entry.path):
+        try:
+            have = os.path.getsize(os.path.join(state_dir, "cache", sha + ".part"))
+        except OSError:
+            continue
+        left = rb.entry.size - have
+        if 0 <= left <= rb.fetch_bytes:
+            log("%s: a cut download of it lacks only %s: it is resumed, not rebuilt (a rebuild would fetch %s)"
+                % (rb.entry.path, human(left), human(rb.fetch_bytes)))
+            out[sha] = left
+    for sha in out:
+        del plan.rebuilds[sha]
+    return out
+
+
+def _less(tick, n):
+    """tick(), without the first `n` bytes it hears of."""
+    left = [n]
+    lock = threading.Lock()
+
+    def count(k):
+        with lock:
+            drop = min(left[0], k)
+            left[0] -= drop
+        if k > drop:
+            tick(k - drop)
+    return count
 
 
 def _copies_note(install):
@@ -692,7 +828,7 @@ def _save_cache(cache):
 
 def verify(url, install, headers=None, log=None):
     """Compare the folder with the source's manifest. Nothing in the folder changes (only this
-    program's own hash cache may be refreshed). Returns the Plan."""
+    program's own caches in .deltapatcher may be refreshed). Returns the Plan."""
     return update(url, install, check_only=True, headers=headers, log=log)
 
 

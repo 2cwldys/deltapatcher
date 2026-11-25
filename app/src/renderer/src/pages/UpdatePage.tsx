@@ -6,6 +6,7 @@ import { ProjectRun, running, UpdateResult, useApp } from '../store/app'
 import { ask } from '../store/modal'
 import { showChanges } from '../store/projectActions'
 import { hasWhatChanged, nameLines } from '../store/publisher'
+import { rebuiltLine, toDownload } from '../store/download'
 import { Banner, Button, Card, Chip, Field, Stat, human } from '../components/ui'
 import PublisherPrompt from '../components/PublisherPrompt'
 
@@ -109,14 +110,15 @@ export default function UpdatePage(): JSX.Element {
               </Button>
             </>
           }
-          summary={`${result.add} new, ${result.replace} changed, ${result.remove} removed, ${result.same} unchanged; ${human(result.download_bytes)} ${result.check ? 'to download' : 'downloaded'}`}>
+          summary={`${result.add} new, ${result.replace} changed, ${result.remove} removed, ${result.same} unchanged; ${human(toDownload(result))} ${result.check ? 'to download' : 'downloaded'}`}>
           <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
             <Stat label="New" value={result.add} accent={result.add > 0} />
             <Stat label="Changed" value={result.replace} accent={result.replace > 0} />
             <Stat label="Removed" value={result.remove} />
             <Stat label="Unchanged" value={result.same} />
-            <Stat label={result.check ? 'To download' : 'Downloaded'} value={human(result.download_bytes)} accent={result.download_bytes > 0} />
+            <Stat label={result.check ? 'To download' : 'Downloaded'} value={human(toDownload(result))} accent={toDownload(result) > 0} />
           </div>
+          {rebuiltLine(result, human) && <p className="hint">{rebuiltLine(result, human)}</p>}
           {result.kept.length > 0 && (
             <p className="hint">Kept because you changed them: {result.kept.slice(0, 5).join(', ')}{result.kept.length > 5 ? ` and ${result.kept.length - 5} more` : ''}</p>
           )}

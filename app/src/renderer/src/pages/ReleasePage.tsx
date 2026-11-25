@@ -581,7 +581,7 @@ function StatsCard(): JSX.Element {
           <p className="hint">
             {(view.change
               ? `From ${view.change.from}: ${view.change.new} new, ${view.change.changed} changed, ${view.change.removed} removed.\n` +
-                `A player on ${view.change.from} downloads ${human(view.change.download)}.\n`
+                `New and changed files: ${human(view.change.download)}; players who rebuild a big archive download less.\n`
               : 'The first release in this store.\n') +
               `${view.store?.releases === 1 ? '1 release' : `${view.store?.releases ?? 0} releases`} in its history; ` +
               `the store keeps ${view.store?.files ?? 0} files.`}
@@ -652,6 +652,8 @@ function ReleaseResult(props: { r: Data }): JSX.Element {
   const dep = props.r.deploy as Data | undefined
   const url = String(props.r.players_url || '')
   const leftOut = (pub.left_out ?? []) as string[]
+  // big archives DeltaPatcher cannot patch inside: sent whole whenever they change (one line each)
+  const whole = ((pub.warnings ?? []) as string[]).map((w) => w.replace(/^Warning: /, ''))
   return (
     <div className="mt-5 space-y-4">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
@@ -666,6 +668,9 @@ function ReleaseResult(props: { r: Data }): JSX.Element {
       </div>
       {leftOut.length > 0 && (
         <p className="hint">Left out: {leftOut.slice(0, 12).join(', ')}{leftOut.length > 12 ? ` and ${leftOut.length - 12} more` : ''}</p>
+      )}
+      {whole.length > 0 && (
+        <Banner kind="warn"><span className="selectable whitespace-pre-line break-words">{whole.join('\n')}</span></Banner>
       )}
       {url ? (
         <Banner kind="info">

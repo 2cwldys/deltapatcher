@@ -23,6 +23,10 @@ written.
 
 "project" is optional: what the release says about its project for players (publisher.py), kept here as
 it was read. Updating never needs it, and a manifest whose "project" is not an object reads as one without.
+
+A file entry can also have "parts": the SHA-256 of its parts index, parts/<sha256> beside the blobs (parts.py),
+which lets an update rebuild a changed archive from what the folder already has. It is optional, read only when it
+is 64 lowercase hex characters, and never part of what makes two entries equal; an older reader passes it over.
 """
 
 import fnmatch
@@ -34,7 +38,8 @@ FORMAT = 1
 MANIFEST_NAME = "manifest.json"
 PREVIOUS_NAME = "manifest.previous.json"
 BLOB_DIR = "blobs"
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
+PARTS_DIR = "parts"          # parts/<sha256>: the parts index of a big archive (parts.py), named by its entry's "parts"
+HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")   # the whole value: not one with a newline after it, as $ would take
 
 _WINDOWS_DEVICES = {"con", "prn", "aux", "nul", "conin$", "conout$"}
 # COM1-9 and LPT1-9, and the superscript digits Windows also treats as ports (COM1 written with U+00B9, ...)
@@ -125,17 +130,24 @@ def check_sha(sha):
 
 
 class Entry(object):
-    __slots__ = ("path", "sha256", "size")
+    """One file of a release. `parts`: the SHA-256 of its parts index (parts.py), when it has one; it is not part of
+    what makes two entries equal, and a reader that does not know it passes it over."""
 
-    def __init__(self, path, sha256, size):
+    __slots__ = ("path", "sha256", "size", "parts")
+
+    def __init__(self, path, sha256, size, parts=None):
         self.path = check_path(path)
         self.sha256 = check_sha(sha256)
         if not isinstance(size, int) or isinstance(size, bool) or size < 0:
             raise ManifestError("a bad size for %r: %r" % (path, size))
         self.size = size
+        self.parts = None if parts is None else check_sha(parts)
 
     def to_json(self):
-        return {"path": self.path, "sha256": self.sha256, "size": self.size}
+        doc = {"path": self.path, "sha256": self.sha256, "size": self.size}
+        if self.parts:
+            doc["parts"] = self.parts
+        return doc
 
     def __eq__(self, other):
         return isinstance(other, Entry) and (self.path, self.sha256, self.size) == (other.path, other.sha256, other.size)
@@ -177,6 +189,16 @@ class Manifest(object):
         """{sha256: size} of every distinct file."""
         return {e.sha256: e.size for e in self.files.values()}
 
+    def parts(self):
+        """{sha256 of a parts index: the path of the first file that names it} of every parts index the release
+        names."""
+        out = {}
+        for p in sorted(self.files):
+            e = self.files[p]
+            if e.parts and e.parts not in out:
+                out[e.parts] = p
+        return out
+
     def is_protected(self, path):
         return covered(path, self.protect)
 
@@ -212,7 +234,9 @@ class Manifest(object):
         for item in raw:
             if not isinstance(item, dict):
                 raise ManifestError("a file entry that is not an object")
-            files.append(Entry(item.get("path"), item.get("sha256"), item.get("size")))
+            parts = item.get("parts")              # optional: read only when it is a SHA-256, else passed over
+            files.append(Entry(item.get("path"), item.get("sha256"), item.get("size"),
+                               parts if isinstance(parts, str) and HEX64.match(parts) else None))
         protect = doc.get("protect") or []
         if not isinstance(protect, list) or not all(isinstance(p, str) for p in protect):
             raise ManifestError("'protect' must be a list of patterns")

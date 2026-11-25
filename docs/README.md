@@ -21,8 +21,9 @@ You **release** a folder: DeltaPatcher hashes every file (SHA-256) and writes a 
 `manifest.json` listing every file plus a `blobs/` folder holding each distinct file once, named by
 its hash. You put the store somewhere clients can read it: your own PC, a VPS, any web host or a
 shared folder. Clients **update** by comparing their folder with the manifest and downloading only
-the blobs they do not have. The file type does not matter: a `.pk3`, a `.zip`, a texture or a `.dll`
-is just bytes with a hash.
+the blobs they do not have. The file type does not matter: a texture or a `.dll` is just bytes with a
+hash, and a changed `.pk3` or `.zip` of 8 MiB or more (smaller ones come whole) is rebuilt from the files
+inside it the player already has, so only the files inside it that changed travel.
 
 ## The window
 

@@ -102,10 +102,22 @@ saved `public_url`, the address players update from.
 deltapatcher publish [SRC] [STORE] [--name NAME] [--version VERSION] [--leave-out PATH]... [--protect PATH]... [--sign [KEYFILE]] [--no-htaccess] [--no-prune]
 ```
 
-Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `sigs/`, `.htaccess`), sent
-nowhere: `release` does this and the sending. Without `SRC`: the saved folder; without `STORE`: the saved
+Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `parts/`, `sigs/`, `.htaccess`),
+sent nowhere: `release` does this and the sending. Without `SRC`: the saved folder; without `STORE`: the saved
 store, else DeltaPatcher's own one for that folder. `--name` and `--version` default to the saved ones. See
 [Publishing a release](PUBLISHING.md).
+
+A file of 8 MiB or more that is a zip gets a parts index, so players download only the files inside it that
+changed ([Big archives](PUBLISHING.md#big-archives)); the summary ends with how many did (`; 3 with a parts
+index`). A big archive that cannot be patched inside gets one line. A RAR, 7z or gzip file:
+`Warning: data/maps.rar (1.2 GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that
+changed inside it travel.` A zip that gets no index, with why: `Warning: data/sounds.pk3 (9.6 MB) is sent whole
+whenever it changes: 100% of it would travel inside its index, more than a quarter: its files under 1 KiB (89%)
+and the bytes outside its files (11%).` (every reason, and what helps:
+[Troubleshooting](TROUBLESHOOTING.md#publishing)). A zip that cannot be read while it is indexed is no warning but
+one plain line, and the next publish reads it again: `could not read data/x.pk3 to index it (Permission
+denied): players get it whole this time`. With `--json`, the result's data has `"parts"` (the count) and
+`"warnings"` (the warning lines).
 
 | Option | |
 | --- | --- |
@@ -115,7 +127,7 @@ store, else DeltaPatcher's own one for that folder. `--name` and `--version` def
 | `--protect PATH` | A file or folder inside SRC that players keep once they have it, such as their settings. Repeat it for more; patterns work too. Without it: the saved `protect` list. |
 | `--sign [KEYFILE]` | Sign the release (optional). Without a file: the settings file's `signing_key`, else the default key. Asks the key's passphrase. |
 | `--no-htaccess` | Do not write the `.htaccess` for Apache |
-| `--no-prune` | Keep blobs and signatures no manifest names any more |
+| `--no-prune` | Keep blobs, parts indexes and signatures no manifest names any more |
 
 ## serve
 
@@ -124,9 +136,10 @@ deltapatcher serve [STORE] [--bind 127.0.0.1] [--port 8000] [--verbose]
 ```
 
 Serve a store over HTTP, for testing or a LAN. It serves only `manifest.json`,
-`manifest.previous.json`, `blobs/<hash>` and `sigs/<hash>.sig` (and, for a release shared by torrent,
-`release.torrent` and `release.item`, also under `/<torrent name>/`), never a listing. `--bind 0.0.0.0` makes it reachable
-from other machines. For the internet, use a real web server with HTTPS.
+`manifest.previous.json`, `blobs/<hash>` (whole, or the ranges a `Range` request asks for), `parts/<hash>` and
+`sigs/<hash>.sig` (and, for a release shared by torrent, `release.torrent` and `release.item`, also under
+`/<torrent name>/`), never a listing. `--bind 0.0.0.0` makes it reachable from other machines. For the
+internet, use a real web server with HTTPS.
 
 ## update
 
@@ -150,8 +163,16 @@ folder path or a `file://` URL; default: the remembered one, else `http://localh
 With `--all`, each project's lines start with its name, and a summary closes the run: up to date, updated,
 or failed and why. One project failing never stops the others.
 
+A big `.pk3` or `.zip` that changed, from an `http(s)://` address, is rebuilt from the files inside it the folder
+already has: only the ones that changed are downloaded, with `Range` requests, and the archive is checked against
+the release's SHA-256 before it is used (anything that does not work out downloads it whole). The summary then
+says both amounts: `to download: 3 blobs, 31.2 MB (2 archives rebuilt from what is here: 1.4 GB whole)`, and each
+one is logged (`rebuilt data/pak0.pk3 from what is here: 12.0 MB fetched of 700.0 MB`). Progress counts the bytes
+fetched.
+
 A project shared by torrent also downloads from other players ([Torrents](#torrents)). Its address stays the
-floor: whatever no peer has comes from it, and an update never fails because of torrents.
+floor: whatever no peer has comes from it, and an update never fails because of torrents. Archives rebuilt from
+what is here come first; the swarm gets only what is still missing.
 
 ## check
 
@@ -161,7 +182,12 @@ deltapatcher check --all [--jobs N]
 ```
 
 What an update would change, changing nothing: the files new, changed and removed, and how much would be
-downloaded. The same as `update --check`. Exit code 2 when an update is available.
+downloaded, the archives rebuilt from what is here counted at what they fetch (and one whose cut download is
+resumed instead, at what that download lacks). It reads their parts indexes and keeps each one while the drive
+still has the update's free space after it: the update after it then reads that index here, not from the
+server. On a drive without room for the update's free space and the largest an index may be (64 MiB), it
+fetches none and counts those archives whole (the update still rebuilds them). An index that was refused is not
+fetched again. The same as `update --check`. Exit code 2 when an update is available.
 
 ## rollback
 
@@ -178,8 +204,9 @@ deltapatcher deploy [STORE] --to-folder FOLDER [--dry-run] [--no-prune]
 deltapatcher deploy [STORE] [--host HOST] [--user USER] [--port 22] [--key KEYFILE] [--remote-root PATH] [--dry-run] [--no-prune]
 ```
 
-Send a store to a folder, or to a server over SFTP. Only missing blobs are sent; the manifest goes in
-last. The first time a server is used, its host key is shown for you to confirm.
+Send a store to a folder, or to a server over SFTP. Only missing blobs and parts indexes are sent; the
+manifest goes in last. The first time a server is used, its host key is shown for you to confirm. With `--json`,
+the result's data also has `parts_sent` and `parts_removed`.
 
 | Option | |
 | --- | --- |
@@ -188,7 +215,7 @@ last. The first time a server is used, its host key is shown for you to confirm.
 | `--key` | The private key file (default: the remembered one, else `~/.ssh/deltapatcher_ed25519`) |
 | `--remote-root` | The folder on the server its web server serves, with forward slashes |
 | `--dry-run` | Say what would be sent and removed, change nothing |
-| `--no-prune` | Keep blobs no manifest on the target names any more |
+| `--no-prune` | Keep blobs and parts indexes no manifest on the target names any more |
 
 ## Projects that follow their publisher
 
@@ -447,6 +474,16 @@ the end of standard input; it sends `{"event": "seeding", ...}` for each project
 peers, upload rate and what it sent; for a project seeded from a copy, `"kind": "copy"` and `"copy": {"path",
 "bytes", "state", "done", "total"}`: where the copy is, what it holds on disk, `copying`, `ready`, `full` or
 `waiting` (with `why` while it is not ready), and how much of the release's blobs it holds).
+
+The data of an update or a check counts what it downloads three ways: `download_bytes` and `download_blobs`, the
+whole files it needs (as always); `fetch_bytes`, what it really downloads: those whole files, except that an archive
+rebuilt from what is here counts only the ranges it fetches from its blob (the files inside it that changed, and
+what lies between two of them fetched as one range), and an archive whose cut download is resumed instead counts
+only what that download lacks; and `rebuilt`, how many archives are rebuilt (not those resumed: the summary line
+says how many cut downloads are). `fetch_bytes` leaves out the parts indexes (each read once), the ranges a
+rebuild fetched before it did not work out (its file then counts whole), and a cut download fetched again
+because what it had was damaged. Its `downloading` progress counts the bytes fetched, against what it fetches in
+all (`fetch_bytes`, and those ranges and that download too when they happen).
 
 `update --all` and `check --all` add `queue`, `project-start` and `project-end` events, and every line
 about one project carries its name (`project`) and settings file (`file`); the full list is at the top of

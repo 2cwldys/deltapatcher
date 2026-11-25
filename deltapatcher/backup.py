@@ -10,6 +10,9 @@ there, except a file of the same name and the wrong size, which it replaces.
         project.json                 the project the folder belongs to
         blobs/<sha256>               the pool: each blob once, however many backups name it, checked against
                                      its SHA-256 as it arrives
+        parts/<sha256>               the parts indexes the backups' releases name, each once, checked the same
+                                     way; one the destination lacks is left out (players then download its
+                                     file whole when it changes)
         <YYYY-MM-DD>/                one backup a day (UTC): manifest.json, manifest.previous.json and
                                      .htaccess when the destination has them, sigs/<sha256>.sig,
                                      release.torrent and release.item of a release shared by torrent, and
@@ -22,9 +25,9 @@ are copied to or the folder it keeps up to date (folder_problem()).
 
 A backup of a release unchanged since the newest backup makes no new one, but tops that one up when the pool
 lacks some of its blobs; a second backup the same day replaces that day's. After each backup the limits are
-applied (limits(), apply_limits()) and blobs no backup names any more leave the pool. The backup just made
-always stays. Nothing is removed while a dated folder cannot be read, and no backup is removed by date when
-the one just made is dated before another (the computer's clock is behind, or was ahead).
+applied (limits(), apply_limits()) and blobs and parts indexes no backup names any more leave the pools. The
+backup just made always stays. Nothing is removed while a dated folder cannot be read, and no backup is removed
+by date when the one just made is dated before another (the computer's clock is behind, or was ahead).
 
 schedule() has the operating system run `deltapatcher-cli --unattended --project FILE backup now --scheduled
 daily|hourly` every hour: on Windows a Task Scheduler task that starts it through conhost --headless, so no
@@ -52,7 +55,7 @@ import time
 from xml.sax.saxutils import escape
 
 from . import client, config, deploy, hashing, ssh
-from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PREVIOUS_NAME, Manifest, ManifestError
+from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PARTS_DIR, PREVIOUS_NAME, Manifest, ManifestError
 from .publish import HTACCESS, human
 from .signing import SIG_DIR, sig_name
 
@@ -328,6 +331,12 @@ class Backup(object):
         out.update(self.manifest.blobs())
         return out
 
+    def parts(self):
+        """The SHA-256 of every parts index its two releases name."""
+        out = set(self.previous.parts()) if self.previous is not None else set()
+        out.update(self.manifest.parts())
+        return out
+
     def own_bytes(self):
         """What its own folder holds (manifests, signatures, backup.json)."""
         total = 0
@@ -373,6 +382,10 @@ def _pool(folder):
     return os.path.join(folder, BLOB_DIR)
 
 
+def _parts_pool(folder):
+    return os.path.join(folder, PARTS_DIR)
+
+
 def _recover(folder):
     """A same-day replacement that stopped between its two renames left that day's backup as .old-<day>-<pid>:
     it goes back in place."""
@@ -410,6 +423,13 @@ def _clean(folder):
         if n.endswith(".part"):
             try:
                 os.remove(os.path.join(pool, n))
+            except OSError:
+                pass
+    parts_pool = _parts_pool(folder)
+    for n in (os.listdir(parts_pool) if os.path.isdir(parts_pool) else []):
+        if not HEX64.match(n):
+            try:
+                os.remove(os.path.join(parts_pool, n))
             except OSError:
                 pass
 
@@ -514,6 +534,10 @@ def _take(project, target, log, progress, lim, folder, pool, shared_by_torrent=F
             log("the backup of %s is whole again" % last.name)
         else:
             log("the live release is the one the backup of %s holds: no new backup" % last.name)
+        want_parts = set(man.parts())
+        if prev is not None and prev_raw == last.raw(PREVIOUS_NAME):
+            want_parts.update(prev.parts())
+        _fetch_parts(target, sorted(s for s in want_parts if not _have_part(folder, s)), folder, log)
         result.update({"made": False, "name": last.name, "fetched": len(need), "fetched_bytes": total})
         result["pruned"] = _apply_limits(folder, lim, log)
         return result
@@ -525,7 +549,11 @@ def _take(project, target, log, progress, lim, folder, pool, shared_by_torrent=F
     total = sum(want[s] for s in need)
     log("%d of %d blobs to read from %s (%s)" % (len(need), len(want), target, human(total)))
     added = _fetch(target, need, want, folder, pool, progress, "no backup was made")
+    parts_added = []
     try:
+        want_parts = set(man.parts())
+        want_parts.update(prev.parts() if prev is not None else {})
+        parts_added = _fetch_parts(target, sorted(s for s in want_parts if not _have_part(folder, s)), folder, log)
         sigs = {}
         for data in (raw, prev_raw):
             if data is not None:
@@ -542,6 +570,7 @@ def _take(project, target, log, progress, lim, folder, pool, shared_by_torrent=F
         _write_backup(folder, name, raw, prev_raw, htaccess, sigs, info, _torrent_files(raw, shared))
     except BaseException:
         _remove(pool, added)                # nothing half-made is kept: blobs only this backup brought go too
+        _remove(_parts_pool(folder), parts_added)
         raise
     log("backed up %s %s from %s as %s%s: %d new blobs (%s)" % (man.name or "(unnamed)", man.version, target, name,
                                                                 " (it replaces that day's)" if replaced else "",
@@ -554,6 +583,56 @@ def _take(project, target, log, progress, lim, folder, pool, shared_by_torrent=F
 def _have(pool, sha, size):
     p = os.path.join(pool, sha)
     return os.path.isfile(p) and os.path.getsize(p) == size
+
+
+def _have_part(folder, sha):
+    """The parts index `sha` is in the folder's parts pool, whole: its SHA-256 is checked (indexes are small, and no
+    manifest gives their size). A damaged one leaves the pool, so the backup reads it again."""
+    p = os.path.join(_parts_pool(folder), sha)
+    try:
+        if hashing.sha256_file(p)[0] == sha:
+            return True
+    except OSError:
+        return False
+    _remove(_parts_pool(folder), [sha])
+    return False
+
+
+def _fetch_parts(target, need, folder, log):
+    """Read the parts indexes `need` from `target` into the parts pool, each checked against its SHA-256 as it arrives.
+    One the destination lacks, or that is damaged, is left out and said: an index is never needed (players then
+    download its file whole when it changes). Returns the ones added; BackupError when the destination cannot be read,
+    and then none of them stays."""
+    if not need:
+        return []
+    pool = _parts_pool(folder)
+    os.makedirs(pool, exist_ok=True)
+    incoming = os.path.join(folder, ".incoming-parts-%d" % os.getpid())
+    os.makedirs(incoming)
+    added = []
+    try:
+        try:
+            target.get_parts(need, incoming, lambda sha: None)
+        except deploy.DeployError as e:
+            raise BackupError("the parts indexes could not be read from %s: %s" % (target, e), "read-failed")
+        for sha in need:
+            got = os.path.join(incoming, sha)
+            try:
+                good = hashing.sha256_file(got)[0] == sha
+            except OSError:
+                good = None
+            if not good:
+                log("the parts index %s at %s is %s: the backup leaves it out" %
+                    (sha[:12], target, "missing" if good is None else "damaged"))
+                continue
+            _rename(got, os.path.join(pool, sha))
+            added.append(sha)
+    except BaseException:
+        _remove(pool, added)
+        raise
+    finally:
+        shutil.rmtree(incoming, ignore_errors=True)
+    return added
 
 
 def _remove(pool, shas):
@@ -690,13 +769,24 @@ def keep_names(names, daily, weekly, monthly):
 
 def _size_of(backups):
     blobs = {}
+    parts = set()
     for b in backups:
         blobs.update(b.blobs())
-    return sum(blobs.values()) + sum(b.own_bytes() for b in backups)
+        parts.update(b.parts())
+    size = sum(blobs.values()) + sum(b.own_bytes() for b in backups)
+    if parts:
+        pool = _parts_pool(os.path.dirname(backups[0].path))
+        for sha in parts:
+            try:
+                size += os.path.getsize(os.path.join(pool, sha))
+            except OSError:
+                pass
+    return size
 
 
 def apply_limits(project, cfg, log=None):
-    """Keep what the limits keep, remove the other backups, then the blobs no backup names. Returns what went."""
+    """Keep what the limits keep, remove the other backups, then the blobs and parts indexes no backup names.
+    Returns what went."""
     log = log or (lambda s: None)
     lim = limits(cfg)
     folder = folder_of(project, cfg)
@@ -753,8 +843,10 @@ def _apply_limits(folder, lim, log, made=None):
     if removed:
         log("removed %d backups the limits do not keep: %s" % (len(removed), ", ".join(b.name for b in removed)))
     named = set()
+    named_parts = set()
     for b in remaining:
         named.update(b.blobs())
+        named_parts.update(b.parts())
     gone = 0
     pool = _pool(folder)
     if os.path.isdir(pool):
@@ -763,6 +855,14 @@ def _apply_limits(folder, lim, log, made=None):
                 try:
                     os.remove(os.path.join(pool, n))
                     gone += 1 if not n.endswith(".part") else 0
+                except OSError:
+                    pass
+    parts_pool = _parts_pool(folder)
+    if os.path.isdir(parts_pool):
+        for n in os.listdir(parts_pool):
+            if n not in named_parts:
+                try:
+                    os.remove(os.path.join(parts_pool, n))
                 except OSError:
                     pass
     out.update({"removed": [b.name for b in removed], "kept": [b.name for b in remaining], "blobs_removed": gone,
@@ -822,8 +922,8 @@ def _check_blobs(b, pool, progress):
 
 def restore(project, cfg, name, target, dry_run=False, log=None, progress=None, cancel=None):
     """Put the backup `name` back at `target`, as a release goes: every blob of it checked against its SHA-256
-    first (with dry_run too), then the blobs the destination lacks, the manifest last. Nothing at the
-    destination is removed, except a file of the same name and the wrong size, which is replaced. `cancel` (a
+    first (with dry_run too), then the blobs and parts indexes the destination lacks, the manifest last. Nothing at
+    the destination is removed, except a file of the same name and the wrong size, which is replaced. `cancel` (a
     threading.Event) stops it before the manifest goes up. Returns the deploy.DeployResult."""
     progress = progress or (lambda d, t, l: None)
     folder = folder_of(project, cfg)
@@ -838,7 +938,7 @@ def restore(project, cfg, name, target, dry_run=False, log=None, progress=None, 
         _check_blobs(b, pool, progress)
         try:
             return deploy.deploy(b.path, target, prune=False, dry_run=dry_run, progress=progress, log=log, blob_dir=pool,
-                                 cancel=cancel)
+                                 cancel=cancel, parts_dir=_parts_pool(folder))
         except deploy.DeployError as e:
             raise BackupError(str(e), "send-failed")
 

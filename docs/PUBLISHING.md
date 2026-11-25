@@ -49,6 +49,37 @@ What happens:
 - Blobs that neither manifest names any more are deleted from the store (`--no-prune` keeps them).
 - Publishing exactly the same files again changes nothing, and the manifest keeps its date.
 
+### Big archives
+
+A file of 8 MiB or more that is a zip (a `.pk3`, `.zip`, `.jar` and any other: DeltaPatcher reads its
+structure, never its name) gets a small *parts index* by itself, in `store/parts/`. When that archive changes,
+players rebuild it from the files inside it they already have, and download only the files inside it that
+changed: a texture changed in a 1.4 GB `.pk3` is a download of that texture. The rebuilt archive is checked byte
+for byte against the release, and anything that does not work out downloads it whole, as before. Nothing is
+recompressed and nothing needs setting up; publishing's summary says how many files got an index
+(`... 3 with a parts index`). Making one reads a new archive once more; an archive already published is never read
+for it again.
+
+Other big archives are released as any file is, and sent whole whenever they change: RAR, 7z, gzip (and
+`.tar.gz`), and a zip DeltaPatcher cannot index. Publishing says so once for each, in its log and on the
+**Release** page; for a zip, the line says why:
+
+```
+Warning: data/maps.rar (1.2 GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that changed inside it travel.
+Warning: data/sounds.pk3 (9.6 MB) is sent whole whenever it changes: 100% of it would travel inside its index, more than a quarter: its files under 1 KiB (89%) and the bytes outside its files (11%).
+```
+
+Nothing is blocked, and players see nothing of it. To make a RAR, 7z or gzip archive patch inside, pack it again
+as a `.zip` or `.pk3` (for a game that reads only RAR or 7z, leave it: it still updates, whole). A zip gets no
+index when more than a quarter of it, or more than 48 MiB, would travel inside the index (its files under 1 KiB
+and the bytes outside its files, together), when its files overlap or are not where its directory says, when
+Python's zip reader cannot open it, when it has more files than an index can hold (1,000,000 parts, about two
+for each file: about 500,000 files), or when its index would be larger than 64 MiB;
+[Troubleshooting](TROUBLESHOOTING.md#publishing) says what helps for each (for files under 1 KiB, nothing: it
+still updates, whole). A plain `.tar` is sent whole too, without the line. A zip that cannot be read while its
+index is made gets no warning but one plain line (`could not read data/x.pk3 to index it (...): players get it
+whole this time`), and the next publish reads it again.
+
 ## 3. Protect player files
 
 A *protected* file is created when a player does not have it, and never overwritten after that.
@@ -110,10 +141,12 @@ The store is plain static files: any web server can serve it. Choose one:
 - **A folder**: **A folder** there, for a web root on this machine or a network share. Command line:
   `deltapatcher release --to folder --to-folder D:/www/game`.
 - **Any static host** (object storage, a CDN): upload `manifest.json`, `manifest.previous.json`,
-  `blobs/` and `sigs/` (and `.htaccess` for Apache). Upload the blobs and signatures first and
-  `manifest.json` last.
+  `blobs/`, `parts/` and `sigs/` (and `.htaccess` for Apache). Upload the blobs, parts indexes and signatures
+  first and `manifest.json` last.
 
-Deploying sends only the blobs the target does not have yet.
+Deploying sends only the blobs and parts indexes the target does not have yet. A big archive's rebuild needs a
+web server that answers Range requests: every real one does (Caddy, nginx, Apache, IIS, object storage and CDNs).
+One that does not still works, and the archive then comes whole.
 
 **Force stop** (the red box at the bottom left of the app) ends a release at once. Players get a release
 only once its `manifest.json` is in place, the last step, so a release stopped before that never reaches
@@ -296,14 +329,19 @@ deltapatcher stats [--days N]
 
 The last 30 days by default (up to 366); `--json` gives the whole document, for your own tools.
 
-- **Releases**: the live release, what it changed from the one before, the store's size, and every release
+- **Releases**: the live release, what it changed from the one before (its new, changed and removed files,
+  and the size of the new and changed ones: `1.4 GB of new and changed files`, what a player on the release
+  before downloads, less when it rebuilds a big archive from what it has), the store's size, and every release
   so far. Each release adds a line to `history.jsonl` in the store; it is never sent to your server.
 - **Downloads**, from your web server's access log: update checks, downloads, bytes and players a day, and
   which release players are on. Set **access_log** (the card, the Settings page, or
   `deltapatcher config set access_log=/var/log/nginx/access.log`): its path on the server, read over SFTP
   the way a release is sent, or a path on this computer for a release sent to a folder. It reads the
   Combined Log Format of nginx and Apache, and Caddy's JSON log. Only requests under **public_url**'s path
-  count.
+  count. A download is a whole file (a `200`). A parts index is a file, as a signature is: a check reads it too,
+  so it counts in the bytes and the players, never as a download. A player who rebuilds a big archive
+  ([Big archives](#big-archives)) downloads less than the whole file, and it is no download either: the ranges
+  fetched for it (`206`), like the rest of a cut download, count in the bytes only.
 
 Only counts are kept. No address, user agent or log line is stored, logged or sent anywhere: players are
 told apart in memory, by a salted hash, while the log is read, and a log copied from the server is deleted
@@ -328,7 +366,8 @@ deltapatcher backup schedule daily     the system makes backups without the app:
 ```
 
 - **Many backups cost little.** Each file is kept once, however many backups have it, and checked against
-  its SHA-256 as it arrives. A release that has not changed since the last backup makes no new one, and
+  its SHA-256 as it arrives; so is the parts index of each big archive ([Big archives](#big-archives)), which a
+  restore puts back with the files. A release that has not changed since the last backup makes no new one, and
   there is one backup a day at most: a second one that day replaces it.
 - **Limits**, on the Settings page under *Backups*: **backup_keep_daily** (7), **backup_keep_weekly** (4),
   **backup_keep_monthly** (0) and **backup_max_size** (empty: no limit). After each backup the newest of each

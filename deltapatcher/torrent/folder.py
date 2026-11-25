@@ -24,7 +24,7 @@ import re
 from .. import hashing
 from . import RELEASE_DIR, make
 
-HEX64 = re.compile(r"^[0-9a-f]{64}$")
+HEX64 = re.compile(r"\A[0-9a-f]{64}\Z")   # the whole value: not one with a newline after it, as $ would take
 ABSENT = ".deltapatcher/" + RELEASE_DIR + "/absent/%d"
 PIECE = 1 << 20              # bytes hashed between two checks
 

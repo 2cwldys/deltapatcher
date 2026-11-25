@@ -49,6 +49,7 @@ const GROUPS = [
     line: 'Players get only the files\ntheir folder lacks.',
     features: [
       ['file-down', 'Only what changed', 'Players download just the files their folder lacks, files you deleted are removed (never their own), and a cut download resumes.'],
+      ['file-archive', 'Inside archives', 'A changed .pk3 or .zip downloads only the files inside it that changed, and is rebuilt byte for byte and checked.'],
       ['rotate-ccw', 'Safe updates', 'Every file is checked before it is used. A failed update is undone, and Roll back undoes the last one.'],
       ['bell', 'Updates while you play', 'It checks every hour from the tray, says what is waiting, and can update by itself.'],
       ['folders', 'Several projects', 'Every game, mod or server you keep up to date or release, each with its own settings. Update all runs three at once.']

@@ -1,4 +1,5 @@
-"""A small web server for a store: manifest.json and blobs/<sha256>, with resumable downloads.
+"""A small web server for a store: manifest.json and blobs/<sha256>, with resumable downloads and Range requests
+(an archive rebuilt from what a player has fetches only ranges of its blob), and parts/<sha256>, the parts indexes.
 
 Meant for testing on this machine (the default address is 127.0.0.1:8000) or a LAN. For the
 internet, serve the store with a real web server (Caddy, nginx, IIS) over HTTPS: the files are
@@ -15,7 +16,7 @@ import re
 import socketserver
 import threading
 
-from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PREVIOUS_NAME
+from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PARTS_DIR, PREVIOUS_NAME
 from .signing import SIG_DIR
 
 TORRENT_FILES = ("release.torrent", "release.item")
@@ -64,12 +65,16 @@ def make_handler(root, quiet=True):
         def _resolve(self):
             path = self.path.split("?", 1)[0].split("#", 1)[0]
             parts = [p for p in path.split("/") if p]
+            if len(parts) == 2 and parts[0] == PARTS_DIR and HEX64.match(parts[1]):
+                # a parts index; before the web seed's path, so a torrent named "parts" never hides one
+                return os.path.join(root, PARTS_DIR, parts[1])
             if len(parts) > 1 and parts[0] == current_name():
                 parts = parts[1:]                 # the torrent's web seed: <address>/<name>/...
             if len(parts) == 1 and parts[0] in allowed_top:
                 return os.path.join(root, parts[0])
-            if len(parts) == 2 and parts[0] == BLOB_DIR and HEX64.match(parts[1]):
-                return os.path.join(root, BLOB_DIR, parts[1])
+            if len(parts) == 2 and parts[0] in (BLOB_DIR, PARTS_DIR) and HEX64.match(parts[1]):
+                # a blob, or a parts index for a player whose address is the web seed's: <address>/<name>/
+                return os.path.join(root, parts[0], parts[1])
             if len(parts) == 2 and parts[0] == SIG_DIR and parts[1].endswith(".sig") and HEX64.match(parts[1][:-4]):
                 return os.path.join(root, SIG_DIR, parts[1])
             return None   # nothing else is served: no listings, no other files (not the .htaccess either)

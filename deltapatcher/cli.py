@@ -482,7 +482,8 @@ def cmd_publish(a, cfg):
     data = {"files": res.files, "bytes": res.bytes, "blobs": res.blobs, "new_blobs": res.new_blobs,
             "new_bytes": res.new_bytes, "pruned": res.pruned, "signed": signer is not None,
             "left_out": res.left_out, "store": os.path.abspath(store), "summary": res.summary(),
-            "details": publisher.has_details(details), "show_files": details["show_files"], "notes": notes}
+            "details": publisher.has_details(details), "show_files": details["show_files"], "notes": notes,
+            "parts": res.parts, "warnings": res.warnings}
     if made:
         data["torrent"] = made[-1]
     return data
@@ -721,7 +722,8 @@ def update_one(a, cfg, out, cancel):
     data = {"empty": plan.empty(), "summary": plan.summary(), "add": len(plan.add), "replace": len(plan.replace),
             "remove": len(plan.remove), "same": plan.same, "download_blobs": len(need),
             "download_bytes": sum(need.values()), "kept": plan.kept_changed + plan.protected,
-            "publisher_key": client.State(os.path.abspath(install)).publisher_key}
+            "publisher_key": client.State(os.path.abspath(install)).publisher_key,
+            "fetch_bytes": plan.fetch_bytes(), "rebuilt": len(plan.rebuilds)}
     if a.check and not plan.empty():
         data["exit"] = 2
     if shared is not None:
@@ -895,9 +897,10 @@ def outcome(row, check):
     if d["empty"]:
         return "up to date", "ok"
     parts = ["%d new" % d["add"], "%d changed" % d["replace"]] + (["%d removed" % d["remove"]] if d["remove"] else [])
+    amount = d.get("fetch_bytes", d["download_bytes"])
     if check:
-        return "an update is waiting: %s, %s to download" % (", ".join(parts), publish.human(d["download_bytes"])), "warn"
-    return "updated: %s, %s downloaded" % (", ".join(parts), publish.human(d["download_bytes"])), "ok"
+        return "an update is waiting: %s, %s to download" % (", ".join(parts), publish.human(amount)), "warn"
+    return "updated: %s, %s downloaded" % (", ".join(parts), publish.human(amount)), "ok"
 
 
 def update_all(a, cfg):
@@ -1027,7 +1030,8 @@ def cmd_deploy(a, cfg):
                         cancel=USER_CANCEL)
     OUT.end()
     return {"named": res.named, "had": res.had, "sent": res.sent, "sent_bytes": res.sent_bytes,
-            "removed": res.removed, "atomic": res.atomic, "dry_run": res.dry_run, "summary": res.summary()}
+            "removed": res.removed, "atomic": res.atomic, "dry_run": res.dry_run, "summary": res.summary(),
+            "parts_sent": res.parts_sent, "parts_removed": res.parts_removed}
 
 
 def backup_target(cfg):

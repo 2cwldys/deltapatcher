@@ -26,14 +26,15 @@
   <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-projects.png"><img src="docs/images/app-projects.png" alt="The DeltaPatcher app: every project at a glance" width="880"></a>
 </p>
 
-DeltaPatcher never looks inside a file. A `.pk3`, a `.zip`, a map, a texture pack or an executable is
-just bytes with a SHA-256 hash: a changed file is fetched again, an unchanged one never is, and two
-identical files are stored once.
+DeltaPatcher sends only what changed, down to the files inside an archive. A changed `.pk3` or `.zip` of 8 MiB
+or more (smaller ones come whole) is rebuilt from the files inside it the player already has: only the files
+inside it that changed travel, and the result is checked byte for byte. Any other changed file (a map, a texture
+pack, an executable) is fetched again whole, an unchanged one never is, and two identical files are stored once.
 
 ## Features
 
 <p align="center">
-  <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/features.png"><img src="docs/images/features.png" alt="DeltaPatcher's features. Release: one button to your server, host it anywhere, signed releases, shadow patches, pick do not type, patch notes. Update: only what changed, safe updates, updates while you play, several projects. Share: project presets, presets that follow you, torrents if you want them. Look after it: statistics for publishers, backups, force stop, app and command line, in your containers." width="880"></a>
+  <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/features.png"><img src="docs/images/features.png" alt="DeltaPatcher's features. Release: one button to your server, host it anywhere, signed releases, shadow patches, pick do not type, patch notes. Update: only what changed, inside archives, safe updates, updates while you play, several projects. Share: project presets, presets that follow you, torrents if you want them. Look after it: statistics for publishers, backups, force stop, app and command line, in your containers." width="880"></a>
 </p>
 
 ## How it works
@@ -46,11 +47,12 @@ flowchart LR
 ```
 
 1. **Release** hashes every file and writes a *store*: `manifest.json` lists every file, and `blobs/` holds
-   each distinct file once, named by its SHA-256.
+   each distinct file once, named by its SHA-256. A big `.pk3` or `.zip` also gets a small index of the pieces
+   it is made of.
 2. It sends the store to your server, missing files first and the manifest last, so players never see
    half a release.
-3. **Update** compares a player's folder with the manifest, downloads what it lacks, checks it, and swaps
-   it in with a journal and a rollback copy.
+3. **Update** compares a player's folder with the manifest, downloads what it lacks (of a changed archive, only
+   the files inside it that changed), checks it, and swaps it in with a journal and a rollback copy.
 
 ## Get it
 
@@ -98,6 +100,11 @@ Step by step, on the [wiki](https://github.com/2cwldys/deltapatcher/wiki):
 
 ## Limitations
 
+- `.gz`, `.tar.gz`, `.tar`, `.rar` and `.7z` files are fetched whole when they change (publishing warns about
+  big gzip, RAR and 7z files); only `.pk3`, `.zip` and other zip archives of 8 MiB or more (smaller ones come
+  whole) are rebuilt from the files inside them, over http(s), and publishing says why when a big one cannot be.
+  A rebuilt archive needs a web server that answers Range requests: every real one does, and without it the
+  whole file comes. From a folder or by torrent alone, a changed archive comes whole.
 - SFTP uploads report progress per batch of files, not per byte, and a blob whose upload was cut is sent
   again whole (downloads resume; uploads do not).
 - Publishing the same files with the same project details keeps the manifest as it was; publish when

@@ -68,6 +68,8 @@ export interface StatsView {
   ok: boolean
   days: number
   release?: ReleaseInfo
+  // download: the size of the new and changed files (the engine's download_bytes); a player who rebuilds a big archive
+  // from what it has downloads less
   change?: { from: string; new: number; changed: number; removed: number; download: number }
   store?: { bytes: number; files: number; releases: number }
   releasesProblem: string

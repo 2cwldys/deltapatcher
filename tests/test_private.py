@@ -90,6 +90,7 @@ def host_key():
 class Sent(object):
     """What a deploy answers, for a test that must not reach a server."""
     named, had, sent, sent_bytes, removed, atomic, dry_run = 1, 0, 1, 10, 0, True, False
+    parts_sent, parts_removed = 0, 0
 
     def summary(self):
         return "sent 1 blob"

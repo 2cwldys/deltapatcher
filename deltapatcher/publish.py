@@ -6,14 +6,23 @@ clients that are halfway through an update can still fetch the blobs they starte
 files with the same name, version, rules and project details keep the manifest as it was. Each new
 release also adds a line to the store's history.jsonl, for statistics (stats.py); that file stays on
 this computer.
+
+A release file of parts.PARTS_MIN bytes or more that is a zip (found by its structure, never by its name) gets a
+parts index, parts/<sha256 of the index>, named by its manifest entry's "parts" (parts.py): an update then rebuilds it
+from the files inside it the player already has. Each blob is indexed once (the store's .deltapatcher-partscache.json
+remembers the answer), and an index already in the store is not written again. A big archive DeltaPatcher cannot
+patch inside (RAR, 7z, gzip, a zip that gets no index) is published as any file is, with one warning line: for a zip,
+why it got none (ZIP_WARNING). A blob that cannot be read while it is indexed is one plain line (UNREAD_LINE), no
+warning, and nothing is remembered of it: the next publish reads it again. Only indexes (and what writing one left)
+ever leave the store's parts/: a file put there by hand (IIS's web.config) stays.
 """
 
 import json
 import os
 import shutil
 
-from . import hashing, signing
-from .manifest import (BLOB_DIR, MANIFEST_NAME, PREVIOUS_NAME, Entry, Manifest, ManifestError,
+from . import hashing, parts, signing
+from .manifest import (BLOB_DIR, HEX64, MANIFEST_NAME, PARTS_DIR, PREVIOUS_NAME, Entry, Manifest, ManifestError,
                        check_path, rule_matches)
 from .torrent import pause
 
@@ -26,7 +35,8 @@ HISTORY_NAME = "history.jsonl"
 
 # Apache (2.2 and 2.4) for a store: serve the manifests, the blobs, the signatures and, for a release shared by
 # torrent, its torrent and item, and nothing else,
-# never list a folder, give blobs (which have no extension) a type, and set the cache headers.
+# never list a folder, give blobs (which have no extension) a type, and set the cache headers. A parts index,
+# parts/<sha256>, has a blob's kind of name: it is served, typed and cached as a blob is.
 HTACCESS_TEXT = r"""# Written by DeltaPatcher: Apache serves this store and nothing else from it.
 # The manifests (and release.torrent and release.item) are never cached; blobs and signatures never change, so
 # they are cached for a year.
@@ -82,6 +92,14 @@ class PublishError(Exception):
     pass
 
 
+STOPPED = "stopped before the new manifest was put in place: the store serves what it did before"
+WHOLE_WARNING = ("Warning: %s (%s) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that "
+                 "changed inside it travel.")
+# a big zip that gets no parts index: why, in words made from make_index's reason code (parts.reason())
+ZIP_WARNING = "Warning: %s (%s) is sent whole whenever it changes: %s."
+UNREAD_LINE = "could not read %s to index it (%s): players get it whole this time"
+
+
 class PublishResult(object):
     def __init__(self):
         self.files = 0
@@ -93,10 +111,13 @@ class PublishResult(object):
         self.skipped = []
         self.left_out = []       # what the leave-out rules kept out of the release (a folder with a trailing /)
         self.manifest = None
+        self.parts = 0           # files of the release with a parts index
+        self.warnings = []       # one line for each big archive DeltaPatcher cannot patch inside
 
     def summary(self):
         return ("%d files (%s), %d distinct; %d new blobs (%s) copied, %d pruned"
-                % (self.files, human(self.bytes), self.blobs, self.new_blobs, human(self.new_bytes), self.pruned))
+                % (self.files, human(self.bytes), self.blobs, self.new_blobs, human(self.new_bytes), self.pruned)
+                + ("; %d with a parts index" % self.parts if self.parts else ""))
 
 
 def human(n):
@@ -212,9 +233,9 @@ def write_htaccess(store):
 
 def add_history(store, man, new_blobs, before):
     """One line in <store>/history.jsonl for a new release, for statistics: when, its name and version, its
-    files and bytes, the blobs it added to the store, and what a player on the release before downloads
-    (None for the first one). It stays on this computer: deploy never sends it and the built-in server never
-    serves it."""
+    files and bytes, the blobs it added to the store, and the size of its new and changed files (download_bytes:
+    what a player on the release before downloads, less when it rebuilds a big archive; None for the first one). It
+    stays on this computer: deploy never sends it and the built-in server never serves it."""
     had = before.blobs() if before is not None else None
     line = {"time": man.published, "name": man.name, "version": man.version, "files": len(man.files),
             "bytes": man.bytes, "new_blobs": new_blobs,
@@ -241,6 +262,45 @@ def _sig_bytes(store, data):
             return f.read()
     except OSError:
         return None
+
+
+def _index_there(parts_dir, name):
+    """parts/<name> is in the store, and is what its name says."""
+    try:
+        return hashing.sha256_file(os.path.join(parts_dir, name))[0] == name
+    except OSError:
+        return False
+
+
+def _parts_of(store, blob, sha, size, pcache, cancel):
+    """(the SHA-256 of the parts index of the blob `sha` (the file `blob`, `size` bytes), '') when it has one, made now
+    and put in the store's parts/ when the store has none of it yet; (None, why it has none: '' under PARTS_MIN, else
+    make_index's reason code) otherwise, remembered in the store's cache. OSError when the blob cannot be read whole:
+    nothing is remembered, and the next publish asks again. PublishError(STOPPED) on a stop."""
+    if size < parts.PARTS_MIN:
+        return None, ""
+    known = pcache.get(sha)
+    if known and not HEX64.match(known):
+        return None, known                  # why it has none, found before
+    d = os.path.join(store, PARTS_DIR)
+    if known and _index_there(d, known):
+        return known, ""
+    try:
+        data, why = parts.make_index(blob, sha, size, cancel)
+    except parts.Stopped:
+        raise PublishError(STOPPED)
+    if data is None:
+        pcache.put(sha, why)
+        return None, why
+    name = hashing.sha256_bytes(data)
+    if not _index_there(d, name):           # an index already in the store is not written again
+        os.makedirs(d, exist_ok=True)
+        p = os.path.join(d, name)
+        with open(p + ".tmp", "wb") as f:
+            f.write(data)
+        os.replace(p + ".tmp", p)
+    pcache.put(sha, name)
+    return name, ""
 
 
 def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None,
@@ -292,6 +352,7 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
             raise PublishError("%s cannot be published: %s" % (rel, e))
 
     cache = hashing.HashCache(os.path.join(store, HASH_CACHE))
+    pcache = parts.StoreCache(os.path.join(store, parts.CACHE_NAME))
     entries = []
     total = len(rels)
     for i, rel in enumerate(rels):
@@ -313,9 +374,24 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
                 res.new_blobs += 1
                 res.new_bytes += size
         size = os.path.getsize(blob)
-        entries.append(Entry(rel, sha, size))
+        # a big zip gets a parts index, read from the blob (its bytes are sha's); a big archive that cannot be patched
+        # inside is said once: a zip with why it got none, another archive with what would let it be
+        try:
+            index, why = _parts_of(store, blob, sha, size, pcache, cancel)
+        except OSError as e:
+            index, why = None, ""
+            log(UNREAD_LINE % (rel, e.strerror or e))
+        entries.append(Entry(rel, sha, size, index))
+        if index is None and why:
+            kind = parts.archive_kind(blob)
+            if kind == "zip":
+                res.warnings.append(ZIP_WARNING % (rel, human(size), parts.reason(why)))
+            elif kind:
+                res.warnings.append(WHOLE_WARNING % (rel, human(size)))
     progress(total, total, "")
     cache.save()
+    for line in res.warnings:
+        log(line)
 
     man = Manifest(name, version, files=entries, protect=protect, project=project)
     mpath = os.path.join(store, MANIFEST_NAME)
@@ -333,7 +409,7 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
             extra(store, data, _sig_bytes(store, data))
     else:
         if cancel is not None and cancel.is_set():
-            raise PublishError("stopped before the new manifest was put in place: the store serves what it did before")
+            raise PublishError(STOPPED)
         data = man.to_json()
         if signer is not None:
             _write_sig(store, data, signer, log)     # the signature is there before the manifest it signs
@@ -379,10 +455,30 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
                         os.remove(os.path.join(sig_dir, fn))
                     except OSError:
                         pass
+        # the parts indexes the two releases name stay, and those of the blobs kept (a release kept as it was
+        # names none when an older DeltaPatcher wrote it: its indexes wait for the next one)
+        pcache.keep_only(keep)
+        parts_keep = set(man.parts())
+        parts_keep.update(prev.parts() if prev else {})
+        parts_keep.update(v for v in pcache.blobs.values() if HEX64.match(v))
+        parts_dir = os.path.join(store, PARTS_DIR)
+        if os.path.isdir(parts_dir):
+            # only indexes and what writing one left (<sha256>.tmp): anything else there (a web.config) is not ours
+            for fn in os.listdir(parts_dir):
+                if (HEX64.match(fn) and fn not in parts_keep) or (fn.endswith(".tmp") and HEX64.match(fn[:-4])):
+                    try:
+                        os.remove(os.path.join(parts_dir, fn))
+                    except OSError:
+                        pass
+    try:
+        pcache.save()
+    except OSError:
+        pass                                # it only saves reading the archives again
 
     res.files = len(entries)
     res.bytes = man.bytes
     res.blobs = len(man.blobs())
+    res.parts = sum(1 for e in man.files.values() if e.parts)
     res.manifest = man
     log("published %s" % res.summary())
     return res

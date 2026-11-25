@@ -1,14 +1,17 @@
 """Deploy: send a published store to the place clients read it from, sending only missing blobs.
 
 The order keeps clients safe while a deploy runs:
-  1. ask the target which blobs it has (name and size), and read its current and previous manifests
+  1. ask the target which blobs and parts indexes it has (name and size), and read its current and previous
+     manifests
   2. upload the missing ones as <sha>.part, renamed to <sha> when complete
-  3. check that every blob the new manifest names is there at its size
+  3. check that every blob the new manifest names is there at its size; then the same for its parts indexes
+     (parts/<sha>, each checked against its SHA-256 here first: one missing or damaged here is not sent, and players
+     download that file whole when it changes)
   4. the signature, the .htaccess and, for a release shared by torrent, release.torrent and release.item; then
      keep the target's current manifest as manifest.previous.json, upload the new one beside it,
      check its size, then put it in place (an atomic rename where the server supports it)
-  5. remove blobs that none of the new, current and previous manifests name, and stale .part files;
-     when a manifest on the target cannot be read, nothing is removed
+  5. remove blobs and parts indexes that none of the new, current and previous manifests name, and stale .part
+     files; when a manifest on the target cannot be read, nothing is removed
 A client that read the old manifest a moment ago can still fetch every blob it names. If anything
 fails before step 4, the target still serves the release it served before.
 """
@@ -20,7 +23,8 @@ import tempfile
 import re
 
 from . import hashing, ssh
-from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PREVIOUS_NAME, Manifest, ManifestError
+from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PARTS_DIR, PREVIOUS_NAME, Manifest, ManifestError
+from .parts import INDEX_MAX
 from .publish import HTACCESS, human
 from .signing import SIG_DIR, sig_name
 
@@ -126,6 +130,45 @@ class FolderTarget(object):
                 except OSError:
                     pass
 
+    def list_parts(self):
+        """{name: size} of the parts indexes (and .part leftovers) in parts/; {} when there is no such folder."""
+        d = os.path.join(self.root, PARTS_DIR)
+        if not os.path.isdir(d):
+            return {}
+        return {fn: os.path.getsize(os.path.join(d, fn)) for fn in os.listdir(d)
+                if _blob_name(fn) and os.path.isfile(os.path.join(d, fn))}
+
+    def put_parts(self, parts_dir, shas, progress):
+        d = os.path.join(self.root, PARTS_DIR)
+        os.makedirs(d, exist_ok=True)
+        for sha in shas:
+            part = os.path.join(d, sha + ".part")
+            shutil.copyfile(os.path.join(parts_dir, sha), part)
+            os.replace(part, os.path.join(d, sha))
+            progress(sha)
+
+    def remove_parts(self, names):
+        for n in names:
+            if _blob_name(n):
+                try:
+                    os.remove(os.path.join(self.root, PARTS_DIR, n))
+                except OSError:
+                    pass
+
+    def get_parts(self, shas, into, progress):
+        """Copy parts/<sha> of each sha the folder has into the folder `into`; one it lacks is passed over (a backup
+        reads them; the caller checks which came, and each one's SHA-256)."""
+        for sha in shas:
+            if not HEX64.match(sha):
+                raise DeployError("not a parts index name: %r" % sha)
+            p = os.path.join(self.root, PARTS_DIR, sha)
+            if os.path.isfile(p):
+                try:
+                    shutil.copyfile(p, os.path.join(into, sha))
+                except OSError as e:
+                    raise DeployError("cannot read the parts index %s in %s: %s" % (sha[:12], self.root, e))
+            progress(sha)
+
 
 class SftpTarget(object):
     """A host reached with sftp (OpenSSH), the folder its web server serves."""
@@ -203,12 +246,13 @@ class SftpTarget(object):
         if chunk:
             self._put_chunk(blob_dir, chunk, size, progress)
 
-    def _put_chunk(self, blob_dir, chunk, size, progress):
-        cmds = []
+    def _put_chunk(self, blob_dir, chunk, size, progress, folder=BLOB_DIR):
+        # a parts folder may not be there yet: made first (blobs/ was made when the blobs were listed)
+        cmds = [] if folder == BLOB_DIR else ["-mkdir %s" % ssh.q("%s/%s" % (self.root, folder))]
         for sha in chunk:
             if not HEX64.match(sha):
                 raise DeployError("not a blob name: %r" % sha)
-            remote = "%s/%s/%s" % (self.root, BLOB_DIR, sha)
+            remote = "%s/%s/%s" % (self.root, folder, sha)
             # put runs in the blob folder, so the local name is the bare hash: no local path reaches sftp
             cmds.append("put %s %s" % (ssh.q(sha), ssh.q(remote + ".part")))
             cmds.append("rename %s %s" % (ssh.q(remote + ".part"), ssh.q(remote)))
@@ -289,6 +333,48 @@ class SftpTarget(object):
         if names:
             ssh.sftp(self.t, ["-rm %s" % ssh.q("%s/%s/%s" % (self.root, SIG_DIR, n)) for n in names])
 
+    def list_parts(self):
+        """{name: size} of the parts indexes (and .part leftovers) in parts/ on the server; {} when it has no such
+        folder (the listing may fail: it is never made just to be listed)."""
+        d = self.root + "/" + PARTS_DIR
+        r = ssh.sftp(self.t, ["-ls -ln %s" % ssh.q(d)], timeout=600)
+        if r.returncode != 0:
+            raise DeployError("listing %s failed: %s" % (d, ssh.explain(r)))
+        return ssh.parse_ls(r.stdout)
+
+    def put_parts(self, parts_dir, shas, progress):
+        chunk, size = [], 0
+        for sha in shas:
+            chunk.append(sha)
+            size += os.path.getsize(os.path.join(parts_dir, sha))
+            if len(chunk) >= self.CHUNK_FILES or size >= self.CHUNK_BYTES:
+                self._put_chunk(parts_dir, chunk, size, progress, PARTS_DIR)
+                chunk, size = [], 0
+        if chunk:
+            self._put_chunk(parts_dir, chunk, size, progress, PARTS_DIR)
+
+    def remove_parts(self, names):
+        names = [n for n in names if _blob_name(n)]
+        for i in range(0, len(names), 200):
+            ssh.sftp(self.t, ["-rm %s" % ssh.q("%s/%s/%s" % (self.root, PARTS_DIR, n)) for n in names[i:i + 200]])
+
+    def get_parts(self, shas, into, progress):
+        """Download parts/<sha> of each sha the server has into the folder `into`, a batch at a time; one it lacks is
+        passed over. The local names are the bare hashes, so no local path reaches sftp (a backup reads them; the
+        caller checks which came, and each one's SHA-256). Batches and their time limits are a batch of blobs': at most
+        CHUNK_FILES and CHUNK_BYTES a batch, 600 s plus its bytes at MIN_RATE; no manifest gives an index's size, so
+        each counts as the largest an index may be (INDEX_MAX)."""
+        for sha in shas:
+            if not HEX64.match(sha):
+                raise DeployError("not a parts index name: %r" % sha)
+        per = max(1, min(self.CHUNK_FILES, self.CHUNK_BYTES // INDEX_MAX))
+        for i in range(0, len(shas), per):
+            chunk = shas[i:i + per]
+            self._run(["-get %s %s" % (ssh.q("%s/%s/%s" % (self.root, PARTS_DIR, sha)), ssh.q(sha)) for sha in chunk],
+                      cwd=into, what="download", timeout=600 + len(chunk) * INDEX_MAX // self.MIN_RATE)
+            for sha in chunk:
+                progress(sha)
+
 
 class DeployResult(object):
     def __init__(self):
@@ -299,23 +385,29 @@ class DeployResult(object):
         self.removed = 0
         self.atomic = True
         self.dry_run = False
+        self.parts_sent = 0      # parts indexes sent (or that would be)
+        self.parts_removed = 0   # parts indexes removed: no manifest on the target names them
 
     def summary(self):
         verb = "would send" if self.dry_run else "sent"
         return ("%d blobs named, %d already there; %s %d (%s); %s %d no longer named"
                 % (self.named, self.had, verb, self.sent, human(self.sent_bytes),
-                   "would remove" if self.dry_run else "removed", self.removed))
+                   "would remove" if self.dry_run else "removed", self.removed)
+                + ("; %s %d parts index%s" % (verb, self.parts_sent, "" if self.parts_sent == 1 else "es")
+                   if self.parts_sent else ""))
 
 
-def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, blob_dir=None, cancel=None):
+def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, blob_dir=None, cancel=None,
+           parts_dir=None):
     """Send the store's release to `target` (FolderTarget or SftpTarget). Returns a DeployResult. `blob_dir`:
-    where the blobs are, when not in the store's own blobs folder (a backup's pool). `cancel`: an optional
-    threading.Event; set, the deploy stops before the new manifest goes up, so players keep the release the
-    target served before."""
+    where the blobs are, when not in the store's own blobs folder (a backup's pool); `parts_dir` the same for the
+    parts indexes. `cancel`: an optional threading.Event; set, the deploy stops before the new manifest goes up, so
+    players keep the release the target served before."""
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
     store = os.path.abspath(store)
     blob_dir = os.path.abspath(blob_dir) if blob_dir else os.path.join(store, BLOB_DIR)
+    parts_dir = os.path.abspath(parts_dir) if parts_dir else os.path.join(store, PARTS_DIR)
     try:
         with open(os.path.join(store, MANIFEST_NAME), "rb") as f:
             new_raw = f.read()
@@ -327,6 +419,19 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
     if missing_local:
         raise DeployError("%d blobs the manifest names are not in %s (publish again): %s..."
                           % (len(missing_local), blob_dir, missing_local[0][:12]))
+    # the parts indexes the manifest names, each checked here: one missing or damaged is not sent (an index is never
+    # needed: players then download its file whole when it changes)
+    want_parts = {}
+    for psha, path in sorted(new.parts().items()):
+        try:
+            got, size = hashing.sha256_file(os.path.join(parts_dir, psha))
+        except OSError:
+            got, size = None, 0
+        if got == psha:
+            want_parts[psha] = size
+        else:
+            log("Warning: the parts index of %s is %s in %s: it is not sent, and players download that file whole "
+                "when it changes (publish again to make it)" % (path, "damaged" if got else "missing", parts_dir))
 
     res = DeployResult()
     res.dry_run = dry_run
@@ -339,11 +444,18 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
     res.sent = len(send)
     res.sent_bytes = sum(want[s] for s in send)
     log("%d of %d blobs to send (%s)" % (len(send), len(want), human(res.sent_bytes)))
+    have_parts = target.list_parts()
+    send_parts = sorted(s for s, size in want_parts.items() if have_parts.get(s) != size)
+    wrong_parts = [s for s in send_parts if s in have_parts]
+    res.parts_sent = len(send_parts)
+    if send_parts:
+        log("%d of %d parts indexes to send" % (len(send_parts), len(want_parts)))
 
-    # what the target serves now, and the release before it: their blobs stay
+    # what the target serves now, and the release before it: their blobs and parts indexes stay
     old_raw = target.get_file(MANIFEST_NAME)
     prev_raw = target.get_file(PREVIOUS_NAME)
     keep = set(want)
+    keep_parts = set(new.parts())
     prune_ok = prune
     old = None
     for raw, what in ((old_raw, "current"), (prev_raw, "previous")):
@@ -352,6 +464,7 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
         try:
             m = Manifest.from_json(raw)
             keep.update(m.blobs())
+            keep_parts.update(m.parts())
             if what == "current":
                 old = m
         except ManifestError as e:
@@ -362,6 +475,8 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
         prune_ok = False
     stale = sorted(n for n in have if n not in keep and n not in wrong)
     res.removed = len(stale) if prune_ok else 0
+    stale_parts = sorted(n for n in have_parts if n not in keep_parts and n not in wrong_parts)
+    res.parts_removed = len(stale_parts) if prune_ok else 0
 
     if dry_run:
         log("dry run: nothing was sent or removed")
@@ -389,6 +504,18 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
     if bad:
         raise DeployError("%d blobs are still missing or the wrong size on the target after the upload (%s...): "
                           "the manifest was NOT changed" % (len(bad), bad[0][:12]))
+    # the parts indexes go up with the blobs, before the manifest that names them
+    if send_parts:
+        stop_here("before the parts indexes were sent")
+        if wrong_parts:
+            target.remove_parts(wrong_parts)
+        target.put_parts(parts_dir, send_parts, lambda sha: None)
+        after_parts = target.list_parts()
+        bad = [s for s in send_parts if after_parts.get(s) != want_parts[s]]
+        if bad:
+            raise DeployError("%d parts indexes are still missing or the wrong size on the target after the upload "
+                              "(%s...): the manifest was NOT changed" % (len(bad), bad[0][:12]))
+        log("%d parts index%s in place" % (len(send_parts), "" if len(send_parts) == 1 else "es"))
 
     # the release's signature goes up before the manifest it signs, and so does the .htaccess
     new_sig = sig_name(hashing.sha256_bytes(new_raw))
@@ -426,6 +553,9 @@ def deploy(store, target, prune=True, dry_run=False, progress=None, log=None, bl
     if prune_ok and stale:
         target.remove(stale)
         log("removed %d blobs no release names" % len(stale))
+    if prune_ok and stale_parts:
+        target.remove_parts(stale_parts)
+        log("removed %d parts index%s no release names" % (len(stale_parts), "" if len(stale_parts) == 1 else "es"))
     if prune_ok:
         sigs_keep = {sig_name(hashing.sha256_bytes(r)) for r in (new_raw, old_raw, prev_raw) if r is not None}
         old_sigs = [n for n in target.list_sigs() if n not in sigs_keep]

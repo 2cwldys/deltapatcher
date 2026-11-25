@@ -47,6 +47,7 @@ game.example.com {
     @manifest path /manifest.json /manifest.previous.json
     header @manifest Cache-Control "no-cache"
     header /blobs/* Cache-Control "public, max-age=31536000, immutable"
+    header /parts/* Cache-Control "public, max-age=31536000, immutable"
 }
 ```
 
@@ -70,6 +71,7 @@ server {
     autoindex off;
     location = /manifest.json { add_header Cache-Control "no-cache"; }
     location /blobs/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
+    location /parts/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
     location /sigs/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
     location ~ /\. { deny all; }
 }
@@ -205,4 +207,5 @@ curl -I https://game.example.com/manifest.json
 - Caddy runs on Windows too. With IIS, blobs have no file extension, and IIS refuses to serve unknown
   types: add a `web.config` in `blobs\` with
   `<staticContent><mimeMap fileExtension="." mimeType="application/octet-stream" /></staticContent>`.
-  Deploys never remove it.
+  Put the same one in `parts\` (make the folder if it is not there yet): the parts indexes of big archives
+  have no extension either. Deploys never remove them.

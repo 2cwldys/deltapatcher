@@ -45,6 +45,13 @@ DeltaPatcher remembers these fields, so next time you only click **Update**. If 
 Click **Update** with the game closed. Only files that changed since your last update are downloaded,
 so a small patch is a small download even when the game is large.
 
+A big `.pk3` or `.zip` that changed is not downloaded again whole either: DeltaPatcher rebuilds it from the files
+inside it you already have, and downloads only the files inside it that changed. **Check**, the **Update** page and
+the **Projects** page show that smaller amount (`2 archives rebuilt from what is here: 1.4 GB whole.`). The rebuilt
+archive is checked byte for byte, like every download, and when anything does not work out it is downloaded whole
+instead. Other archives (`.rar`, `.7z`, `.tar.gz`) are downloaded whole when they change, and so is every archive
+updated from a folder or by torrent alone: the rebuild needs the publisher's web address.
+
 - **Check** tells you what an update would change, without changing anything.
 - **Roll back** puts back exactly what the last update replaced or removed, if a new release causes a
   problem.
@@ -154,8 +161,12 @@ The law and your privacy: [SECURITY.md](../SECURITY.md#torrents-the-law-and-your
   first installed them.
 - Files the game's maker marked as *protected* (usually your settings and saves) are
   created when missing and never overwritten after that.
-- It checks every downloaded file against its SHA-256 before using it. A damaged or incomplete download
-  is never installed.
+- It checks every downloaded file against its SHA-256 before using it, a rebuilt archive too. A damaged or
+  incomplete download is never installed. To rebuild an archive it reads only the file it replaces and the other
+  files it installed itself, of 1 KiB or more, never one you keep as your own (a protected file, or one you
+  edited that a release no longer has): it opens them to find the zips among them, reads further only the zips,
+  and changes none of them. The old archive stays as it was until the update puts the new one in place, and
+  **Roll back** has it.
 - If an update is interrupted (crash, power cut), the next update undoes the half-finished one first,
   so the folder is never left half old, half new.
 - If the release is signed, DeltaPatcher checks the signature before anything else. Once it has

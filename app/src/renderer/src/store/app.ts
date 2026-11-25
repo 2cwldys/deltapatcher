@@ -154,6 +154,9 @@ export interface UpdateResult extends ReleaseView {
   same: number
   download_bytes: number
   download_blobs: number
+  // what it fetches: less than download_bytes when archives are rebuilt from what the folder has (store/download.ts)
+  fetch_bytes?: number
+  rebuilt?: number
   publisher_key: string
   kept: string[]
 }

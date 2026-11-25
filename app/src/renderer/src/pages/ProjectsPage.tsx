@@ -23,6 +23,7 @@ import { TorrentMark } from '../components/ProjectFileDialogs'
 import PublisherPrompt from '../components/PublisherPrompt'
 import { insecure } from './UpdatePage'
 import { anotherRun } from '../store/schedule'
+import { toDownload } from '../store/download'
 
 // more projects than this get compact rows
 const COMPACT = 6
@@ -38,7 +39,7 @@ function percent(p?: Progress): number {
 
 function changes(r: UpdateResult, amount: string): string {
   const parts = [r.add ? `${r.add} new` : '', r.replace ? `${r.replace} changed` : '', r.remove ? `${r.remove} removed` : '']
-  if (r.download_bytes > 0) parts.push(`${human(r.download_bytes)} ${amount}`)
+  if (toDownload(r) > 0) parts.push(`${human(toDownload(r))} ${amount}`)
   return parts.filter(Boolean).join(', ')
 }
 

@@ -43,7 +43,7 @@ import time
 import urllib.parse
 
 from . import config, ssh
-from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PREVIOUS_NAME
+from .manifest import BLOB_DIR, HEX64, MANIFEST_NAME, PARTS_DIR, PREVIOUS_NAME
 from .publish import HISTORY_NAME, human, load_manifest_file
 from .signing import SIG_DIR
 
@@ -119,7 +119,8 @@ def release_of(man):
 
 
 def change(old, new):
-    """What `new` changed from `old`: files new, changed and removed, and what a player on `old` downloads."""
+    """What `new` changed from `old`: files new, changed and removed, and the size of the new and changed files
+    (download_bytes: a player on `old` downloads that much, less when it rebuilds a big archive from what it has)."""
     have = old.blobs()
     return {"from": {"name": old.name, "version": old.version, "published": old.published},
             "new": sum(1 for p in new.files if p not in old.files),
@@ -396,8 +397,11 @@ class Counter(object):
         return int.from_bytes(hashlib.sha256(self._salt + address.encode("utf-8", "replace")).digest()[:8], "big")
 
     def kind(self, path):
-        """What a request for `path` is to this project: check, download, file (a signature, the previous
-        manifest), or None when it is not one of its files."""
+        """What a request for `path` is to this project: check, download (a whole blob), file (a signature, the
+        previous manifest, a parts index), or None when it is not one of its files. A parts index is a file, as a
+        signature is: a check fetches it too, so it counts in the bytes and the players, never as a download. An
+        archive rebuilt from what a player has is no download either: its index and its ranges (206) count in the
+        bytes only."""
         if not path.startswith(self.prefix):
             return None
         rest = path[len(self.prefix):]
@@ -407,6 +411,8 @@ class Counter(object):
             return "download"
         if rest == PREVIOUS_NAME or (rest.startswith(SIG_DIR + "/") and rest.endswith(".sig")
                                      and HEX64.match(rest[len(SIG_DIR) + 1:-4])):
+            return "file"
+        if rest.startswith(PARTS_DIR + "/") and HEX64.match(rest[len(PARTS_DIR) + 1:]):
             return "file"
         return None
 
@@ -437,7 +443,9 @@ class Counter(object):
                 key = release if release in self.more_checks or len(self.more_checks) < MAX_ESTIMATED_RELEASES \
                     else _OTHERS
                 self.more_checks.setdefault(key, Distinct(0)).add(who)
-        elif kind == "download" and status != 206:  # 206: the rest of a download that was cut, not a new one
+        elif kind == "download" and status != 206:
+            # 206: the rest of a download that was cut, or the ranges of an archive rebuilt from what a player has: no
+            # new download (a rebuilt archive is none: its ranges and its index count in the bytes only)
             self.downloads[i] += 1
         self.bytes[i] += size
         self.day_players[i].add(who)
@@ -658,7 +666,8 @@ def text(doc):
             _n(c["files"], "file"), human(c["bytes"]), c["blobs"]), None))
         ch = rel["change"]
         if ch:
-            out.append(("  from %s: %d new, %d changed, %d removed; a player on it downloads %s" % (
+            # download_bytes: the size of the new and changed files (a player who rebuilds a big archive gets less)
+            out.append(("  from %s: %d new, %d changed, %d removed: %s of new and changed files" % (
                 ch["from"]["version"] or "the release before", ch["new"], ch["changed"], ch["removed"],
                 human(ch["download_bytes"])), None))
         out.append(("  the store: %s in %s; %s in its history" % (

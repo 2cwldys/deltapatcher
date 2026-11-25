@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 
 from . import USER_AGENT
-from .manifest import BLOB_DIR, MANIFEST_NAME, check_sha
+from .manifest import BLOB_DIR, MANIFEST_NAME, PARTS_DIR, check_sha
 from .signing import SIG_DIR
 
 DEFAULT_URL = "http://localhost:8000/"
@@ -30,6 +30,14 @@ class SourceError(Exception):
 
 class _ShortRead(Exception):
     """The connection ended before the blob did: retried, resuming from what arrived."""
+
+
+class RangeError(SourceError):
+    """A Range request the server did not answer with exactly the bytes asked for (a 200: it ignores Range; another
+    Content-Range or length): the rebuild of that file stops, and it is downloaded whole."""
+
+
+_CONTENT_RANGE = re.compile(r"^bytes (\d+)-(\d+)/(\d+)$")
 
 
 def is_http(url):
@@ -222,6 +230,109 @@ class Source(object):
                 last = e
             time.sleep(min(8, 1 << attempt))
         raise SourceError("cannot read %s from %s: %s" % (name, self.base, getattr(last, "reason", last)))
+
+    def get_parts(self, sha, limit=64 << 20):
+        """The bytes of parts/<sha>, the parts index of a big archive (parts.py), at most `limit` of them and one more
+        (so the reader sees one that is too big); None when the release has none (404 or 410, or the server refuses
+        it: an index is never needed). The caller checks it against its SHA-256. A body shorter than its
+        Content-Length is a connection that was cut, tried again as any cut (SourceError in the end), never taken for
+        the index: only a whole answer with the wrong bytes is one."""
+        check_sha(sha)
+        rel = PARTS_DIR + "/" + sha
+        if not self.http:
+            path = os.path.join(self.base, PARTS_DIR, sha)
+            if not os.path.isfile(path):
+                return None
+            try:
+                with open(path, "rb") as f:
+                    return f.read(limit + 1)
+            except OSError as e:
+                raise SourceError("cannot read %s: %s" % (path, e))
+        last = None
+        for attempt in range(self.tries):
+            try:
+                with self._open(rel) as r:
+                    data = r.read(limit + 1)
+                    left = getattr(r, "length", None)         # what its Content-Length says is still to come
+                    if left and len(data) <= limit:
+                        raise http.client.IncompleteRead(data, left)   # read(amt) gives a cut body as it is
+                    return data
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403, 404, 410):
+                    return None
+                last = e
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+                last = e
+            time.sleep(min(8, 1 << attempt))
+        raise SourceError("cannot read %s from %s: %s" % (rel, self.base, getattr(last, "reason", last)))
+
+    def fetch_range(self, sha, start, end, size, path, progress=None, cancel=None):
+        """Bytes [start, end) of blob `sha` (of `size` bytes in all), written at the same offset of the file `path`,
+        which exists (an archive being rebuilt: rebuild.py). Only a 206 with exactly those bytes is taken: its
+        Content-Range "bytes start-(end-1)/size", its length end - start, no content coding. RangeError for any
+        other answer (a 200: the server ignores Range); SourceError when the bytes cannot be had after the usual tries,
+        or "stopped" once `cancel` is set (checked between reads). progress(n) hears of each byte once."""
+        check_sha(sha)
+        if not self.http:
+            raise RangeError("Range requests need an http(s) address")
+        want = end - start
+        if start < 0 or want <= 0 or end > size:
+            raise RangeError("not a range of the blob: %d-%d of %d" % (start, end, size))
+        progress = progress or (lambda n: None)
+        last = None
+        reported = 0
+        for attempt in range(self.tries):
+            if cancel is not None and cancel.is_set():
+                raise SourceError("stopped")
+            req = urllib.request.Request(self.base + BLOB_DIR + "/" + sha, headers=dict(self.headers))
+            req.add_header("Range", "bytes=%d-%d" % (start, end - 1))
+            try:
+                with self.opener.open(req, timeout=self.timeout) as r:
+                    if r.status != 206:
+                        raise RangeError("%s%s/%s answered %d to a Range request" % (self.base, BLOB_DIR, sha[:12],
+                                                                                    r.status))
+                    m = _CONTENT_RANGE.match((r.headers.get("Content-Range") or "").strip())
+                    if not m or (int(m.group(1)), int(m.group(2)), int(m.group(3))) != (start, end - 1, size):
+                        raise RangeError("the server answered other bytes than those asked for (%s)"
+                                         % (r.headers.get("Content-Range") or "no Content-Range"))
+                    length = (r.headers.get("Content-Length") or "").strip()
+                    if length and length != str(want):
+                        raise RangeError("the server answered %s bytes, not %d" % (length, want))
+                    if (r.headers.get("Content-Encoding") or "identity").strip().lower() != "identity":
+                        raise RangeError("the server compressed its answer (%s)" % r.headers.get("Content-Encoding"))
+                    got = 0
+                    with open(path, "r+b") as f:
+                        f.seek(start)
+                        while got < want:
+                            if cancel is not None and cancel.is_set():
+                                raise SourceError("stopped")
+                            b = r.read(min(1 << 16, want - got))
+                            if not b:
+                                break
+                            f.write(b)
+                            got += len(b)
+                            if got > reported:
+                                progress(got - reported)
+                                reported = got
+                    if got < want:
+                        raise _ShortRead("the connection closed after %d of %d bytes" % (got, want))
+                    if r.read(1):
+                        raise RangeError("the server answered more bytes than asked for")
+                return
+            except _ShortRead as e:
+                last = e                    # tried again: the range is written again from its start
+            except SourceError:
+                raise                       # a RangeError, or stopped
+            except urllib.error.HTTPError as e:
+                if e.code in (401, 403, 404, 410, 416):
+                    raise RangeError("%s%s/%s answered %d %s to a Range request" % (self.base, BLOB_DIR, sha[:12],
+                                                                                   e.code, e.reason))
+                last = e
+            except (urllib.error.URLError, OSError, http.client.HTTPException) as e:
+                last = e
+            time.sleep(min(8, 1 << min(attempt, 3)))
+        raise SourceError("bytes %d-%d of %s could not be had: %s" % (start, end - 1, sha[:12],
+                                                                       getattr(last, "reason", last)))
 
     def fetch_blob(self, sha, dest, size, progress=None, cancel=None):
         """Put blob `sha` at `dest`, resuming from dest + '.part'. The caller checks the hash."""

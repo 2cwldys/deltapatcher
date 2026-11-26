@@ -107,17 +107,17 @@ sent nowhere: `release` does this and the sending. Without `SRC`: the saved fold
 store, else DeltaPatcher's own one for that folder. `--name` and `--version` default to the saved ones. See
 [Publishing a release](PUBLISHING.md).
 
-A file of 8 MiB or more that is a zip gets a parts index, so players download only the files inside it that
-changed ([Big archives](PUBLISHING.md#big-archives)); the summary ends with how many did (`; 3 with a parts
-index`). A big archive that cannot be patched inside gets one line. A RAR, 7z or gzip file:
-`Warning: data/maps.rar (1.2 GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that
-changed inside it travel.` A zip that gets no index, with why: `Warning: data/sounds.pk3 (9.6 MB) is sent whole
-whenever it changes: 100% of it would travel inside its index, more than a quarter: its files under 1 KiB (89%)
-and the bytes outside its files (11%).` (every reason, and what helps:
-[Troubleshooting](TROUBLESHOOTING.md#publishing)). A zip that cannot be read while it is indexed is no warning but
-one plain line, and the next publish reads it again: `could not read data/x.pk3 to index it (Permission
-denied): players get it whole this time`. With `--json`, the result's data has `"parts"` (the count) and
-`"warnings"` (the warning lines).
+A file of 8 MiB or more that is a zip, tar, 7z or RAR gets a parts index, so players download only the files inside
+it that changed ([Big archives](PUBLISHING.md#big-archives)); the summary ends with how many did (`; 3 with a parts
+index`), and a solid RAR among them gets one plain line: players reuse only its files before the first one that
+changed. A big archive that cannot be patched inside gets one line. A gzip file: `Warning: data/music.tar.gz (1.2
+GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that changed inside it travel.` A
+zip, tar, 7z or RAR that gets no index, with why: `Warning: data/sounds.pk3 (9.6 MB) is sent whole whenever it
+changes: 100% of it would travel inside its index, more than a quarter: its files under 1 KiB (89%) and the bytes
+outside its files (11%).` (every reason, and what helps: [Troubleshooting](TROUBLESHOOTING.md#publishing)). An
+archive that cannot be read while it is indexed is no warning but one plain line, and the next publish reads it
+again: `could not read data/x.pk3 to index it (Permission denied): players get it whole this time`. With `--json`,
+the result's data has `"parts"` (the count) and `"warnings"` (the warning lines).
 
 | Option | |
 | --- | --- |
@@ -163,12 +163,12 @@ folder path or a `file://` URL; default: the remembered one, else `http://localh
 With `--all`, each project's lines start with its name, and a summary closes the run: up to date, updated,
 or failed and why. One project failing never stops the others.
 
-A big `.pk3` or `.zip` that changed, from an `http(s)://` address, is rebuilt from the files inside it the folder
-already has: only the ones that changed are downloaded, with `Range` requests, and the archive is checked against
-the release's SHA-256 before it is used (anything that does not work out downloads it whole). The summary then
-says both amounts: `to download: 3 blobs, 31.2 MB (2 archives rebuilt from what is here: 1.4 GB whole)`, and each
-one is logged (`rebuilt data/pak0.pk3 from what is here: 12.0 MB fetched of 700.0 MB`). Progress counts the bytes
-fetched.
+A big archive that changed (a `.pk3`, `.zip`, `.tar`, `.7z` or `.rar`), from an `http(s)://` address, is rebuilt
+from the files inside it the folder already has: only the ones that changed are downloaded, with `Range` requests,
+and the archive is checked against the release's SHA-256 before it is used (anything that does not work out
+downloads it whole). The summary then says both amounts: `to download: 3 blobs, 31.2 MB (2 archives rebuilt from
+what is here: 1.4 GB whole)`, and each one is logged (`rebuilt data/pak0.pk3 from what is here: 12.0 MB fetched of
+700.0 MB`). Progress counts the bytes fetched.
 
 A project shared by torrent also downloads from other players ([Torrents](#torrents)). Its address stays the
 floor: whatever no peer has comes from it, and an update never fails because of torrents. Archives rebuilt from

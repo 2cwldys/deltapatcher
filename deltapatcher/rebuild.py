@@ -2,7 +2,7 @@
 
 For each blob a plan needs whose manifest entry names a parts index, when the release is read from an http(s)
 address (prepare()):
-  1. the index, parts/<sha> beside the manifest, fetched only when the folder has a zip-structured file at all: read
+  1. the index, parts/<sha> beside the manifest, fetched only when the folder has an archive at all: read
      at most once per release, kept in <state>/parts/<sha> so a check and the update after it fetch it once (only
      while the drive keeps the update's free space after it), removed when no plan needs it, and checked before use
      (parts.read_index). One that is refused is remembered (<state>/parts/<sha>.refused) and never fetched again. In
@@ -10,12 +10,12 @@ address (prepare()):
      at most PLAN_FETCH_MAX bytes of them: from the first archive past any of it on, the archives come whole and no
      more index is fetched. A check fetches none when the drive could not keep it (it then counts those archives
      whole; the update reads them as it runs);
-  2. what is here: the members of the old archive at the same path first, then of every other zip-structured file
-     the folder's state.json says DeltaPatcher installed, each looked at only while a piece is still missing, by the
-     SHA-256 of each member's compressed data; never a path the player keeps as their own (protected by the release,
-     or kept as edited here). They are kept in <state>/members.json by path, size and modification time (a file that
-     changed is read again, one that is not a zip is passed over), and a member is hashed only when an index has a
-     missing piece of its size;
+  2. what is here: the data areas of the old file at the same path first, then of every other archive (of any kind
+     parts.py reads: a piece is bytes, and its SHA-256 decides) the folder's state.json says DeltaPatcher
+     installed, each looked at only while a piece is still missing; never a path the player keeps as their own
+     (protected by the release, or kept as edited here). They are kept in <state>/members.json by path, size and
+     modification time (a file that changed is read again, one that is no archive is passed over), and a data
+     area is hashed only when an index has a missing piece of its size;
   3. the plan: each piece the folder lacks is a range of the blob to fetch, neighbours closer than GAP fetched as one,
      at most MAX_RANGES requests a file (GAP grows until it is); when what must be fetched comes to more than
      WHOLE_SHARE of the file, the file is downloaded whole instead.
@@ -38,14 +38,15 @@ import os
 import shutil
 import threading
 
-from . import parts
+from . import layouts, parts
 from .hashing import sha256_file
 from .manifest import HEX64
 from .publish import human
 from .source import SourceError
 
 PARTS_DIR = "parts"                 # <state>/parts/<sha>: the indexes the current plan needs
-MEMBERS_NAME = "members.json"       # <state>/members.json: the members of the folder's zip-structured files
+MEMBERS_NAME = "members.json"       # <state>/members.json: the data areas of the folder's archives
+MEMBERS_FORMAT = 2                  # its format: 1 knew only zips
 REBUILD_SUFFIX = ".rebuild"         # cache/<sha>.rebuild: an archive being rebuilt (never resumed: started again)
 GAP = 256 << 10                     # pieces to fetch closer than this are fetched as one range
 MAX_RANGES = 256                    # at most this many range requests a file
@@ -102,13 +103,16 @@ def coalesce(pieces, gap=GAP, most=MAX_RANGES):
         gap *= 2
 
 
-# ---- what is here: the members of the folder's zip-structured files ------------------------------------------------
+# ---- what is here: the data areas of the folder's archives -----------------------------------------------------------
 
 class Members(object):
-    """The members of the zip-structured files of a folder, kept in <state>/members.json:
-    {"format": 1, "files": {path: {"size", "mtime_ns", "members": [[offset, size, sha256 or ""], ...]}}}, every
-    member of PIECE_MIN bytes or more by where its compressed data is; [] for a file that is not a zip. A member's
-    SHA-256 is worked out when it is first asked for, and kept."""
+    """The data areas of the archives of a folder (a zip's members' compressed data, a tar's members' data, a 7z's
+    packed streams, a RAR's data areas: parts.find_layout()), kept in <state>/members.json:
+    {"format": 2, "readers": parts.READERS, "files": {path: {"size", "mtime_ns", "members": [[offset, size, sha256
+    or ""], ...]}}}, every data area of PIECE_MIN bytes or more; [] for a file that is no archive. Its SHA-256 is
+    worked out when it is first asked for, and kept. A file of another format (format 1 knew only zips) or made by
+    other readers is not read. A file whose reading ended at WHY_NO_LZMA (this Python's, not the file's) is not
+    kept: it is read again next time."""
 
     def __init__(self, path):
         self.path = path
@@ -117,7 +121,8 @@ class Members(object):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 doc = json.load(f)
-            raw = doc.get("files") if isinstance(doc, dict) and doc.get("format") == 1 else None
+            raw = doc.get("files") if (isinstance(doc, dict) and doc.get("format") == MEMBERS_FORMAT
+                                       and doc.get("readers") == parts.READERS) else None
             for rel, e in (raw or {}).items():
                 if self._good(e):
                     self.files[rel] = e
@@ -137,20 +142,24 @@ class Members(object):
                 return False
         return True
 
-    def members(self, rel, full):
-        """The members of the file `rel` (at `full`): read again when its size or modification time moved."""
+    def members(self, rel, full, cancel=None):
+        """The members of the file `rel` (at `full`): read again when its size or modification time moved.
+        SourceError("stopped") when `cancel` is set while it is read."""
         st = os.stat(full)
         e = self.files.get(rel)
         if e is not None and (e["size"], e["mtime_ns"]) == (st.st_size, st.st_mtime_ns):
             return e
         with open(full, "rb") as f:
-            found = parts.zip_members(f, st.st_size)
-        got = [] if found is None else [[a, b - a, ""] for _off, a, b in found[0] if b - a >= parts.PIECE_MIN]
+            try:
+                _kind, found, why = parts.find_layout(f, st.st_size, cancel)
+            except layouts.Stopped:
+                raise SourceError("stopped")
+        got = [] if found is None else [[a, b - a, ""] for a, b in found if b - a >= parts.PIECE_MIN]
         if len(got) > parts.SEGMENTS_MAX:
-            got = []                        # more pieces than any index may have: passed over, as one that is no zip
+            got = []                        # more pieces than any index may have: passed over, as no archive is
         e = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "members": got}
         st2 = os.stat(full)
-        if (st2.st_size, st2.st_mtime_ns) == (st.st_size, st.st_mtime_ns):
+        if why != parts.WHY_NO_LZMA and (st2.st_size, st2.st_mtime_ns) == (st.st_size, st.st_mtime_ns):
             self.files[rel] = e
             self.dirty = True
         return e
@@ -190,7 +199,8 @@ class Members(object):
         try:
             tmp = "%s.%d.tmp" % (self.path, os.getpid())
             with open(tmp, "w", encoding="utf-8") as f:
-                json.dump({"format": 1, "files": self.files}, f, separators=(",", ":"))
+                json.dump({"format": MEMBERS_FORMAT, "readers": parts.READERS, "files": self.files}, f,
+                          separators=(",", ":"))
             os.replace(tmp, self.path)
             self.dirty = False
         except OSError:
@@ -210,7 +220,7 @@ def find(wanted, candidates, members, cancel=None):
         if cancel is not None and cancel.is_set():
             raise SourceError("stopped")
         try:
-            e = members.members(rel, full)
+            e = members.members(rel, full, cancel)
             for m in e["members"]:
                 if not sizes[m[1]]:
                     continue
@@ -341,8 +351,8 @@ def prepare(src, plan, state, state_dir, locate, log, cancel=None, space=0, chec
     if not entries:
         return {}
     # what is here: the old archive at each path first, then every other file DeltaPatcher installed, looked at only
-    # while a piece is missing, never one the player keeps as their own; only a zip can hold a piece, and with none
-    # here no index is fetched
+    # while a piece is missing, never one the player keeps as their own; only an archive can hold a piece, and with
+    # none here no index is fetched
     mine = set(plan.kept_changed) | set(plan.protected)
     man = plan.manifest
 
@@ -372,7 +382,7 @@ def prepare(src, plan, state, state_dir, locate, log, cancel=None, space=0, chec
                 raise SourceError("stopped")
             full = here(rel)
             try:
-                if full and members.members(rel, full)["members"]:
+                if full and members.members(rel, full, cancel)["members"]:
                     first.append((rel, full))
                     break
             except OSError:

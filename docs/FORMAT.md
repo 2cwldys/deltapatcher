@@ -146,11 +146,11 @@ A client must refuse the whole manifest if any path:
 
 ## Parts indexes (parts/)
 
-A release file of 8 MiB or more whose bytes are a zip (a `.pk3`, `.pk4`, `.zip`, `.jar` or any other: found by
-its structure, never by its name) gets a parts index when it is published, and its manifest entry's `parts` names
-it: `parts/<sha256 of the index>`. With it, an update rebuilds a changed archive byte for byte from the files
-inside it the player already has, and fetches only the ones that changed. Nothing is ever recompressed: the archive
-is described as the pieces it is made of, and put back together from the same bytes.
+A release file of 8 MiB or more whose bytes are a zip (a `.pk3`, `.pk4`, `.zip`, `.jar` or any other), a tar, a 7z
+or a RAR (found by its structure, never by its name) gets a parts index when it is published, and its manifest
+entry's `parts` names it: `parts/<sha256 of the index>`. With it, an update rebuilds a changed archive byte for
+byte from the files inside it the player already has, and fetches only the ones that changed. Nothing is ever
+recompressed: the archive is described as the pieces it is made of, and put back together from the same bytes.
 
 An index is zlib-compressed JSON, its keys sorted and no spaces, so the same file always gives the same index:
 
@@ -162,13 +162,41 @@ The segments, in order, cover every byte of the file exactly once; each starts w
 
 | Segment | |
 | --- | --- |
-| `["p", "<sha256>", size]` | A piece: one member's compressed data, from the end of its own local header (30 bytes, its name and its local extra field, which can differ from the one in the central directory) for its compressed size; `<sha256>` is of those bytes. A piece under 1 KiB is a literal instead. |
-| `["l", "<base64>"]` | A literal: every other byte, as it is (local headers, data descriptors, gaps, a stub before the first member, the central directory, the end records and the comment), neighbouring literals joined. |
+| `["p", "<sha256>", size]` | A piece: the packed data of one file in the archive (its kind says where, below); `<sha256>` is of those bytes. A piece under 1 KiB is a literal instead. |
+| `["l", "<base64>"]` | A literal: every other byte, as it is (headers, padding, gaps, a directory or header at the end), neighbouring literals joined. |
 
-A file gets no index when zipfile cannot read its central directory (it reads zip64 archives too), a member's
-local header is not where the central directory says, two members overlap, or the index would not stay small:
-its literals (its members under 1 KiB and every byte that is no member's) more than a quarter of the file or more
-than 48 MiB, more than 1,000,000 segments, or more than 64 MiB. Publishing says which in its warning.
+`kind` says which archive it is, and so where its pieces are. Each is read from the format's own layout, with
+Python's standard library, every count, size and offset checked against the file before anything is read, and every
+reader bounded: a tar is walked one 512-byte header at a time, each step reading one header or skipping a length a
+header gave (an extension block is read only up to 64 KiB, a pax header only up to 256 records, at most 4,000,000
+pax records in all; at most 1,000,000 headers), and a 7z header is decoded 1 MiB at a time, to at most 256 MiB and
+at most 1000 times its packed size, and read with at most 65,536 numbers and one more for every 8 bytes of its file
+(at most 16 attributes in a list, 64 streams into a folder and 64 out of it, no more packed streams than bytes
+before the header, no more folders than packed streams):
+
+| Kind | Found by | Pieces | Literals |
+| --- | --- | --- | --- |
+| `zip` | zipfile reads its central directory (zip64 too; a self-extracting `.exe` too) | each member's compressed data, from the end of its own local header (30 bytes, its name and its local extra field, which can differ from the one in the central directory) for its compressed size | local headers, data descriptors, gaps, a stub before the first member, the central directory, the end records and the comment |
+| `tar` | its first 512-byte block is a tar header: its checksum right (the unsigned sum of its bytes, or the signed sum some old writers made) and a type this reader knows, or the ustar or GNU magic; ustar, GNU and pax (a file that begins with a zero block is no tar) | each regular file's data (types `0`, NUL and `7`), its size from its header (octal, or GNU base-256) or from the pax `size` record before it | header blocks, pax and GNU extension blocks (a pax global header is allowed and never applied; a long name or link is skipped, never decoded), the padding to 512, the end blocks and whatever follows them |
+| `7z` | its signature `37 7A BC AF 27 1C`, version 0, and the CRCs of its start header and its header | every packed stream, at 32 + PackPos plus the sizes of the ones before it | the signature header, any gap, the header at the end: plain, or encoded with LZMA or LZMA2 (decoded with Python's lzma, its CRC checked) together with that encoded header's own packed stream |
+| `rar` | its signature, RAR5 `52 61 72 21 1A 07 01 00` or RAR4 `52 61 72 21 1A 07 00`, and every header's CRC, as rarlab.com documents both formats | the data area of each file and service block; a volume of a set is a file of its own, and a file continued from the volume before is a piece of each | the marker, every header, the end of archive, any gap |
+
+A file gets no index when its kind's reader cannot take it apart (zip: zipfile cannot read its central directory, a
+member's local header is not where the central directory says, two members overlap; tar: a header whose checksum
+does not match, a size past its end, a volume label, a member continued from the volume before, a type this reader
+does not know (GNU's `D` and `N`, Solaris's `X`, `A` and `E`, star's `I`), a `size` record in a pax global header;
+7z or RAR: a CRC that does not match, a header cut short, a size past the end, a header coder other than LZMA or
+LZMA2, an encoded 7z header of more than one folder or that says it decodes to more than 256 MiB or to more than
+1000 times its packed size, a 7z header that takes more reading than its file allows), when its headers are
+encrypted (a 7z header encoded with AES; a RAR5 archive encryption header; RAR4's MHD_PASSWORD), when a tar holds a
+sparse member, an extension block over 64 KiB (a pax header, a GNU long name), a pax header of more than 256
+records or more than 4,000,000 pax records in all, when a 7z has one folder (one solid block, whatever its packed
+streams: BCJ2's four too; nothing in it could be reused) or holds one file, when a 7z's header is encoded and the
+Python running DeltaPatcher has no lzma, or when the index would not stay small: its literals (its pieces under 1
+KiB and every byte outside them) more than a quarter of the file or more than 48 MiB, more than 1,000,000 segments
+(or a tar of more than 1,000,000 headers), or more than 64 MiB. Publishing says which in its warning. A solid RAR
+gets an index: each of its files has its own data area, but a changed file changes the packed bytes of every file
+after it, so only an unchanged run from its start is reused.
 
 An index has at most 161,109,005 bytes of JSON (`JSON_MAX`, the most one can have: 1,000,000 segments as long as a
 piece's can be, 94 characters with its comma, the base64 of 48 MiB of literals, and the rest of the object);
@@ -178,13 +206,14 @@ parsed, its text has the shape of an index (one object from its first character 
 one `}`, at most 1,000,001 `[` and as many `]`, at most 3,000,004 commas, no `\`: an index never needs an escape;
 nothing between two quotes longer than the base64 of the most literal bytes the file may have, and at least 64
 characters; no number longer than 20 characters), and it is parsed with no float, `NaN` or `Infinity`; `format` is
-1, `kind` is `zip`, `file` and `size` are the entry's; it has at most 1,000,000 segments, they cover exactly `size`
-bytes, and its literals come to at most a quarter of the file and 48 MiB, as publishing makes them. In path order,
-one update keeps at most 256 MiB (of JSON) and 1,000,000 segments of indexes, and fetches at most 256 MiB of them.
-The archive past any of it comes whole: its index was fetched (and stays kept, past the first two) or fetched in
-part (past the third); every archive after it comes whole too, and its index is never fetched. An index that fails
-any of it is not used, and that file is downloaded whole; one cut on its way is not refused, and is fetched again
-next time. Older clients never read `parts`, and update from the same blobs as before.
+1, `kind` is one of `zip`, `tar`, `7z` and `rar`, `file` and `size` are the entry's; it has at most 1,000,000
+segments, they cover exactly `size` bytes, and its literals come to at most a quarter of the file and 48 MiB, as
+publishing makes them. In path order, one update keeps at most 256 MiB (of JSON) and 1,000,000 segments of indexes,
+and fetches at most 256 MiB of them. The archive past any of it comes whole: its index was fetched (and stays kept,
+past the first two) or fetched in part (past the third); every archive after it comes whole too, and its index is
+never fetched. An index that fails any of it is not used, and that file is downloaded whole; one cut on its way is
+not refused, and is fetched again next time. Older clients never read `parts`, and update from the same blobs as
+before.
 
 ## Torrents (release.torrent, release.item)
 
@@ -265,7 +294,7 @@ Inside every folder it updates, the client keeps `.deltapatcher/`:
 | `hashes.json` | Cache of the folder's hashes, keyed by path, valid while size and modification time match |
 | `cache/<sha256>` | Downloaded blobs waiting to be installed. `<sha256>.part` is a download to resume. `<sha256>.rebuild` is an archive being rebuilt from what the folder has: it becomes `<sha256>` only once it is that SHA-256, and a stopped one is never resumed (the next update starts it again). |
 | `parts/<sha256>` | The parts indexes the last check or update needed, so a check and the update after it fetch each one once; kept only while the drive still has the update's free space after it (otherwise used from memory, and the update after a check fetches it again); removed once no update needs them. `parts/<sha256>.refused`: an index that was refused, so neither a check nor an update fetches it again while a release names it |
-| `members.json` | `{"format": 1, "files": {path: {"size", "mtime_ns", "members": [[offset, size, sha256], ...]}}}`: the files of 1 KiB or more an update looked at for the pieces of an archive (those DeltaPatcher installed here, and the archive it replaces, never one the player keeps as their own: protected, or kept as edited here), with the members of each zip-structured one (1 KiB or more): where its compressed data is, and its SHA-256 once worked out (`""` until then; a file that is no zip has none). A file is read again when its size or modification time changed |
+| `members.json` | `{"format": 2, "files": {path: {"size", "mtime_ns", "members": [[offset, size, sha256], ...]}}}`: the files of 1 KiB or more an update looked at for the pieces of an archive (those DeltaPatcher installed here, and the archive it replaces, never one the player keeps as their own: protected, or kept as edited here), with the pieces of each archive among them, of any kind (1 KiB or more): where its packed data is, and its SHA-256 once worked out (`""` until then; a file that is no archive has none). A file is read again when its size or modification time changed; one of format 1 (which knew only zips) is not read |
 | `rollback/` | The last completed update: `journal.jsonl`, `files/` (the replaced and removed files), `state.prev.json` |
 | `rollback.new/` | The update in progress |
 | `lock` | Held with an operating-system lock while an update or rollback runs |
@@ -294,8 +323,8 @@ For anyone writing their own client:
    rebuilt instead (an optional step: skipping it downloads it whole, as before):
    1. Fetch `parts/<parts>` and check it ([Parts indexes](#parts-indexes-parts)).
    2. Find each piece in what the folder has: the members of the old file at the same path first (even when
-      `state.json` does not list it), then of the other zip-structured files `state.json` lists, by the SHA-256 of
-      each one's compressed data. A path the player keeps as their own (a `protect` pattern's, or one no longer
+      `state.json` does not list it), then of the other archives `state.json` lists (of any kind: a piece is
+      bytes), by the SHA-256 of each one's packed data. A path the player keeps as their own (a `protect` pattern's, or one no longer
       listed and edited here) is never opened.
    3. The pieces it lacks are ranges of the blob to fetch; neighbours less than 256 KiB apart are fetched as one,
       and a file takes at most 256 range requests (that distance doubles until it does). When the ranges come to

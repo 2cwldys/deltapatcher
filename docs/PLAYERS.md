@@ -164,7 +164,7 @@ The law and your privacy: [SECURITY.md](../SECURITY.md#torrents-the-law-and-your
 - It checks every downloaded file against its SHA-256 before using it, a rebuilt archive too. A damaged or
   incomplete download is never installed. To rebuild an archive it reads only the file it replaces and the other
   files it installed itself, of 1 KiB or more, never one you keep as your own (a protected file, or one you
-  edited that a release no longer has): it opens them to find the zips among them, reads further only the zips,
+  edited that a release no longer has): it opens them to find the archives among them, reads further only those,
   and changes none of them. The old archive stays as it was until the update puts the new one in place, and
   **Roll back** has it.
 - If an update is interrupted (crash, power cut), the next update undoes the half-finished one first,

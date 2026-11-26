@@ -5,10 +5,11 @@ in **CLAUDE.md**; how to use it is in the guides (`docs/`, also on the wiki).
 
 ## What it is
 
-Delta patching for any game and any file. A publisher releases a folder; players' updaters download only
-the files that changed. A file is bytes with a SHA-256: a `.map` or an `.exe` that changed travels whole. A big
-`.pk3` or `.zip` that changed is the one exception: it is rebuilt from the files inside it a player already has,
-only the changed ones travel, and the result is checked against the same SHA-256. Two kinds of people use it:
+Delta patching for any game and any file. A publisher releases a folder; players' updaters download only the files
+that changed. A file is bytes with a SHA-256: a `.map` or an `.exe` that changed travels whole. A big archive (a
+`.pk3` or `.zip`, a `.tar`, a `.7z` or a `.rar`) that changed is the one exception: it is rebuilt from the files
+inside it a player already has, only the changed ones travel, and the result is checked against the same SHA-256.
+Two kinds of people use it:
 
 - **Publishers** release a folder (a game, a mod, an asset pack), host it anywhere, and may sign it.
 - **Players** keep a folder up to date from the address a publisher gives them.
@@ -26,19 +27,20 @@ only the changed ones travel, and the result is checked against the same SHA-256
 | Containers | `docker/` | an example image and a Pterodactyl egg that bring their files up to date at every start |
 | MCP server | `deltapatcher/mcp_server.py`, `mcp/` | DeltaPatcher for AI assistants (`deltapatcher mcp`): the Model Context Protocol on standard input and output, standard library only; every tool runs the engine with `--json` |
 
-The engine's modules: `config.py` (the settings files), `publish.py`, `manifest.py` and `hashing.py` (a
-folder becomes a store; the rules for leaving files out and for files players keep), `client.py` and
-`source.py` (updates, rollback), `parts.py` and `rebuild.py` (the parts index of a big archive, and an
-update's rebuild of a changed one from what the folder has), `serve.py` (the built-in server, for testing on
-one computer), `deploy.py` and `ssh.py` (sending a store over SFTP or to a folder; keys and host keys),
-`signing.py` (Ed25519), `selfupdate.py` (DeltaPatcher's own updates), `logs.py`, `color.py`, `menu.py`, `cli.py`.
+The engine's modules: `config.py` (the settings files), `publish.py`, `manifest.py` and `hashing.py` (a folder
+becomes a store; the rules for leaving files out and for files players keep), `client.py` and `source.py` (updates,
+rollback), `parts.py`, `layouts.py` and `rebuild.py` (the parts index of a big archive, the readers of a tar's,
+7z's and RAR's layout beside zip's, and an update's rebuild of a changed archive from what the folder has),
+`serve.py` (the built-in server, for testing on one computer), `deploy.py` and `ssh.py` (sending a store over SFTP
+or to a folder; keys and host keys), `signing.py` (Ed25519), `selfupdate.py` (DeltaPatcher's own updates),
+`logs.py`, `color.py`, `menu.py`, `cli.py`.
 
 ## How a release travels
 
 1. **Publish.** Every file is hashed. The store gets `manifest.json` (every path, size and SHA-256),
    `blobs/<sha256>` (each distinct file once) and, when signed, `sigs/<sha256 of the manifest>.sig`.
-   `manifest.previous.json` keeps the release before. A file of 8 MiB or more that is a zip also gets
-   `parts/<sha256 of the index>`, its parts index, named by its entry's `parts`.
+   `manifest.previous.json` keeps the release before. A file of 8 MiB or more that is a zip, tar, 7z or RAR also
+   gets `parts/<sha256 of the index>`, its parts index, named by its entry's `parts`.
 2. **Deploy.** Only the blobs and parts indexes the target lacks are sent, each as `.part` and then renamed;
    then the signature; the manifest last, so players never see half a release. Blobs and parts indexes no
    manifest names go afterwards.
@@ -130,23 +132,25 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
   DeltaPatcher's is never taken (a clean-up puts back on it a copy at a project's own place that this
   DeltaPatcher made, so a lost list loses none). Seeding straight from the folder stays as a choice per project
   (`seed_copy = no`). A publisher's own store is never copied.
-- **Archives are rebuilt, never repacked.** A changed `.pk3` or `.zip` (a zip found by its structure, never by
-  its name) is rebuilt byte for byte from pieces: the compressed data of the files inside it the player
-  already has (in the old archive, or another archive DeltaPatcher installed in the folder), the pieces that
-  changed (fetched from the whole blob with HTTP Range requests), and the small structural bytes its parts
-  index carries. Nothing is ever recompressed, so no compressor has to match the publisher's. The server keeps
-  whole blobs as before (older DeltaPatchers update as they did, nothing is stored twice); each big zip gets one
-  small extra file, `parts/<sha256>`, named by an optional `parts` in its manifest entry, which keeps the
-  manifest at format 1 (DeltaPatcher 0.2.0 reads only path, sha256 and size). Correctness never depends on the
-  rebuild, only the amount downloaded does: the rebuilt file must be the manifest's SHA-256, every index and
-  every server answer is untrusted input, and anything that does not work out is the whole download of before.
-  No new backup is needed: the rebuild writes into the update's cache, the old archive is untouched until the
-  update applies and is kept in `rollback/` until the next one, and a failed update is undone by the journal.
-  Big archives it cannot patch inside (RAR, 7z, gzip, a zip that gets no index) are tracked and served as any
-  file is, whole, with one warning at publish that says why; players see nothing. Folder sources and
-  projects with no address fetch archives whole: a copy from a folder is fast already, and a swarm has no ranges
-  to fetch. A project with an address and torrents rebuilds first; its swarm gets only what is still missing.
-  The files a player keeps as their own (protected, or kept as edited here) are never opened for pieces.
+- **Archives are rebuilt, never repacked.** A changed zip (`.pk3`, `.zip`, ...), tar, 7z or RAR (found by its
+  structure, never by its name: `layouts.py` reads each format's documented layout with Python's standard library,
+  every count and offset checked) is rebuilt byte for byte from pieces: the packed data of the files inside it the
+  player already has (in the old archive, or another archive DeltaPatcher installed in the folder), the pieces that
+  changed (fetched from the whole blob with HTTP Range requests), and the small structural bytes its parts index
+  carries. Nothing is ever recompressed, so no compressor has to match the publisher's. The server keeps whole
+  blobs as before (older DeltaPatchers update as they did, nothing is stored twice); each big archive gets one
+  small extra file, `parts/<sha256>`, named by an optional `parts` in its manifest entry, which keeps the manifest
+  at format 1 (DeltaPatcher 0.2.0 reads only path, sha256 and size). Correctness never depends on the rebuild, only
+  the amount downloaded does: the rebuilt file must be the manifest's SHA-256, every index and every server answer
+  is untrusted input, and anything that does not work out is the whole download of before. No new backup is needed:
+  the rebuild writes into the update's cache, the old archive is untouched until the update applies and is kept in
+  `rollback/` until the next one, and a failed update is undone by the journal. Big archives it cannot patch inside
+  (gzip, a 7z of one folder, an archive with encrypted headers, any that gets no index) are tracked and served
+  as any file is, whole, with one warning at publish that says why; players see nothing. Folder sources and
+  projects with no address fetch archives whole: a copy from a folder is fast already, and a swarm has no ranges to
+  fetch. A project with an address and torrents rebuilds first; its swarm gets only what is still missing. The
+  files a player keeps as their own (protected, or kept as edited here) are never opened for pieces. A solid RAR
+  gets an index all the same, and only an unchanged run from its start is reused (publish says so).
 
 ## State
 
@@ -156,7 +160,7 @@ several projects, project files to share them, Reset and Remove all, hourly chec
 auto-update, minimize to tray and start with the computer, the wiki from the command line, and an MCP
 server for AI assistants, statistics for publishers, backups of the live release, Force stop, projects
 that follow their publisher, torrents beside HTTP, private project files to release a project from another
-computer, and archives rebuilt from the files inside them a player has (zip-structured ones). A compatibility
+computer, and archives rebuilt from the files inside them a player has (zip, tar, 7z and RAR). A compatibility
 test keeps what each released version wrote working.
 
 ## Where it is going
@@ -215,13 +219,13 @@ as possible without becoming hard to use.
     `release.item` when nothing changed. In the window: *Share by torrent too* on the Release
     page, the seed choice when a project file is added, a seeding line and Seed or Stop seeding on each
     row, the tray's count, and Force stop turning seeding off; assistants get a read-only `seed_status`.
-13. **Inside archives** (phase A built). A changed archive downloads only the files inside it that changed,
-    rebuilt byte for byte from what the player has (the decision above). Phase A: zip-structured files
-    (`.pk3`, `.pk4`, `.zip`, `.jar`, ...) over an http(s) address (`deltapatcher/parts.py`, `rebuild.py`); the
-    check says the smaller amount, the app shows it, publish warns about the big archives sent whole. Phase B:
-    tar members, and gzip only when the publisher's exact compression can be reproduced. Phase C: RAR and 7z
-    archives that are not solid, rebuilt the same way from their packed files copied byte for byte, with a
-    reader of each documented layout (no RAR or 7z compressor is ever needed); solid ones stay whole. Phase D:
-    7-Zip's own programs bundled in the engine (with its LGPL notice), to rebuild a solid `.7z` by unpacking it,
-    swapping the changed files and packing again, used only when publish proves the archive came from that exact
-    7-Zip version and settings. Each phase takes the archives it rebuilds off the publish warning.
+13. **Inside archives** (phases A and B built; the owner chose, 11-25, to finish every archive format before the
+    security audits). A changed archive downloads only the files inside it that changed, rebuilt byte for byte from
+    what the player has (the decision above). Phase A: zip-structured files (`.pk3`, `.pk4`, `.zip`, `.jar`, ...)
+    over an http(s) address (`deltapatcher/parts.py`, `rebuild.py`); the check says the smaller amount, the app
+    shows it, publish warns about the big archives sent whole. Phase B: `.tar`, `.7z` and `.rar` by their layout,
+    their packed data copied byte for byte (`deltapatcher/layouts.py`), with no extra server space and no RAR or 7z
+    compressor used or bundled; a 7z of one solid block stays whole, a solid RAR reuses only its unchanged start.
+    Phase C (next): `.tar.gz`/`.gz` and fully solid `.7z`, by repacking to the exact same bytes, which needs the
+    server to keep the files inside them too: a per-project switch on the Release page, off by default. Each phase
+    takes the archives it rebuilds off the publish warning.

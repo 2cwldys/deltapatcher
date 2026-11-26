@@ -7,7 +7,7 @@ Everything the client keeps lives in <install>/.deltapatcher/:
                       rebuilt from what the folder has is cache/<sha256>.rebuild until it is checked (rebuild.py)
     parts/<sha256>    the parts indexes the current plan needs, so a check and the update after it fetch each once
                       (<sha256>.refused: one that was refused, never fetched again while a release names it)
-    members.json      the members of the folder's zip-structured files, for rebuilding archives (rebuild.py)
+    members.json      the data areas of the folder's archives (zip, tar, 7z, RAR), for rebuilding archives (rebuild.py)
     rollback/         the last completed update: its journal and the files it replaced
     rollback.new/     the update in progress (it becomes rollback/ when it completes)
     lock              held (an operating-system lock) while an update or a rollback runs

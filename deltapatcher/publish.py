@@ -7,14 +7,16 @@ files with the same name, version, rules and project details keep the manifest a
 release also adds a line to the store's history.jsonl, for statistics (stats.py); that file stays on
 this computer.
 
-A release file of parts.PARTS_MIN bytes or more that is a zip (found by its structure, never by its name) gets a
-parts index, parts/<sha256 of the index>, named by its manifest entry's "parts" (parts.py): an update then rebuilds it
-from the files inside it the player already has. Each blob is indexed once (the store's .deltapatcher-partscache.json
-remembers the answer), and an index already in the store is not written again. A big archive DeltaPatcher cannot
-patch inside (RAR, 7z, gzip, a zip that gets no index) is published as any file is, with one warning line: for a zip,
-why it got none (ZIP_WARNING). A blob that cannot be read while it is indexed is one plain line (UNREAD_LINE), no
-warning, and nothing is remembered of it: the next publish reads it again. Only indexes (and what writing one left)
-ever leave the store's parts/: a file put there by hand (IIS's web.config) stays.
+A release file of parts.PARTS_MIN bytes or more that is a zip, tar, 7z or RAR (found by its structure, never by its
+name) gets a parts index, parts/<sha256 of the index>, named by its manifest entry's "parts" (parts.py): an update then
+rebuilds it from the files inside it the player already has. Each blob is indexed once (the store's
+.deltapatcher-partscache.json remembers the answer), and an index already in the store is not written again. A big
+archive DeltaPatcher cannot patch inside is published as any file is, with one warning line: an archive of those kinds
+that gets no index with why (ZIP_WARNING), a gzip with what would let it be (WHOLE_WARNING). A solid RAR that gets an
+index is said once too, not as a warning: players reuse only its files before the first one that changed (SOLID_LINE).
+A blob that cannot be read while it is indexed is one plain line (UNREAD_LINE), no warning, and nothing is remembered
+of it: the next publish reads it again. Only indexes (and what writing one left) ever leave the store's parts/: a file
+put there by hand (IIS's web.config) stays.
 """
 
 import json
@@ -95,8 +97,10 @@ class PublishError(Exception):
 STOPPED = "stopped before the new manifest was put in place: the store serves what it did before"
 WHOLE_WARNING = ("Warning: %s (%s) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that "
                  "changed inside it travel.")
-# a big zip that gets no parts index: why, in words made from make_index's reason code (parts.reason())
+# a big zip, tar, 7z or RAR that gets no parts index: why, in words made from make_index's reason code (parts.reason())
 ZIP_WARNING = "Warning: %s (%s) is sent whole whenever it changes: %s."
+SOLID_LINE = ("%s is a solid RAR: players reuse only its files before the first one that changed (packed with solid "
+              "mode off, rar -s-, every file that did not change is reused)")
 UNREAD_LINE = "could not read %s to index it (%s): players get it whole this time"
 
 
@@ -112,12 +116,15 @@ class PublishResult(object):
         self.left_out = []       # what the leave-out rules kept out of the release (a folder with a trailing /)
         self.manifest = None
         self.parts = 0           # files of the release with a parts index
+        self.solid = []          # of those, the solid RARs: only their files before the first that changed are reused
         self.warnings = []       # one line for each big archive DeltaPatcher cannot patch inside
 
     def summary(self):
         return ("%d files (%s), %d distinct; %d new blobs (%s) copied, %d pruned"
                 % (self.files, human(self.bytes), self.blobs, self.new_blobs, human(self.new_bytes), self.pruned)
-                + ("; %d with a parts index" % self.parts if self.parts else ""))
+                + ("; %d with a parts index" % self.parts if self.parts else "")
+                + (" (%d of them a solid RAR, reused only up to its first changed file)" % len(self.solid)
+                   if self.solid else ""))
 
 
 def human(n):
@@ -290,7 +297,8 @@ def _parts_of(store, blob, sha, size, pcache, cancel):
     except parts.Stopped:
         raise PublishError(STOPPED)
     if data is None:
-        pcache.put(sha, why)
+        if why != parts.WHY_NO_LZMA:        # this Python's, not the blob's: the next publish asks again
+            pcache.put(sha, why)
         return None, why
     name = hashing.sha256_bytes(data)
     if not _index_there(d, name):           # an index already in the store is not written again
@@ -374,24 +382,26 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
                 res.new_blobs += 1
                 res.new_bytes += size
         size = os.path.getsize(blob)
-        # a big zip gets a parts index, read from the blob (its bytes are sha's); a big archive that cannot be patched
-        # inside is said once: a zip with why it got none, another archive with what would let it be
+        # a big archive gets a parts index, read from the blob (its bytes are sha's); one that cannot be patched
+        # inside is said once: a zip, tar, 7z or RAR with why it got none, a gzip with what would let it be
         try:
             index, why = _parts_of(store, blob, sha, size, pcache, cancel)
         except OSError as e:
             index, why = None, ""
             log(UNREAD_LINE % (rel, e.strerror or e))
         entries.append(Entry(rel, sha, size, index))
-        if index is None and why:
-            kind = parts.archive_kind(blob)
-            if kind == "zip":
-                res.warnings.append(ZIP_WARNING % (rel, human(size), parts.reason(why)))
-            elif kind:
-                res.warnings.append(WHOLE_WARNING % (rel, human(size)))
+        if index is None and why and why != parts.WHY_NONE:
+            res.warnings.append(ZIP_WARNING % (rel, human(size), parts.reason(why)))
+        elif index is None and why == parts.WHY_NONE and parts.archive_kind(blob) == "gzip":
+            res.warnings.append(WHOLE_WARNING % (rel, human(size)))
+        elif index is not None and rel not in res.solid and parts.solid_rar(blob):
+            res.solid.append(rel)
     progress(total, total, "")
     cache.save()
     for line in res.warnings:
         log(line)
+    for rel in res.solid:
+        log(SOLID_LINE % rel)
 
     man = Manifest(name, version, files=entries, protect=protect, project=project)
     mpath = os.path.join(store, MANIFEST_NAME)

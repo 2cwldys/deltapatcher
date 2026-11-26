@@ -1328,8 +1328,11 @@ class Warnings(Base):
         config.save({"publish_src": self.src, "store_dir": self.store})
         rc, ev = run_json(["publish"])
         self.assertEqual(rc, 0, ev[-1])
-        lines = ["Warning: data/%s (%s) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files "
-                 "that changed inside it travel." % (name, publish.human(big)) for name in sorted(kinds)]
+        # a RAR or 7z this reader cannot take apart says so, as a zip does; a gzip keeps what would let it patch inside
+        why = {"maps.rar": "not a RAR this reader knows.", "pack.7z": "not a 7z this reader knows.",
+               "music.tar.gz": "pack it as .zip or .pk3 so only the files that changed inside it travel."}
+        lines = ["Warning: data/%s (%s) is sent whole whenever it changes: %s" % (name, publish.human(big), why[name])
+                 for name in sorted(kinds)]
         self.assertEqual(ev[-1]["data"]["warnings"], lines)
         logged = [e for e in ev if e["event"] == "log" and "is sent whole" in e["text"]]
         self.assertEqual([(e["text"], e["style"]) for e in logged], [(line, "warn") for line in lines])   # once each
@@ -1490,7 +1493,7 @@ class Machinery(unittest.TestCase):
         self.assertEqual([(k, o, n) for k, o, n, _p in parts.read_index(data, e)],
                          [("l", 0, 3), ("p", 3, 3000), ("l", 3003, 997)])
         bad = [index(dict(good, **change)) for change in (
-            {"format": 2}, {"format": True}, {"kind": "rar"}, {"file": "e" * 64}, {"size": 4001}, {"size": True},
+            {"format": 2}, {"format": True}, {"kind": "cab"}, {"file": "e" * 64}, {"size": 4001}, {"size": True},
             {"segments": good["segments"][:2]}, {"segments": good["segments"] + [["l", "QQ=="]]},
             {"segments": [["l", "not base64!"]] + good["segments"][1:]},
             {"segments": [["p", "d" * 64, -1]] + good["segments"]},

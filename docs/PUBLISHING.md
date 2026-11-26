@@ -51,34 +51,51 @@ What happens:
 
 ### Big archives
 
-A file of 8 MiB or more that is a zip (a `.pk3`, `.zip`, `.jar` and any other: DeltaPatcher reads its
-structure, never its name) gets a small *parts index* by itself, in `store/parts/`. When that archive changes,
-players rebuild it from the files inside it they already have, and download only the files inside it that
+A file of 8 MiB or more that is a zip (a `.pk3`, `.zip`, `.jar` and any other), a tar, a 7z or a RAR (DeltaPatcher
+reads its structure, never its name) gets a small *parts index* by itself, in `store/parts/`. When that archive
+changes, players rebuild it from the files inside it they already have, and download only the files inside it that
 changed: a texture changed in a 1.4 GB `.pk3` is a download of that texture. The rebuilt archive is checked byte
 for byte against the release, and anything that does not work out downloads it whole, as before. Nothing is
-recompressed and nothing needs setting up; publishing's summary says how many files got an index
-(`... 3 with a parts index`). Making one reads a new archive once more; an archive already published is never read
-for it again.
+recompressed and nothing needs setting up; publishing's summary says how many files got an index (`... 3 with a
+parts index`). Making one reads a new archive once more; an archive already published is never read for it again.
 
-Other big archives are released as any file is, and sent whole whenever they change: RAR, 7z, gzip (and
-`.tar.gz`), and a zip DeltaPatcher cannot index. Publishing says so once for each, in its log and on the
-**Release** page; for a zip, the line says why:
+**Solid archives.** 7-Zip and WinRAR can pack an archive *solid*: its files compressed as one stream, each after
+the one before, which makes it smaller. DeltaPatcher reuses packed bytes as they are, so a solid archive patches
+inside less, or not at all:
+
+- 7-Zip packs a `.7z` solid by default: one solid block (a very big archive gets a few). A `.7z` of one solid block
+  gets no index (the warning below says so), whatever packed streams the block has (7-Zip's BCJ2 filter for
+  programs makes four), and neither does a `.7z` of one file; one of several blocks gets one, and a block with a
+  changed file in it travels whole. With solid mode off (`7z a -ms=off`, or *Solid Block size: Non-solid* in
+  7-Zip's window), only the files that changed travel; `-ms=8f` (blocks of 8 files) is a middle way.
+- WinRAR does not pack solid unless asked (`rar a -s`, or *Create solid archive*). A solid `.rar` still gets an
+  index, but players reuse only its files before the first one that changed: every file after it travels too.
+  Publishing says so in one line (`data/maps.rar is a solid RAR: ...`, not a warning). Without `-s` (or with
+  `-s-`), every file that did not change is reused.
+
+Other big archives are released as any file is, and sent whole whenever they change: gzip (`.gz`, `.tar.gz`), and
+an archive DeltaPatcher cannot index. Publishing says so once for each, in its log and on the **Release** page;
+for a zip, tar, 7z or RAR, the line says why:
 
 ```
-Warning: data/maps.rar (1.2 GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that changed inside it travel.
+Warning: data/music.tar.gz (1.2 GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that changed inside it travel.
 Warning: data/sounds.pk3 (9.6 MB) is sent whole whenever it changes: 100% of it would travel inside its index, more than a quarter: its files under 1 KiB (89%) and the bytes outside its files (11%).
+Warning: data/maps.7z (300.0 MB) is sent whole whenever it changes: packed as one solid stream: with 7-Zip, pack it with solid mode off (-ms=off) so only the files that changed travel.
 ```
 
-Nothing is blocked, and players see nothing of it. To make a RAR, 7z or gzip archive patch inside, pack it again
-as a `.zip` or `.pk3` (for a game that reads only RAR or 7z, leave it: it still updates, whole). A zip gets no
-index when more than a quarter of it, or more than 48 MiB, would travel inside the index (its files under 1 KiB
-and the bytes outside its files, together), when its files overlap or are not where its directory says, when
-Python's zip reader cannot open it, when it has more files than an index can hold (1,000,000 parts, about two
-for each file: about 500,000 files), or when its index would be larger than 64 MiB;
-[Troubleshooting](TROUBLESHOOTING.md#publishing) says what helps for each (for files under 1 KiB, nothing: it
-still updates, whole). A plain `.tar` is sent whole too, without the line. A zip that cannot be read while its
-index is made gets no warning but one plain line (`could not read data/x.pk3 to index it (...): players get it
-whole this time`), and the next publish reads it again.
+Nothing is blocked, and players see nothing of it. To make a gzip archive patch inside, pack it as a `.zip`, a
+`.pk3` or a plain `.tar` instead (for a game that reads only `.gz`, leave it: it still updates, whole). A zip, tar,
+7z or RAR gets no index when more than a quarter of it, or more than 48 MiB, would travel inside the index (its
+files under 1 KiB and the bytes outside its files, together), when its reader cannot take it apart (a zip whose
+files overlap or are not where its directory says, or that Python's zip reader cannot open; a 7z, RAR or tar this
+reader does not know), when its headers are encrypted (a 7z made with `-mhe`, a RAR with `-hp`), when a 7z is one
+solid block or holds one file, when a tar holds a sparse file, a header longer than 64 KiB (a pax header or a GNU
+long name), a pax header of more than 256 records or more than 4,000,000 pax records in all, when a 7z's header is
+packed and the Python running DeltaPatcher has no lzma, when it has more files than an index can hold (1,000,000
+parts, about two for each file: about 500,000 files), or when its index would be larger than 64 MiB;
+[Troubleshooting](TROUBLESHOOTING.md#publishing) says what helps for each (for files under 1 KiB, nothing: it still
+updates, whole). An archive that cannot be read while its index is made gets no warning but one plain line (`could
+not read data/x.pk3 to index it (...): players get it whole this time`), and the next publish reads it again.
 
 ## 3. Protect player files
 

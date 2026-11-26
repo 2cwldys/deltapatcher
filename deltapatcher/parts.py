@@ -1,7 +1,7 @@
-"""Parts indexes: a big zip-structured release file described as the pieces it is made of, so that an update can
-rebuild it byte for byte from the pieces a player already has, the pieces that changed (fetched from its blob with
-HTTP Range requests) and the small structural bytes the index carries (rebuild.py). Nothing is ever recompressed:
-every piece is the archive's own bytes, and a rebuilt file is used only when it is the manifest's SHA-256.
+"""Parts indexes: a big archive release file described as the pieces it is made of, so that an update can rebuild it
+byte for byte from the pieces a player already has, the pieces that changed (fetched from its blob with HTTP Range
+requests) and the small structural bytes the index carries (rebuild.py). Nothing is ever recompressed: every piece
+is the archive's own bytes, and a rebuilt file is used only when it is the manifest's SHA-256.
 
 A parts index is stored as parts/<sha256 of the index's bytes> beside the blobs, and the manifest entry of its file
 names it ("parts"). It is zlib-compressed JSON, sorted keys and no spaces, so the same file always gives the same
@@ -10,17 +10,22 @@ index bytes:
     {"format": 1, "kind": "zip", "file": "<sha256 of the file>", "size": <file size>,
      "segments": [["l", "<base64 bytes>"], ["p", "<sha256>", <size>], ...]}
 
-The segments, in order, cover every byte of the file exactly once: each starts where the one before ended.
-  "p"  a piece: a member's compressed data, [data_start, data_start + compress_size), data_start read from that
-       member's own local header (30 bytes, then its name and its local extra field, which can differ from the
-       central one). A piece smaller than PIECE_MIN is a literal instead.
-  "l"  a literal: everything else (local headers, data descriptors, gaps, a stub before the first member, the central
-       directory, the end records and the comment), joined where neighbours are literals.
+"kind" is the archive's (KINDS): zip, tar, 7z or rar, found by its structure, never by its name (find_layout()). The
+segments, in order, cover every byte of the file exactly once: each starts where the one before ended.
+  "p"  a piece: the packed data of a file in the archive, a data area: a zip member's compressed data
+       ([data_start, data_start + compress_size), data_start read from that member's own local header: 30 bytes,
+       then its name and its local extra field, which can differ from the central one), a tar member's data, a 7z
+       packed stream, the data area of a RAR file or service block (layouts.py). A piece smaller than PIECE_MIN is a
+       literal instead.
+  "l"  a literal: everything else (headers, data descriptors, padding, gaps, a stub before the first member, a
+       directory or header at the end, the end records), joined where neighbours are literals.
 
-Only a file of PARTS_MIN bytes or more gets an index, and only when zipfile reads its central directory, every
-member's local header is where the central directory says, no two members overlap, and the index stays small:
-its literals at most a quarter of the file (LITERAL_SHARE) and LITERAL_MAX bytes, at most SEGMENTS_MAX segments, at
-most INDEX_MAX bytes. Zip64 works through zipfile's own reading. make_index() says in words why a zip gets none.
+Only a file of PARTS_MIN bytes or more gets an index, and only when its kind's reader finds its data areas (for a zip:
+zipfile reads its central directory, every member's local header is where the central directory says, no two members
+overlap; zip64 works through zipfile's own reading), and the index stays small: its literals at most a quarter of the
+file (LITERAL_SHARE) and LITERAL_MAX bytes, at most SEGMENTS_MAX segments, at most INDEX_MAX bytes. A 7z of one
+folder (one solid block, or one file) gets none: nothing of it could be reused alone. make_index() says why an
+archive gets none, as a reason code (reason() says it in words).
 
 A reader treats every index as untrusted input, though its hash is in the (signed) manifest: at most INDEX_MAX bytes
 compressed and JSON_MAX decompressed (the most JSON an index can have), at most SEGMENTS_MAX segments that tile
@@ -42,11 +47,15 @@ import struct
 import zipfile
 import zlib
 
+from . import layouts
+from .layouts import (WHY_ENCRYPTED, WHY_LONG_HEADER, WHY_NO_LZMA, WHY_NOT_7Z, WHY_NOT_RAR, WHY_NOT_TAR,
+                      WHY_ONE_FILE, WHY_PAX_RECORDS, WHY_PIECES, WHY_SOLID, WHY_SPARSE)
 from .manifest import HEX64
 
 FORMAT = 1
 KIND = "zip"
-PARTS_MIN = 8 << 20          # a release file this big or bigger gets a parts index, when it is a zip
+KINDS = (KIND, "tar", "7z", "rar")   # the archives an index describes: its "kind"
+PARTS_MIN = 8 << 20          # a release file this big or bigger gets a parts index, when it is an archive of KINDS
 PIECE_MIN = 1 << 10          # a member's compressed data smaller than this travels in the index, as a literal
 INDEX_MAX = 64 << 20         # an index is at most this many bytes, compressed
 SEGMENTS_MAX = 1000000       # and has at most this many segments
@@ -58,33 +67,49 @@ B64_MAX = 4 * -(-LITERAL_MAX // 3)   # the base64 of LITERAL_MAX bytes: the long
 # the comma after it), the base64 of LITERAL_MAX bytes of literals, and the rest of the object (about 153.6 MiB)
 JSON_MAX = (SEGMENTS_MAX * len('["p","%s",%s],' % ("0" * 64, "9" * NUMBER_DIGITS)) + B64_MAX
             + len('{"file":"%s","format":%d,"kind":"%s","segments":[],"size":%s}'
-                  % ("0" * 64, FORMAT, KIND, "9" * NUMBER_DIGITS)))
+                  % ("0" * 64, FORMAT, max(KINDS, key=len), "9" * NUMBER_DIGITS)))
 CHUNK = 1 << 20
 CACHE_NAME = ".deltapatcher-partscache.json"     # in a store: which blobs have an index, so publishing reads each once
 # what decides an index: a store's cache from other rules is not used
-RULES = "%s:%d:%d:%d:%d:%d" % (KIND, FORMAT, PARTS_MIN, PIECE_MIN, LITERAL_SHARE, LITERAL_MAX)
+READERS = 3                  # the readers' version: a store's cache or a members list from others is read again
+RULES = "%s:%d:%d:%d:%d:%d:readers %d" % (",".join(KINDS), FORMAT, PARTS_MIN, PIECE_MIN, LITERAL_SHARE, LITERAL_MAX,
+                                          READERS)
 
 _LOCAL = b"PK\x03\x04"
 _KINDS = ((b"Rar!\x1a\x07", "RAR"), (b"7z\xbc\xaf\x27\x1c", "7z"), (b"\x1f\x8b", "gzip"))
 # a number of more than NUMBER_DIGITS characters (digits, sign, point, exponent) where JSON has values
 _LONG_NUMBER = re.compile(rb"[:,\[][ \t\n\r]*[-+.0-9eE]{%d}" % (NUMBER_DIGITS + 1))
 
-# why a zip of PARTS_MIN bytes or more gets no index, as make_index() gives it: a short code, which a store's cache
+# why a file of PARTS_MIN bytes or more gets no index, as make_index() gives it: a short code, which a store's cache
 # keeps (with its numbers), and words for the publish warning, made from the code when it is said (reason()): new
-# words never need an archive read again
+# words never need an archive read again. The readers of layouts.py give theirs (WHY_PIECES, WHY_SOLID, ...)
+WHY_NONE = "none"           # not an archive of KINDS: nothing to say
 WHY_UNREADABLE = "unreadable"
 WHY_LAYOUT = "layout"
-WHY_PIECES = "pieces"
 WHY_TOO_BIG = "big"
 WHY_LITERAL = "literal"      # "literal:<small>:<outside>:<size>": too much would travel inside the index (_too_much())
 _WORDS = {
+    WHY_NONE: "",
     WHY_UNREADABLE: "Python's zip reader cannot open it",
     WHY_LAYOUT: "its files overlap or are not where its directory says",
     WHY_PIECES: ("it has more files than an index can hold: at most %s parts, about two for each file (so about %s "
                  "files)" % (format(SEGMENTS_MAX, ","), format(SEGMENTS_MAX // 2, ","))),
     WHY_TOO_BIG: "its index would be larger than %d MiB" % (INDEX_MAX >> 20),
+    WHY_SOLID: ("packed as one solid stream: with 7-Zip, pack it with solid mode off (-ms=off) so only the files "
+                "that changed travel"),
+    WHY_ONE_FILE: "it holds one file",
+    WHY_ENCRYPTED: "its headers are encrypted",
+    WHY_LONG_HEADER: ("a header of it is longer than %d KiB or holds more than %d pax records"
+                      % (layouts.EXT_MAX >> 10, layouts.PAX_RECORDS_MAX)),
+    WHY_PAX_RECORDS: "it holds more than %s pax records" % format(layouts.PAX_RECORDS_TOTAL, ","),
+    WHY_NO_LZMA: "this Python cannot read the 7z's packed header (no lzma)",
+    WHY_SPARSE: "it holds a sparse file",
+    WHY_NOT_TAR: "not a tar this reader knows",
+    WHY_NOT_7Z: "not a 7z this reader knows",
+    WHY_NOT_RAR: "not a RAR this reader knows",
 }
-_REASON = re.compile(r"\A(?:%s|%s:\d{1,20}:\d{1,20}:[1-9]\d{0,19})\Z" % ("|".join(_WORDS), WHY_LITERAL))
+_REASON = re.compile(r"\A(?:%s|%s:\d{1,20}:\d{1,20}:[1-9]\d{0,19})\Z"
+                     % ("|".join(map(re.escape, _WORDS)), WHY_LITERAL))
 
 
 class PartsError(ValueError):
@@ -173,9 +198,47 @@ def zip_members(f, size):
     return None if members is None else (members, start_dir)
 
 
-def layout(members, size):
-    """The segments of a zip of `size` bytes whose members are `members` (zip_members()): [(kind, start, end)], "p"
-    for a piece and "l" for a literal, neighbouring literals joined."""
+def find_layout(f, size, cancel=None):
+    """(kind, [(start, end)] its data areas, sorted, why) of the archive in the open binary file f of `size` bytes, by
+    its structure: a 7z or a RAR by their first bytes, else a tar when its first block is a tar header, else a zip
+    when zipfile reads it (layouts.py; zip_layout()). why is '' for an archive that gets an index, else a reason code:
+    with data areas for a 7z of one folder (WHY_SOLID, WHY_ONE_FILE), without them (None) for one its reader cannot
+    take apart. ('', None, WHY_NONE) for any other file. Data areas that overlap, or that run past the file, are the
+    kind's "not this kind" reason. layouts.Stopped when `cancel` (a threading.Event) is set."""
+    f.seek(0)
+    head = f.read(8)
+    if head.startswith(layouts.SEVENZIP_MAGIC):
+        kind, (ranges, why), bad = "7z", layouts.sevenzip_layout(f, size, SEGMENTS_MAX, cancel), WHY_NOT_7Z
+    elif head.startswith(layouts.RAR5_MAGIC) or head.startswith(layouts.RAR4_MAGIC):
+        kind, (ranges, why), bad = "rar", layouts.rar_layout(f, size, SEGMENTS_MAX, cancel), WHY_NOT_RAR
+    else:
+        kind, (ranges, why), bad = "tar", layouts.tar_layout(f, size, SEGMENTS_MAX, cancel), WHY_NOT_TAR
+        if ranges is None and not why:
+            members, _start_dir, why = zip_layout(f, size)
+            if members is None and why == WHY_UNREADABLE and not head.startswith(_LOCAL):
+                return "", None, WHY_NONE
+            kind, bad = "zip", WHY_LAYOUT
+            ranges = None if members is None else [(a, b) for _off, a, b in members]
+    if ranges is None:
+        return kind, None, why
+    ranges = sorted(r for r in ranges if r[1] > r[0])
+    end = 0
+    for a, b in ranges:
+        if a < end or b > size:
+            return kind, None, bad
+        end = b
+    return kind, ranges, why
+
+
+def data_ranges(f, size, cancel=None):
+    """The data areas [(start, end)] of the archive of any kind in the open binary file f of `size` bytes (a 7z of one
+    folder too); None when it is none find_layout() reads (rebuild.py looks for pieces in them)."""
+    return find_layout(f, size, cancel)[1]
+
+
+def layout(ranges, size):
+    """The segments of an archive of `size` bytes whose data areas are `ranges` (find_layout()): [(kind, start, end)],
+    "p" for a piece and "l" for a literal, neighbouring literals joined."""
     segs = []
 
     def literal(a, b):
@@ -187,44 +250,48 @@ def layout(members, size):
             segs.append(("l", a, b))
 
     pos = 0
-    for _off, start, end in members:
-        literal(pos, start)                 # a stub or a gap, then the member's local header
+    for start, end in ranges:
+        literal(pos, start)                 # a stub, a gap, or headers
         if end - start >= PIECE_MIN:
             segs.append(("p", start, end))
         else:
             literal(start, end)
         pos = end
-    literal(pos, size)                      # data descriptors, a gap, the central directory, the end records
+    literal(pos, size)                      # what is after the last data area: a directory, a header, end records
     return segs
 
 
 def make_index(path, sha, size, cancel=None):
     """(the bytes of the parts index of the file at `path` (its SHA-256 `sha`, `size` bytes), ''), or (None, why it
     gets none): '' under PARTS_MIN, else a reason code (reason() says it in words), the same for the same file
-    whenever it is asked (not a zip as zip_layout() reads one; an index that would not be small: WHY_LITERAL with its
-    numbers, WHY_PIECES, WHY_TOO_BIG). A zip with no piece at all is all literal, so WHY_LITERAL says it. Pieces are
-    hashed as the file is read once, in order. OSError when it cannot be read whole as `sha` (it changed while it was
-    read: asked again next time); Stopped when `cancel` (a threading.Event) is set."""
+    whenever it is asked (WHY_NONE for a file that is no archive of KINDS; find_layout()'s reasons, WHY_SOLID and
+    WHY_ONE_FILE for a 7z of one folder among them; an index that would not be small: WHY_LITERAL with its numbers,
+    WHY_PIECES, WHY_TOO_BIG). An archive with no piece at all is all literal, so WHY_LITERAL says it. Pieces are
+    hashed as the file is read once, in order. OSError when it cannot be read whole as `sha` (it changed while it
+    was read: asked again next time); Stopped when `cancel` (a threading.Event) is set."""
     if size < PARTS_MIN:
         return None, ""
     whole = hashlib.sha256()
     out = []
     with open(path, "rb") as f:
-        members, _start_dir, why = zip_layout(f, size)
-        if members is None:
+        try:
+            kind, ranges, why = find_layout(f, size, cancel)
+        except layouts.Stopped:
+            raise Stopped()
+        if ranges is None or why:
             return None, why
-        segs = layout(members, size)
-        literal = sum(b - a for kind, a, b in segs if kind == "l")
+        segs = layout(ranges, size)
+        literal = sum(b - a for k, a, b in segs if k == "l")
         if literal > literal_limit(size):
-            small = sum(end - start for _off, start, end in members if end - start < PIECE_MIN)
+            small = sum(end - start for start, end in ranges if end - start < PIECE_MIN)
             return None, "%s:%d:%d:%d" % (WHY_LITERAL, small, literal - small, size)
         if len(segs) > SEGMENTS_MAX:
             return None, WHY_PIECES
-        for kind, a, b in segs:
+        for k, a, b in segs:
             if cancel is not None and cancel.is_set():
                 raise Stopped()
             f.seek(a)
-            if kind == "l":
+            if k == "l":
                 data = f.read(b - a)
                 if len(data) != b - a:
                     raise OSError("it changed while it was read")
@@ -247,7 +314,7 @@ def make_index(path, sha, size, cancel=None):
             raise OSError("it changed while it was read")   # longer than `size`
     if whole.hexdigest() != sha:
         raise OSError("it changed while it was read")
-    text = json.dumps({"format": FORMAT, "kind": KIND, "file": sha, "size": size, "segments": out},
+    text = json.dumps({"format": FORMAT, "kind": kind, "file": sha, "size": size, "segments": out},
                       sort_keys=True, separators=(",", ":")).encode("ascii")
     if len(text) > JSON_MAX:
         return None, WHY_TOO_BIG
@@ -330,7 +397,7 @@ def read_index(data, entry, sized=False):
     finally:
         text = None
     if not isinstance(doc, dict) or doc.get("format") != FORMAT or isinstance(doc.get("format"), bool) \
-            or doc.get("kind") != KIND:
+            or doc.get("kind") not in KINDS:
         raise PartsError("not a parts index of format %d" % FORMAT)
     if doc.get("file") != entry.sha256:
         raise PartsError("the index of another file")
@@ -390,6 +457,16 @@ def archive_kind(path):
             return "zip"
     except OSError:
         return ""
+
+
+def solid_rar(path):
+    """The file at `path` is a solid RAR (its main header says so): each of its files is packed after the one before,
+    so a player reuses only its files before the first one that changed."""
+    try:
+        with open(path, "rb") as f:
+            return layouts.rar_solid(f, os.path.getsize(path))
+    except OSError:
+        return False
 
 
 class StoreCache(object):

@@ -49,10 +49,10 @@ const GROUPS = [
     line: 'Players get only the files\ntheir folder lacks.',
     features: [
       ['file-down', 'Only what changed', 'Players download just the files their folder lacks, files you deleted are removed (never their own), and a cut download resumes.'],
-      ['file-archive', 'Inside archives', 'A changed .pk3 or .zip downloads only the files inside it that changed, and is rebuilt byte for byte and checked.'],
+      ['file-archive', 'Inside archives', 'Changed .pk3, .zip and .tar files, and .7z or .rar packed file by file, download only the files inside that changed, rebuilt and checked.'],
       ['rotate-ccw', 'Safe updates', 'Every file is checked before it is used. A failed update is undone, and Roll back undoes the last one.'],
       ['bell', 'Updates while you play', 'It checks every hour from the tray, says what is waiting, and can update by itself.'],
-      ['folders', 'Several projects', 'Every game, mod or server you keep up to date or release, each with its own settings. Update all runs three at once.']
+      ['folders', 'Several projects', 'Every game, mod or server you keep up to date or release, each with its own settings.\nUpdate all runs three at once.']
     ]
   },
   {
@@ -61,7 +61,7 @@ const GROUPS = [
     features: [
       ['file-key', 'Project presets', 'Share projects as one .deltapatch or .html file: players open it and are set up, signed so they know it is yours. Private ones are for you.'],
       ['refresh-cw', 'Presets that follow you', 'Change a project later and players are asked before anything changes; one-off files stay possible.'],
-      ['network', 'Torrents, if you want them', 'Players can download from each other and seed, no server needed; off unless you turn it on, and anyone can refuse it.']
+      ['network', 'Torrents, if you want them', 'Players can download from each other and seed, no server needed;\noff unless you turn it on, and anyone can refuse it.']
     ]
   },
   {
@@ -146,14 +146,14 @@ body { font-family: "Segoe UI", Inter, system-ui, sans-serif; color: var(--text)
 .side .big { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center;
              background: var(--soft); color: var(--c); margin-bottom: 12px; }
 .side .label { font-size: 12px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--c); }
-.side .line { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 6px; white-space: pre-line; }
+.side .line { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 6px; white-space: pre-line; text-wrap: pretty; }
 .items { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; row-gap: 2px; padding: 10px 18px; }
 .item { display: grid; grid-template-columns: 30px 1fr; column-gap: 11px; padding: 8px 0; }
 .item.wide { grid-column: span 2; }
 .item .ic { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center;
             background: var(--soft); color: var(--c); }
 .item .t { font-weight: 600; font-size: 14px; line-height: 1.3; margin-top: 1px; }
-.item .d { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 2px; }
+.item .d { font-size: 12.5px; color: var(--muted); line-height: 1.45; margin-top: 2px; white-space: pre-line; text-wrap: pretty; }
 `
 
 function arrow(both) {

@@ -3,44 +3,39 @@
 # and a failure on one system does not stop the others.
 name: Builds
 
-# A push or pull request that changes only the files in paths-ignore builds nothing: guides, pictures, examples and
-# the tools that make the docs. A tag always builds (GitHub applies no path filter to a tag), and so does Run
+# A push or pull request builds only when it changes one of the paths below: the engine, the app, the tests, the
+# packaging, the dependencies, the tools this workflow runs, or this file. Anything else (guides, README files,
+# pictures, examples) builds nothing. A tag always builds (GitHub applies no path filter to a tag), and so does Run
 # workflow. The guides the engine carries for its MCP server are taken in by the next build.
 on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths-ignore:
-      - "**.md"
-      - "docs/images/**"
-      - "docker/**"
-      - "mcp/examples/**"
-      - "tools/features/**"
-      - "tools/readme_preview/**"
-      - "tools/capture_screens.py"
-      - "tools/make_preview.py"
-      - "tools/secret_scan.py"
-      - "tools/wiki.py"
-      - ".gitleaks.toml"
-      - ".mcp.json"
-      - ".github/workflows/codeql.yml"
-      - ".github/workflows/secret-scan.yml"
+    paths:
+      - "deltapatcher/**"
+      - "app/**"
+      - "tests/**"
+      - "packaging/**"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - "tools/version.py"
+      - "tools/make_icon.py"
+      - "tools/ci_annotate.py"
+      - "tools/release_files.py"
+      - ".github/workflows/build.yml"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/images/**"
-      - "docker/**"
-      - "mcp/examples/**"
-      - "tools/features/**"
-      - "tools/readme_preview/**"
-      - "tools/capture_screens.py"
-      - "tools/make_preview.py"
-      - "tools/secret_scan.py"
-      - "tools/wiki.py"
-      - ".gitleaks.toml"
-      - ".mcp.json"
-      - ".github/workflows/codeql.yml"
-      - ".github/workflows/secret-scan.yml"
+    paths:
+      - "deltapatcher/**"
+      - "app/**"
+      - "tests/**"
+      - "packaging/**"
+      - "requirements*.txt"
+      - "pyproject.toml"
+      - "tools/version.py"
+      - "tools/make_icon.py"
+      - "tools/ci_annotate.py"
+      - "tools/release_files.py"
+      - ".github/workflows/build.yml"
   workflow_dispatch:
 
 permissions:

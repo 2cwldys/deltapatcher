@@ -26,12 +26,8 @@
   <a href="https://github.com/2cwldys/deltapatcher/raw/main/docs/images/app-projects.png"><img src="docs/images/app-projects.png" alt="The DeltaPatcher app: every project at a glance" width="880"></a>
 </p>
 
-DeltaPatcher sends only what changed, down to the files inside an archive. A changed `.pk3`, `.zip`, `.tar`, `.7z`
-or `.rar` of 8 MiB or more (smaller ones come whole) is rebuilt from the files inside it the player already has:
-only the files inside it that changed travel, and the result is checked byte for byte. A `.7z` or `.rar` packed
-solid patches less, or not at all ([Big archives](docs/PUBLISHING.md#big-archives)). Any other changed file (a map,
-a texture pack, an executable) is fetched again whole, an unchanged one never is, and two identical files are
-stored once.
+To DeltaPatcher, every file (a map, a texture pack, an executable) is bytes with a SHA-256 hash: a changed file
+is fetched again, an unchanged one never is, and two identical files are stored once.
 
 ## Features
 
@@ -48,14 +44,13 @@ flowchart LR
   C -->|update: only<br/>what changed| E["Players' folders"]
 ```
 
-1. **Release** hashes every file and writes a *store*: `manifest.json` lists every file, and `blobs/` holds each
-   distinct file once, named by its SHA-256. A big archive (`.pk3`, `.zip`, `.tar`, `.7z`, `.rar`) also gets a
-   small index of the pieces it is made of; with *Repack archives so they patch inside* on, a `.tar.gz`, `.gz` or
-   solid `.7z` is first packed again one file at a time so it gets one too.
+1. **Release** hashes every file and writes a *store*: `manifest.json` lists every file, and `blobs/` holds
+   each distinct file once, named by its SHA-256. A big archive also gets a small index of the files inside
+   it, so an update fetches only the ones that changed.
 2. It sends the store to your server, missing files first and the manifest last, so players never see
    half a release.
-3. **Update** compares a player's folder with the manifest, downloads what it lacks (of a changed archive, only
-   the files inside it that changed), checks it, and swaps it in with a journal and a rollback copy.
+3. **Update** compares a player's folder with the manifest, downloads what it lacks, checks it, and swaps
+   it in with a journal and a rollback copy.
 
 ## Get it
 
@@ -103,14 +98,9 @@ Step by step, on the [wiki](https://github.com/2cwldys/deltapatcher/wiki):
 
 ## Limitations
 
-- `.gz` and `.tar.gz` files are fetched whole when they change (publishing warns about big ones), and so is a `.7z`
-  packed as one solid block, unless the project turns on *Repack archives so they patch inside*: each release then
-  packs them again one file at a time, and players get DeltaPatcher's packing of them, usually a little bigger. A
-  solid `.rar` reuses only its files before the first one that changed. Only `.pk3`, `.zip` and other zip archives,
-  `.tar`, `.7z` and `.rar` (and repacked `.gz`, `.tar.gz` and `.7z`) of 8 MiB or more (smaller ones come whole) are
-  rebuilt from the files inside them, over http(s), and publishing says why when a big one cannot be. A rebuilt
-  archive needs a web server that answers Range requests: every real one does, and without it the whole file comes.
-  From a folder or by torrent alone, a changed archive comes whole.
+- Not every archive patches inside: a `.gz`, `.tar.gz` or solid `.7z` needs *Repack archives so they patch inside*,
+  a solid `.rar` patches only up to its first changed file, and an archive under 8 MiB, or from a folder or a
+  torrent, comes whole ([Big archives](docs/PUBLISHING.md#big-archives)).
 - SFTP uploads report progress per batch of files, not per byte, and a blob whose upload was cut is sent
   again whole (downloads resume; uploads do not).
 - Publishing the same files with the same project details keeps the manifest as it was; publish when

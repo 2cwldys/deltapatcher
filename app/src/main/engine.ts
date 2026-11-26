@@ -34,7 +34,7 @@ const ALLOWED_OPTIONS = new Set([
   '--path', '--accept', '--forget', '--app', '--project', '--all', '--jobs', '--yes', '--out', '--only', '--folder',
   '--as-is', '--days', '--files', '--notes', '--updates', '--no-updates', '--as-new', '--not-now', '--expect', '--seed',
   '--torrent', '--private', '--publish-src', '--signing-key', '--ssh-key', '--deploy-folder', '--host-key-fingerprints',
-  '--as-player', '--apply-older'
+  '--as-player', '--apply-older', '--repack-archives', '--no-repack-archives'
 ])
 
 function repoRoot(): string {

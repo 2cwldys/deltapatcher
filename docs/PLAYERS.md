@@ -49,8 +49,12 @@ A big `.pk3` or `.zip` that changed is not downloaded again whole either: DeltaP
 inside it you already have, and downloads only the files inside it that changed. **Check**, the **Update** page and
 the **Projects** page show that smaller amount (`2 archives rebuilt from what is here: 1.4 GB whole.`). The rebuilt
 archive is checked byte for byte, like every download, and when anything does not work out it is downloaded whole
-instead. Other archives (`.rar`, `.7z`, `.tar.gz`) are downloaded whole when they change, and so is every archive
-updated from a folder or by torrent alone: the rebuild needs the publisher's web address.
+instead. An archive the publisher cannot have patched inside (a `.tar.gz`, `.gz` or solid `.7z` they did not have
+repacked, or one of another kind) is downloaded whole when it changes, and so is every archive updated from a
+folder or by torrent alone: the rebuild needs the publisher's web address. A repacked archive needs nothing of you:
+its files are the publisher's, packed by DeltaPatcher, and every tool opens it (a repacked `.gz` is an ordinary
+gzip of one member). When the publisher turns repacking on or off, each archive it touches comes whole once: the
+copy you have is the other packing.
 
 - **Check** tells you what an update would change, without changing anything.
 - **Roll back** puts back exactly what the last update replaced or removed, if a new release causes a

@@ -47,7 +47,7 @@ ENTRY = {"title", "source_url", "trust_key", "description", "website", "install_
 # the private part, section by section, exactly
 PART = {
     "publish": {"name", "version", "protect", "leave_out", "sign", "htaccess", "share_updates", "show_files",
-                "signing_public_key"},
+                "signing_public_key", "repack_archives"},
     "server": {"deploy_mode", "ssh_host", "ssh_user", "ssh_port", "remote_root", "public_url", "access_log",
                "host_keys"},
     "torrent": {"torrent", "torrent_id", "torrent_name", "seeds"},
@@ -229,7 +229,8 @@ class AllowList(Base):
         text = read(out).decode("utf-8")
 
         found = presets.read(out)
-        self.assertEqual((found["version"], found["private"], found["signer"]), (4, True, self.public))
+        # every setting is the other way from its default here: repacking is on, so the file is version 5
+        self.assertEqual((found["version"], found["private"], found["signer"]), (5, True, self.public))
         self.assertIn('"private": true', text.split(presets.DATA_OPEN)[1][:200])     # at the top
         entry = found["projects"][0]
         self.assertLessEqual(set(entry), ENTRY)                                       # what a public file holds

@@ -7,10 +7,11 @@ files with the same name, version, rules and project details keep the manifest a
 release also adds a line to the store's history.jsonl, for statistics (stats.py); that file stays on
 this computer.
 
-A release file of parts.PARTS_MIN bytes or more that is a zip, tar, 7z or RAR (found by its structure, never by its
-name) gets a parts index, parts/<sha256 of the index>, named by its manifest entry's "parts" (parts.py): an update then
-rebuilds it from the files inside it the player already has. Each blob is indexed once (the store's
-.deltapatcher-partscache.json remembers the answer), and an index already in the store is not written again. A big
+A release file of parts.PARTS_MIN bytes or more that is a zip, tar, 7z, RAR or gz (a gzip repack.py wrote; found by
+its structure, never by its name) gets a parts index, parts/<sha256 of the index>, named by its manifest entry's
+"parts" (parts.py): an update then rebuilds it from the files inside it the player already has. Each blob is
+indexed once (the store's .deltapatcher-partscache.json remembers the answer), and an index already in the store
+is not written again. A big
 archive DeltaPatcher cannot patch inside is published as any file is, with one warning line: an archive of those kinds
 that gets no index with why (ZIP_WARNING), a gzip with what would let it be (WHOLE_WARNING). A solid RAR that gets an
 index is said once too, not as a warning: players reuse only its files before the first one that changed (SOLID_LINE).
@@ -23,7 +24,7 @@ import json
 import os
 import shutil
 
-from . import hashing, parts, signing
+from . import hashing, layouts, parts, repack, signing
 from .manifest import (BLOB_DIR, HEX64, MANIFEST_NAME, PARTS_DIR, PREVIOUS_NAME, Entry, Manifest, ManifestError,
                        check_path, rule_matches)
 from .torrent import pause
@@ -95,8 +96,15 @@ class PublishError(Exception):
 
 
 STOPPED = "stopped before the new manifest was put in place: the store serves what it did before"
-WHOLE_WARNING = ("Warning: %s (%s) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that "
-                 "changed inside it travel.")
+WHOLE_WARNING = ("Warning: %s (%s) is sent whole whenever it changes: turn on Repack archives so they patch inside "
+                 "(repack_archives) and each release packs it again one file at a time, so only what changed inside "
+                 "it travels.")
+# a solid 7z repacking would take, while it is off: in place of the reason's words (parts.reason(WHY_SOLID))
+SOLID_REPACK = ("packed as one solid stream: turn on Repack archives so they patch inside (repack_archives) and each "
+                "release packs it again one file at a time, or pack it with 7-Zip's solid mode off (-ms=off), so only "
+                "the files that changed travel")
+REPACKED_LINE = "repacked %s to patch inside: %s, then %s (%s)"
+REPACK_UNREAD = "could not read %s to repack it (%s): players get it whole this time"
 # a big zip, tar, 7z or RAR that gets no parts index: why, in words made from make_index's reason code (parts.reason())
 ZIP_WARNING = "Warning: %s (%s) is sent whole whenever it changes: %s."
 SOLID_LINE = ("%s is a solid RAR: players reuse only its files before the first one that changed (packed with solid "
@@ -118,13 +126,28 @@ class PublishResult(object):
         self.parts = 0           # files of the release with a parts index
         self.solid = []          # of those, the solid RARs: only their files before the first that changed are reused
         self.warnings = []       # one line for each big archive DeltaPatcher cannot patch inside
+        self.repacked = []       # [{path, from_bytes, to_bytes}]: the archives repacked to patch inside
 
     def summary(self):
         return ("%d files (%s), %d distinct; %d new blobs (%s) copied, %d pruned"
                 % (self.files, human(self.bytes), self.blobs, self.new_blobs, human(self.new_bytes), self.pruned)
                 + ("; %d with a parts index" % self.parts if self.parts else "")
                 + (" (%d of them a solid RAR, reused only up to its first changed file)" % len(self.solid)
-                   if self.solid else ""))
+                   if self.solid else "")
+                + ("; %d archive%s repacked to patch inside, %s" % (len(self.repacked),
+                                                                   "" if len(self.repacked) == 1 else "s",
+                                                                   self.growth()) if self.repacked else ""))
+
+    def growth(self):
+        """How much bigger (+) or smaller (-) the repacked archives are than the archives published, in all."""
+        return growth({"from_bytes": sum(r["from_bytes"] for r in self.repacked),
+                       "to_bytes": sum(r["to_bytes"] for r in self.repacked)})
+
+
+def growth(r):
+    """How much bigger (+) or smaller (-) a repacked archive is ({from_bytes, to_bytes}): "+3.1 MB", "-12.0 KB"."""
+    n = r["to_bytes"] - r["from_bytes"]
+    return ("-" if n < 0 else "+") + human(abs(n))
 
 
 def human(n):
@@ -311,8 +334,52 @@ def _parts_of(store, blob, sha, size, pcache, cancel):
     return name, ""
 
 
+def _repacked(store, full, sha, rcache, pcache, cancel):
+    """(the sha256 of the repacked blob of the archive at `full` (its SHA-256 `sha`), how many bytes of it are new in
+    the store, '', whether it came from the store's repack cache) when it is repacked: from that cache, or now, into
+    the store's blobs with its parts index; (None, 0, why it is not, False) otherwise: '' for a file repacking is not
+    for, else a code of repack.NotRepacked, kept in the cache unless it is this computer's (repack.transient()).
+    OSError when it cannot be read whole as `sha`; PublishError(STOPPED) on a stop."""
+    known = rcache.get(sha)
+    blob_dir = os.path.join(store, BLOB_DIR)
+    if known and HEX64.match(known) and os.path.isfile(os.path.join(blob_dir, known)):
+        return known, 0, "", True
+    if known and not HEX64.match(known):
+        return None, 0, known, False
+    if not repack.candidate(full, os.path.getsize(full)):
+        return None, 0, "", False
+    tmp = os.path.join(blob_dir, sha + ".repack.part")
+    try:
+        try:
+            repack.repack(full, tmp, cancel)
+        except repack.NotRepacked as e:
+            if not repack.transient(e.code):
+                rcache.put(sha, e.code)
+            return None, 0, e.code, False
+        except layouts.Stopped:
+            raise PublishError(STOPPED)
+        rsha, rsize = hashing.sha256_file(tmp)
+        if hashing.sha256_file(full)[0] != sha:
+            raise OSError("it changed while it was repacked")
+        index, _why = _parts_of(store, tmp, rsha, rsize, pcache, cancel)
+        if index is None:
+            rcache.put(sha, repack.WHY_NO_GAIN)
+            return None, 0, repack.WHY_NO_GAIN, False
+        blob = os.path.join(blob_dir, rsha)
+        new = 0
+        if not os.path.isfile(blob):
+            os.replace(tmp, blob)
+            new = rsize
+        rcache.put(sha, rsha)
+        return rsha, new, "", False
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+
+
 def publish(src, store, name="", version="", protect=None, prune=True, progress=None, log=None,
-            signer=None, htaccess=True, leave_out=None, cancel=None, project=None, extra=None):
+            signer=None, htaccess=True, leave_out=None, cancel=None, project=None, extra=None,
+            repack_archives=False):
     """Publish the folder `src` into `store`. Returns a PublishResult.
 
     progress(done, total, label) and log(text) are optional callbacks. `cancel`: an optional threading.Event;
@@ -327,6 +394,8 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
     `extra`: called as extra(store, manifest bytes, signature bytes or None) once the release's blobs and signature
     are in the store and before its manifest is put in place (the release's torrent and item: torrent/release.py).
     A seed run seeding the store pauses while the manifest changes (torrent/pause.py).
+    `repack_archives`: a big .tar.gz, .gz or solid .7z that gets no parts index as it is is repacked so it patches
+    inside (repack.py), and the repacked archive is what the release holds; the folder published is never written.
     """
     log = log or (lambda s: None)
     progress = progress or (lambda d, t, l: None)
@@ -361,12 +430,31 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
 
     cache = hashing.HashCache(os.path.join(store, HASH_CACHE))
     pcache = parts.StoreCache(os.path.join(store, parts.CACHE_NAME))
+    rcache = repack.Cache(os.path.join(store, repack.CACHE_NAME)) if repack_archives else None
+    sources = set()             # the archives as published, repacked or asked about
     entries = []
     total = len(rels)
     for i, rel in enumerate(rels):
         full = os.path.join(src, *rel.split("/"))
         progress(i, total, rel)
         sha = cache.hash(src + "|" + rel, full)
+        rwhy = ""
+        if rcache is not None:
+            sources.add(sha)
+            try:
+                rsha, new, rwhy, cached = _repacked(store, full, sha, rcache, pcache, cancel)
+            except OSError as e:
+                rsha = None
+                log(REPACK_UNREAD % (rel, e.strerror or e))
+            if rsha:
+                res.new_blobs += 1 if new else 0
+                res.new_bytes += new
+                res.repacked.append({"path": rel, "from_bytes": os.path.getsize(full),
+                                     "to_bytes": os.path.getsize(os.path.join(blob_dir, rsha))})
+                r = res.repacked[-1]
+                log(REPACKED_LINE % (rel, human(r["from_bytes"]), human(r["to_bytes"]), growth(r))
+                    + (" (as before)" if cached else ""))
+                sha = rsha
         blob = os.path.join(blob_dir, sha)
         if not os.path.isfile(blob):
             tmp = blob + ".part"
@@ -390,7 +478,13 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
             index, why = None, ""
             log(UNREAD_LINE % (rel, e.strerror or e))
         entries.append(Entry(rel, sha, size, index))
-        if index is None and why and why != parts.WHY_NONE:
+        if rwhy:
+            res.warnings.append(ZIP_WARNING % (rel, human(size), repack.words(rwhy)))
+        elif index is None and why == layouts.WHY_SOLID and rcache is None:
+            problem = repack.coder_problem(blob, size)
+            res.warnings.append(ZIP_WARNING % (rel, human(size), repack.words(problem) if problem.startswith(
+                repack.WHY_CODER) else SOLID_REPACK))
+        elif index is None and why and why != parts.WHY_NONE:
             res.warnings.append(ZIP_WARNING % (rel, human(size), parts.reason(why)))
         elif index is None and why == parts.WHY_NONE and parts.archive_kind(blob) == "gzip":
             res.warnings.append(WHOLE_WARNING % (rel, human(size)))
@@ -398,6 +492,9 @@ def publish(src, store, name="", version="", protect=None, prune=True, progress=
             res.solid.append(rel)
     progress(total, total, "")
     cache.save()
+    if rcache is not None:
+        rcache.keep_only(sources)
+        rcache.save()
     for line in res.warnings:
         log(line)
     for rel in res.solid:

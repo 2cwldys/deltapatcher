@@ -997,17 +997,20 @@ class Publishing(Base):
                          ["data/a.tar", "data/b.7z", "data/c.rar", "data/d.rar", "data/m.zip"])
         size = {n: publish.human(len(d)) for n, d in archives.items()}
         self.assertEqual(res.warnings, [
-            "Warning: data/e.7z (%s) is sent whole whenever it changes: packed as one solid stream: with 7-Zip, pack "
-            "it with solid mode off (-ms=off) so only the files that changed travel." % size["e.7z"],
+            "Warning: data/e.7z (%s) is sent whole whenever it changes: packed as one solid stream: turn on Repack "
+            "archives so they patch inside (repack_archives) and each release packs it again one file at a time, or "
+            "pack it with 7-Zip's solid mode off (-ms=off), so only the files that changed travel." % size["e.7z"],
             "Warning: data/f.7z (%s) is sent whole whenever it changes: its headers are encrypted." % size["f.7z"],
             "Warning: data/g.rar (%s) is sent whole whenever it changes: its headers are encrypted." % size["g.rar"],
             "Warning: data/h.tar (%s) is sent whole whenever it changes: it holds a sparse file." % size["h.tar"],
             "Warning: data/i.7z (%s) is sent whole whenever it changes: not a 7z this reader knows." % size["i.7z"],
-            "Warning: data/j.tar.gz (%s) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files "
-            "that changed inside it travel." % size["j.tar.gz"],
+            "Warning: data/j.tar.gz (%s) is sent whole whenever it changes: turn on Repack archives so they patch "
+            "inside (repack_archives) and each release packs it again one file at a time, so only what changed "
+            "inside it travels." % size["j.tar.gz"],
             "Warning: data/n.7z (%s) is sent whole whenever it changes: it holds one file." % size["n.7z"],
-            "Warning: data/o.7z (%s) is sent whole whenever it changes: packed as one solid stream: with 7-Zip, pack "
-            "it with solid mode off (-ms=off) so only the files that changed travel." % size["o.7z"]])
+            "Warning: data/o.7z (%s) is sent whole whenever it changes: packed as one solid stream with BCJ2, which "
+            "repacking does not decode: with 7-Zip, pack it with solid mode off (-ms=off) so only the files that "
+            "changed travel." % size["o.7z"]])
         self.assertEqual(res.solid, [])
 
     def test_no_lzma_is_never_kept_in_a_stores_cache(self):
@@ -1046,10 +1049,12 @@ class Publishing(Base):
         doc = json.loads(read(cache))
         sha = self.manifest().files["data/maps.rar"].sha256
         self.assertEqual(doc["rules"], parts.RULES)
-        self.assertTrue(parts.RULES.startswith("zip,tar,7z,rar:"))
+        self.assertTrue(parts.RULES.startswith("zip,tar,7z,rar,gz:"))
         self.assertTrue(parts.RULES.endswith(":readers %d" % parts.READERS))
         for i, rules in enumerate(("zip:1:8388608:1024:4:50331648", "zip,tar,7z,rar:1:8388608:1024:4:50331648",
-                                   "zip,tar,7z,rar:1:8388608:1024:4:50331648:readers 2")):
+                                   "zip,tar,7z,rar:1:8388608:1024:4:50331648:readers 2",
+                                   "zip,tar,7z,rar:1:8388608:1024:4:50331648:readers 3",
+                                   "zip,tar,7z,rar,gz:1:8388608:1024:4:50331648:readers 3")):
             write(cache, json.dumps({"format": 1, "rules": rules, "blobs": {sha: layouts.WHY_NOT_RAR}}).encode("utf-8"))
             with mock.patch.object(parts, "make_index", wraps=parts.make_index) as made:
                 res = self.release(str(2 + i))

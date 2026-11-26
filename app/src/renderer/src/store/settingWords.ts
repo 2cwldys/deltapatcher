@@ -41,6 +41,7 @@ export const WORDS: Record<string, SettingWords> = {
   serve_port: { label: 'Port on this computer', line: 'The port for This computer, to test.', more: true },
   share_updates: { label: 'Players follow this project', line: 'Releases carry its details; players are asked before a change.' },
   show_files: { label: 'Show players the file names', line: 'Which files a release adds, changes and removes.' },
+  repack_archives: { label: 'Repack archives so they patch inside', line: '.tar.gz, .gz and solid .7z packed again one file at a time.' },
   // Server
   deploy_mode: { label: 'Where players get it', line: 'sftp (your server), folder, or local (this computer).' },
   ssh_host: { label: 'Host', line: "The server's address." },

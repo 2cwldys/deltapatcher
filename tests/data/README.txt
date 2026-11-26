@@ -16,3 +16,16 @@ b.bin is 1600 other random bytes; the other three are the same. The files' times
 
 RAR 7 no longer writes RAR4 archives; the RAR4 tests use the writer in tests/test_layouts.py. The password of the
 two encrypted archives is "fixture": they are only ever read as far as their headers.
+
+For tests/test_repack.py (repacking), made the same day with 7-Zip 22.00 and GNU gzip 1.10 (Git for Windows), from
+a.bin (3000 random bytes), b.bin (3100), sub/c.txt ("hello" and a line end, 30 times), an empty file empty.txt and an
+empty folder empty_dir:
+
+  7z-solid-lzma2.7z   7z a -t7z -ms=on -mf=off -m0=LZMA2 <archive> *   (one solid folder; the header LZMA encoded)
+  7z-solid-ppmd.7z    the same with -m0=PPMd: a coder repacking does not decode
+  7z-solid-bcj2.7z    7z a -t7z -ms=on -mf=BCJ2 <archive> *            (BCJ2: four packed streams, not decoded)
+  7z-solid-bcj-lzma.7z     7z a -t7z -ms=on -mf=BCJ -m0=LZMA <archive> *     (a branch filter over LZMA)
+  7z-solid-arm-lzma.7z     the same with -mf=ARM
+  7z-solid-sparc-lzma.7z   the same with -mf=SPARC
+  7z-solid-deflate.7z      7z a -t7z -ms=on -mf=off -m0=Deflate <archive> *  (the test damages it byte by byte)
+  gnu.tar.gz          tar -cf fx.tar a.bin b.bin sub empty.txt, then gzip -9 -n -c fx.tar

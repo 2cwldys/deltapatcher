@@ -1330,7 +1330,8 @@ class Warnings(Base):
         self.assertEqual(rc, 0, ev[-1])
         # a RAR or 7z this reader cannot take apart says so, as a zip does; a gzip keeps what would let it patch inside
         why = {"maps.rar": "not a RAR this reader knows.", "pack.7z": "not a 7z this reader knows.",
-               "music.tar.gz": "pack it as .zip or .pk3 so only the files that changed inside it travel."}
+               "music.tar.gz": "turn on Repack archives so they patch inside (repack_archives) and each release "
+                               "packs it again one file at a time, so only what changed inside it travels."}
         lines = ["Warning: data/%s (%s) is sent whole whenever it changes: %s" % (name, publish.human(big), why[name])
                  for name in sorted(kinds)]
         self.assertEqual(ev[-1]["data"]["warnings"], lines)

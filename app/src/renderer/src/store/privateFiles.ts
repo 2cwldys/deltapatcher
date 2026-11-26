@@ -16,6 +16,7 @@ export interface PrivatePart {
   share_updates: boolean
   show_files: boolean
   signing_public_key: string
+  repack_archives?: boolean
   deploy_mode: string
   ssh_host: string
   ssh_user: string

@@ -100,24 +100,24 @@ such as a passphrase with `--passphrase-stdin`. The full list is at the top of `
   outside node that reaches it, so integrity never depends on it: every item is signed and every file
   hashed. libtorrent's own check of a seeded file is not used (it misses a file changed in place): the
   engine hashes, and tells libtorrent which pieces it has.
-- **Two types of project file: public for players, private for the publisher.** Exporting one asks its type
-  first. A public file is what players need, as it always was. A private file (version 4, `"private": true`) is
-  the same signed page with one more part per project: what releasing it needs, as an allow-list of settings
-  (`presets.PRIVATE_FIELDS`, so a setting added later never slips in) and the server's host keys this computer
-  trusts; never a path of the computer that made it, a key, a passphrase or anything that is each computer's own
-  choice (where it seeds from, when it backs up). It is always signed with the projects' signing key, which moves
-  by hand (a USB stick, never chat or email): the file alone cannot release anything. Opening it sets up releasing
-  on that computer with its own folders and key files, or updates in place the project that computer releases with
-  the very key the file is signed with (`presets.private_match()`: never by the key a player trusts, so a private
-  file can never change a player's project; one of its name whose key is not known yet is named, never updated),
-  after showing what changes. A file made before the one applied (`project_file_made`, which an export records too),
-  or that same file again, is applied only when the person says so: the two times come from two computers' clocks,
-  so both are shown. The server's host keys are added only with the person's yes, and only while that computer
-  trusts no key for that server. A signing key that is not the file's is refused, at the first release when it has
-  a passphrase (`signing_public_key` remembers which key that is; an export records it too). Every text in a
-  project file is one line (a public file's line and paragraph separators read as spaces), and settings files end a
-  line at `\r\n`, `\r` or `\n` only. The MCP server makes and sets up none: they need the passphrase or the person's
-  yes.
+- **Two types of project file: public for players, private for the publisher.** Exporting one asks its type first.
+  A public file is what players need, as it always was. A private file (version 4, `"private": true`; version 5
+  when a project in it repacks archives, with `repack_archives` in its private part) is the same signed page with
+  one more part per project: what releasing it needs, as an allow-list of settings (`presets.PRIVATE_FIELDS`, so a
+  setting added later never slips in) and the server's host keys this computer trusts; never a path of the computer
+  that made it, a key, a passphrase or anything that is each computer's own choice (where it seeds from, when it
+  backs up). It is always signed with the projects' signing key, which moves by hand (a USB stick, never chat or
+  email): the file alone cannot release anything. Opening it sets up releasing on that computer with its own
+  folders and key files, or updates in place the project that computer releases with the very key the file is
+  signed with (`presets.private_match()`: never by the key a player trusts, so a private file can never change a
+  player's project; one of its name whose key is not known yet is named, never updated), after showing what
+  changes. A file made before the one applied (`project_file_made`, which an export records too), or that same file
+  again, is applied only when the person says so: the two times come from two computers' clocks, so both are shown.
+  The server's host keys are added only with the person's yes, and only while that computer trusts no key for that
+  server. A signing key that is not the file's is refused, at the first release when it has a passphrase
+  (`signing_public_key` remembers which key that is; an export records it too). Every text in a project file is one
+  line (a public file's line and paragraph separators read as spaces), and settings files end a line at `\r\n`,
+  `\r` or `\n` only. The MCP server makes and sets up none: they need the passphrase or the person's yes.
 - **Players seed from a copy, by default.** A player's seeding reads a copy of the release kept for
   seeding, laid out like a store (`deltapatcher/torrent/seedcopy.py`), not the game folder: the game's
   files are not held open while it seeds (Windows refuses to replace an open file), so updates never wait
@@ -226,6 +226,8 @@ as possible without becoming hard to use.
     shows it, publish warns about the big archives sent whole. Phase B: `.tar`, `.7z` and `.rar` by their layout,
     their packed data copied byte for byte (`deltapatcher/layouts.py`), with no extra server space and no RAR or 7z
     compressor used or bundled; a 7z of one solid block stays whole, a solid RAR reuses only its unchanged start.
-    Phase C (next): `.tar.gz`/`.gz` and fully solid `.7z`, by repacking to the exact same bytes, which needs the
-    server to keep the files inside them too: a per-project switch on the Release page, off by default. Each phase
-    takes the archives it rebuilds off the publish warning.
+    Phase C: `.tar.gz`, `.gz` and solid `.7z`, repacked at release when the project's switch is on (`repack_archives`,
+    on the Release page, off by default; `deltapatcher/repack.py`): the files inside stay the same, players get
+    DeltaPatcher's packing (a gzip of one member, a full flush after each file and a "DP" segment table in its
+    header, read as the kind `gz`; a 7z of one folder for each file), deterministic, with no extra server space and nothing recompressed on the
+    player's side. Each phase takes the archives it rebuilds off the publish warning.

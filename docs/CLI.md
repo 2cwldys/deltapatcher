@@ -73,6 +73,7 @@ fingerprints, commands), and its teal for the progress bar.
 deltapatcher release [SRC] [--version VERSION] [--name NAME] [--leave-out PATH]... [--protect PATH]... [--sign [KEYFILE]]
                      [--to sftp|folder|local] [--to-folder FOLDER] [--host HOST] [--user USER] [--port 22] [--key KEYFILE]
                      [--remote-root PATH] [--dry-run] [--no-htaccess] [--no-prune]
+                     [--repack-archives | --no-repack-archives]
 ```
 
 Publish the folder, then send it where players download it from, in one step: what `publish` and then
@@ -100,6 +101,7 @@ saved `public_url`, the address players update from.
 
 ```
 deltapatcher publish [SRC] [STORE] [--name NAME] [--version VERSION] [--leave-out PATH]... [--protect PATH]... [--sign [KEYFILE]] [--no-htaccess] [--no-prune]
+                     [--repack-archives | --no-repack-archives]
 ```
 
 Hash the folder `SRC` and write the store `STORE` (`manifest.json`, `blobs/`, `parts/`, `sigs/`, `.htaccess`),
@@ -111,13 +113,19 @@ A file of 8 MiB or more that is a zip, tar, 7z or RAR gets a parts index, so pla
 it that changed ([Big archives](PUBLISHING.md#big-archives)); the summary ends with how many did (`; 3 with a parts
 index`), and a solid RAR among them gets one plain line: players reuse only its files before the first one that
 changed. A big archive that cannot be patched inside gets one line. A gzip file: `Warning: data/music.tar.gz (1.2
-GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that changed inside it travel.` A
-zip, tar, 7z or RAR that gets no index, with why: `Warning: data/sounds.pk3 (9.6 MB) is sent whole whenever it
-changes: 100% of it would travel inside its index, more than a quarter: its files under 1 KiB (89%) and the bytes
-outside its files (11%).` (every reason, and what helps: [Troubleshooting](TROUBLESHOOTING.md#publishing)). An
-archive that cannot be read while it is indexed is no warning but one plain line, and the next publish reads it
-again: `could not read data/x.pk3 to index it (Permission denied): players get it whole this time`. With `--json`,
-the result's data has `"parts"` (the count) and `"warnings"` (the warning lines).
+GB) is sent whole whenever it changes: turn on Repack archives so they patch inside (repack_archives) and each
+release packs it again one file at a time, so only what changed inside it travels.` With the setting
+`repack_archives` on (or `--repack-archives`; `--no-repack-archives` for one release without it), a big `.tar.gz`,
+`.gz` or solid `.7z` is repacked one file at a time when it is released, players get the repacked archive, and the
+summary ends with how many and how much bigger (`; 2 archives repacked to patch inside, +3.1 MB`); one that is not
+repacked says why in its line. A zip, tar, 7z or RAR that gets no index, with why: `Warning: data/sounds.pk3 (9.6
+MB) is sent whole whenever it changes: 100% of it would travel inside its index, more than a quarter: its files
+under 1 KiB (89%) and the bytes outside its files (11%).` (every reason, and what helps:
+[Troubleshooting](TROUBLESHOOTING.md#publishing)). An archive that cannot be read while it is indexed is no warning
+but one plain line, and the next publish reads it again: `could not read data/x.pk3 to index it (Permission
+denied): players get it whole this time`. With `--json`, the result's data has `"parts"` (the count), `"warnings"`
+(the warning lines) and `"repacked"` (`[{"path", "from_bytes", "to_bytes"}]`: each archive repacked, its size as
+published and as repacked).
 
 | Option | |
 | --- | --- |
@@ -127,6 +135,8 @@ the result's data has `"parts"` (the count) and `"warnings"` (the warning lines)
 | `--protect PATH` | A file or folder inside SRC that players keep once they have it, such as their settings. Repeat it for more; patterns work too. Without it: the saved `protect` list. |
 | `--sign [KEYFILE]` | Sign the release (optional). Without a file: the settings file's `signing_key`, else the default key. Asks the key's passphrase. |
 | `--no-htaccess` | Do not write the `.htaccess` for Apache |
+| `--repack-archives` | Repack big `.tar.gz`, `.gz` and solid `.7z` files one file at a time so they patch inside ([Big archives](PUBLISHING.md#big-archives)). Without it: the saved setting `repack_archives` (off unless you turn it on) |
+| `--no-repack-archives` | Leave every archive as it is, whatever the saved setting says |
 | `--no-prune` | Keep blobs, parts indexes and signatures no manifest names any more |
 
 ## serve

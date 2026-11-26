@@ -473,9 +473,11 @@ def cmd_publish(a, cfg):
     version = a.version if a.version is not None else cfg["version"]
     shared, made = torrent_release(a, cfg, signer)
     details = publisher.release_object(project_of(a), cfg, signing.public_key_text(signer) if signer else "", notes, say)
+    repack_archives = cfg["repack_archives"] if a.repack_archives is None else a.repack_archives
     res = publish.publish(src, store, name, version, rules["protect"], prune=not a.no_prune,
                           progress=OUT.progress, log=say, signer=signer, htaccess=not a.no_htaccess,
-                          leave_out=rules["leave out"], cancel=USER_CANCEL, project=details, extra=shared)
+                          leave_out=rules["leave out"], cancel=USER_CANCEL, project=details, extra=shared,
+                          repack_archives=bool(repack_archives))
     OUT.end()
     if signer is None:
         say("Not signed. Players can check who made a release when you publish with --sign.", "warn")
@@ -483,7 +485,7 @@ def cmd_publish(a, cfg):
             "new_bytes": res.new_bytes, "pruned": res.pruned, "signed": signer is not None,
             "left_out": res.left_out, "store": os.path.abspath(store), "summary": res.summary(),
             "details": publisher.has_details(details), "show_files": details["show_files"], "notes": notes,
-            "parts": res.parts, "warnings": res.warnings}
+            "parts": res.parts, "warnings": res.warnings, "repacked": res.repacked}
     if made:
         data["torrent"] = made[-1]
     return data
@@ -2696,6 +2698,11 @@ def build_parser():
                         help="sign the release (optional; default key: the saved one, else %s)"
                              % signing.default_key_path())
         sp.add_argument("--no-htaccess", action="store_true", help="do not write the .htaccess for Apache")
+        sp.add_argument("--repack-archives", dest="repack_archives", action="store_true", default=None,
+                        help="repack .tar.gz, .gz and solid .7z files one file at a time so they patch inside "
+                             "(default: the saved setting repack_archives)")
+        sp.add_argument("--no-repack-archives", dest="repack_archives", action="store_false",
+                        help="leave every archive as it is")
         sp.add_argument("--no-prune", action="store_true", help="keep blobs no release names")
         sp.add_argument("--notes", metavar="TEXT", help="what is new in this release, for players: plain text, at most "
                                                         "%d characters, shown with the files that changed"

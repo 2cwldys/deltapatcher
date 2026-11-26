@@ -10,8 +10,9 @@ index bytes:
     {"format": 1, "kind": "zip", "file": "<sha256 of the file>", "size": <file size>,
      "segments": [["l", "<base64 bytes>"], ["p", "<sha256>", <size>], ...]}
 
-"kind" is the archive's (KINDS): zip, tar, 7z or rar, found by its structure, never by its name (find_layout()). The
-segments, in order, cover every byte of the file exactly once: each starts where the one before ended.
+"kind" is the archive's (KINDS): zip, tar, 7z, rar or gz (a gzip repack.py wrote), found by its structure, never by
+its name (find_layout()). The segments, in order, cover every byte of the file exactly once: each starts where the
+one before ended.
   "p"  a piece: the packed data of a file in the archive, a data area: a zip member's compressed data
        ([data_start, data_start + compress_size), data_start read from that member's own local header: 30 bytes,
        then its name and its local extra field, which can differ from the central one), a tar member's data, a 7z
@@ -54,7 +55,7 @@ from .manifest import HEX64
 
 FORMAT = 1
 KIND = "zip"
-KINDS = (KIND, "tar", "7z", "rar")   # the archives an index describes: its "kind"
+KINDS = (KIND, "tar", "7z", "rar", "gz")   # the archives an index describes: its "kind" ("gz": repack.py's gzip)
 PARTS_MIN = 8 << 20          # a release file this big or bigger gets a parts index, when it is an archive of KINDS
 PIECE_MIN = 1 << 10          # a member's compressed data smaller than this travels in the index, as a literal
 INDEX_MAX = 64 << 20         # an index is at most this many bytes, compressed
@@ -71,7 +72,7 @@ JSON_MAX = (SEGMENTS_MAX * len('["p","%s",%s],' % ("0" * 64, "9" * NUMBER_DIGITS
 CHUNK = 1 << 20
 CACHE_NAME = ".deltapatcher-partscache.json"     # in a store: which blobs have an index, so publishing reads each once
 # what decides an index: a store's cache from other rules is not used
-READERS = 3                  # the readers' version: a store's cache or a members list from others is read again
+READERS = 4                  # the readers' version: a store's cache or a members list from others is read again
 RULES = "%s:%d:%d:%d:%d:%d:readers %d" % (",".join(KINDS), FORMAT, PARTS_MIN, PIECE_MIN, LITERAL_SHARE, LITERAL_MAX,
                                           READERS)
 
@@ -200,8 +201,9 @@ def zip_members(f, size):
 
 def find_layout(f, size, cancel=None):
     """(kind, [(start, end)] its data areas, sorted, why) of the archive in the open binary file f of `size` bytes, by
-    its structure: a 7z or a RAR by their first bytes, else a tar when its first block is a tar header, else a zip
-    when zipfile reads it (layouts.py; zip_layout()). why is '' for an archive that gets an index, else a reason code:
+    its structure: a 7z or a RAR by their first bytes, a gzip repack.py wrote by its header's segment table (a plain
+    gzip is none of these), else a tar when its first block is a tar header, else a zip when zipfile reads it
+    (layouts.py; zip_layout()). why is '' for an archive that gets an index, else a reason code:
     with data areas for a 7z of one folder (WHY_SOLID, WHY_ONE_FILE), without them (None) for one its reader cannot
     take apart. ('', None, WHY_NONE) for any other file. Data areas that overlap, or that run past the file, are the
     kind's "not this kind" reason. layouts.Stopped when `cancel` (a threading.Event) is set."""
@@ -211,6 +213,10 @@ def find_layout(f, size, cancel=None):
         kind, (ranges, why), bad = "7z", layouts.sevenzip_layout(f, size, SEGMENTS_MAX, cancel), WHY_NOT_7Z
     elif head.startswith(layouts.RAR5_MAGIC) or head.startswith(layouts.RAR4_MAGIC):
         kind, (ranges, why), bad = "rar", layouts.rar_layout(f, size, SEGMENTS_MAX, cancel), WHY_NOT_RAR
+    elif head.startswith(layouts.GZIP_MAGIC):
+        kind, (ranges, why), bad = "gz", layouts.gz_layout(f, size, SEGMENTS_MAX, cancel), WHY_NONE
+        if ranges is None and not why:
+            return "", None, WHY_NONE        # a plain gzip
     else:
         kind, (ranges, why), bad = "tar", layouts.tar_layout(f, size, SEGMENTS_MAX, cancel), WHY_NOT_TAR
         if ranges is None and not why:

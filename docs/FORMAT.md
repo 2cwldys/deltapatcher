@@ -108,16 +108,17 @@ later), or version 3 when a project in it is shared by torrent: that project's e
 have no address (it updates by torrent only). A file is written with the lowest version its contents need,
 and a DeltaPatcher asks to be updated for a version newer than it reads.
 
-A private project file, the publisher's own (to keep releasing a project from another computer), is version 4:
-`"private": true` at the top, beside `"updates"`, and every project's entry has one more part, `"private"`, what
-releasing it needs. It must be signed, with the signing key every private part names; an unsigned file, one
-signed with another key, version 4 without `"private": true`, and a public file with a private part are refused.
-The private part has four sections, each holding exactly these fields, each the setting of the same name (a field
-missing or unknown is refused, never passed over):
+A private project file, the publisher's own (to keep releasing a project from another computer), is version 4
+(version 5 when a project in it repacks archives, below: its `publish` section then also has `repack_archives`; a
+version 4 file leaves it out, and means it is off): `"private": true` at the top, beside `"updates"`, and every
+project's entry has one more part, `"private"`, what releasing it needs. It must be signed, with the signing key
+every private part names; an unsigned file, one signed with another key, version 4 without `"private": true`, and a
+public file with a private part are refused. The private part has four sections, each holding exactly these fields,
+each the setting of the same name (a field missing or unknown is refused, never passed over):
 
 | Section | Fields |
 | --- | --- |
-| `publish` | `name`, `version` (text), `protect`, `leave_out` (paths inside the folder released and patterns, separated by `;`: never a drive, a leading `/`, `\` or `~`, a `:` or a `..`), `sign`, `htaccess`, `share_updates`, `show_files` (true or false), `signing_public_key` (`ed25519:...`: the key the file is signed with) |
+| `publish` | `name`, `version` (text), `protect`, `leave_out` (paths inside the folder released and patterns, separated by `;`: never a drive, a leading `/`, `\` or `~`, a `:` or a `..`), `sign`, `htaccess`, `share_updates`, `show_files` (true or false), `signing_public_key` (`ed25519:...`: the key the file is signed with); from version 5, `repack_archives` (true or false) |
 | `server` | `deploy_mode` (`sftp`, `folder` or `local`), `ssh_host` (a host name or address, or empty), `ssh_user` (a user name, or empty), `ssh_port` (1 to 65535), `remote_root` (a path on the server), `public_url` (an http(s) address, or empty), `access_log` (only with `sftp`: a path on the server), `host_keys` (at most 16 `{"type", "key"}`: a key type OpenSSH knows, and the key in base64, which names that type; only with `ssh_host`) |
 | `torrent` | `torrent` (true or false; true needs a torrent id, and the entry's `"torrent"` then has the same id), `torrent_id` (32 hex characters, or empty), `torrent_name` (a torrent's name, or empty), `seeds` (`host:port`, separated by commas) |
 | `backup` | `backup_keep_daily`, `backup_keep_weekly`, `backup_keep_monthly` (0 to 100000), `backup_max_size` (a size such as `10 GB`, or empty); never `backup_every_hours`: when backups are made is each computer's own |
@@ -180,6 +181,7 @@ before the header, no more folders than packed streams):
 | `tar` | its first 512-byte block is a tar header: its checksum right (the unsigned sum of its bytes, or the signed sum some old writers made) and a type this reader knows, or the ustar or GNU magic; ustar, GNU and pax (a file that begins with a zero block is no tar) | each regular file's data (types `0`, NUL and `7`), its size from its header (octal, or GNU base-256) or from the pax `size` record before it | header blocks, pax and GNU extension blocks (a pax global header is allowed and never applied; a long name or link is skipped, never decoded), the padding to 512, the end blocks and whatever follows them |
 | `7z` | its signature `37 7A BC AF 27 1C`, version 0, and the CRCs of its start header and its header | every packed stream, at 32 + PackPos plus the sizes of the ones before it | the signature header, any gap, the header at the end: plain, or encoded with LZMA or LZMA2 (decoded with Python's lzma, its CRC checked) together with that encoded header's own packed stream |
 | `rar` | its signature, RAR5 `52 61 72 21 1A 07 01 00` or RAR4 `52 61 72 21 1A 07 00`, and every header's CRC, as rarlab.com documents both formats | the data area of each file and service block; a volume of a set is a file of its own, and a file continued from the volume before is a piece of each | the marker, every header, the end of archive, any gap |
+| `gz` | a gzip of one member whose header has FEXTRA with exactly one subfield, `DP`, the segment table DeltaPatcher's repacking writes (below): version 1, at most 16,000 segments, each at least 1 byte, together the whole deflate stream; any other gzip is a plain one and gets no index; nothing is inflated to read it | each segment of the deflate stream (1 KiB or more) | the header (with its table, FNAME, FCOMMENT), the small segments, CRC32 and ISIZE |
 
 A file gets no index when its kind's reader cannot take it apart (zip: zipfile cannot read its central directory, a
 member's local header is not where the central directory says, two members overlap; tar: a header whose checksum
@@ -197,6 +199,35 @@ KiB and every byte outside them) more than a quarter of the file or more than 48
 (or a tar of more than 1,000,000 headers), or more than 64 MiB. Publishing says which in its warning. A solid RAR
 gets an index: each of its files has its own data area, but a changed file changes the packed bytes of every file
 after it, so only an unchanged run from its start is reused.
+
+With the project setting `repack_archives` (off by default), publishing first repacks a `.tar.gz`, `.gz` or solid
+`.7z` of 8 MiB or more that gets no index as it is, and the repacked archive is the release's file (its blob, its
+`sha256` and `size` in the manifest), whatever its size, as long as it gets an index; the files inside stay byte
+for byte the same. A gzip becomes a gzip of ONE member (RFC 1952), which every gzip reader reads whole: its header
+has the original's MTIME, OS, FNAME and FCOMMENT (from its first member), XFL 2, and FEXTRA (FLG bit 2) with one
+subfield, `DP`, whose data is the segment table: a version byte, 1; the count of segments, 4 bytes; then the length
+of each segment's deflate bytes, 4 bytes each; little endian (at most 16,000 segments: 64,005 bytes). Then one
+deflate stream (zlib at level 9, a 15-bit window, memory level 8, the default strategy) with a full flush
+(`Z_FULL_FLUSH`: the dictionary reset, the stream on a byte boundary) after every segment, so a segment's bytes
+depend on its own content alone, and the last segment finishing the stream; then the CRC32 and ISIZE of the whole
+content. The table is written in place, one seek back, once the stream is done. The segments: when the gzip holds a
+tar the tar walk reads, each tar member's data, and each run of the bytes between them (padding, headers, the end
+blocks); else the content cut where the sum, over the 64 bytes before the cut, of a fixed table of 256 numbers (the
+first 4 bytes, little endian, of the SHA-256 of `DeltaPatcher chunk <n>`) has its low 20 bits zero, 256 KiB to 4
+MiB a chunk. Each segment is at most 1 GiB of content (longer ones are cut); past 16,000 segments, neighbours are
+merged, the two of fewest bytes first, until it fits (a merged segment is reused only when all its files are
+unchanged). The repacked gzip is read back before it is used: a single-member reader must read it to its end with
+nothing after it, to the original's length and SHA-256, and each segment must inflate on its own. A solid 7z (one
+folder of several files) whose coders are Copy, LZMA, LZMA2, BCJ (x86, PowerPC, IA64, ARM, ARMT, SPARC), Delta,
+Deflate or BZip2 becomes a 7z of one folder for each file, each LZMA2 at preset 6 with a dictionary of 16 MiB (or
+the file's size when smaller), each file's CRC in kSubStreamsInfo, the original header's archive properties and
+file list (names, times, attributes, empty files and folders, anti-items, in their order) copied as they are, its
+header plain or LZMA-encoded as the original's was; it is read back, and every file checked against the original's
+size and CRC, before it is used. The same archive gives the same bytes on every computer with the same zlib and
+liblzma, and the store's repack cache (`.deltapatcher-repackcache.json`, with the rules it was made by) maps the
+archive's SHA-256 to its repacked blob's, or to why it was not repacked (never a reason of the computer: too little
+space or memory, a module its Python lacks), so it is repacked once. Repacking decodes at most 16 GiB of an archive
+and keeps 256 MiB free on the store's drive.
 
 An index has at most 161,109,005 bytes of JSON (`JSON_MAX`, the most one can have: 1,000,000 segments as long as a
 piece's can be, 94 characters with its comma, the base64 of 48 MiB of literals, and the rest of the object);

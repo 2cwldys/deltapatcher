@@ -51,6 +51,7 @@ except ImportError:                         # a Python built without it: an enco
     lzma = None
 
 SEVENZIP_MAGIC = b"7z\xbc\xaf\x27\x1c"
+GZIP_MAGIC = b"\x1f\x8b"
 RAR5_MAGIC = b"Rar!\x1a\x07\x01\x00"
 RAR4_MAGIC = b"Rar!\x1a\x07\x00"
 HEADER_KEEP = 32 << 20      # of a 7z header, the first bytes kept to read its packed streams (all of it is CRC-checked)
@@ -257,6 +258,62 @@ def _tar(f, size, most, cancel):
     return ranges
 
 
+# ---- gz: a gzip DeltaPatcher repacked (repack.py) --------------------------------------------------------------------
+
+GZ_TAIL = 8                 # after the deflate stream: CRC32 and ISIZE
+SEGMENTS_GZ = 16000         # a repacked gzip's table has at most this many segments
+_GZ_FLAGS = 0x1F            # FTEXT, FHCRC, FEXTRA, FNAME, FCOMMENT: the flags a gzip header may have
+
+
+def gz_layout(f, size, most, cancel=None):
+    """The data areas of a gzip repack.py wrote: one member whose header has FEXTRA with exactly one subfield, "DP":
+    a version byte (1), the count of segments (4 bytes) and the deflate length of each (4 bytes; little endian),
+    each at least 1, at most SEGMENTS_GZ of them, together the whole deflate stream (the file less its header and the
+    8 bytes of CRC32 and ISIZE). Each segment is a data area; the header and the trailer are the rest. Nothing is
+    inflated. (None, '') for any other gzip (a plain one); WHY_PIECES past `most` segments."""
+    try:
+        return _gz(f, size, most, cancel), ""
+    except _Reason as r:
+        return None, r.code
+    except _Bad:
+        return None, ""
+
+
+def _gz(f, size, most, cancel):
+    head = _read_at(f, 0, 12)
+    flags = head[3]
+    if head[:3] != b"\x1f\x8b\x08" or not flags & 0x04 or flags & ~_GZ_FLAGS:
+        raise _Bad()
+    xlen = struct.unpack("<H", head[10:12])[0]
+    extra = _read_at(f, 12, xlen)
+    if xlen < 9 or extra[:2] != b"DP" or struct.unpack("<H", extra[2:4])[0] != xlen - 4 or extra[4] != 1:
+        raise _Bad()                            # one subfield, "DP", filling the extra field; version 1
+    count = struct.unpack("<I", extra[5:9])[0]
+    if not 0 < count <= SEGMENTS_GZ or xlen != 9 + 4 * count:
+        raise _Bad()
+    if count > most:
+        raise _Reason(WHY_PIECES)
+    lengths = struct.unpack("<%dI" % count, extra[9:])
+    pos = 12 + xlen
+    for bit in (0x08, 0x10):                    # FNAME, FCOMMENT: up to a NUL, 64 KiB at most each
+        if flags & bit:
+            text = _read_at(f, pos, min(1 << 16, size - pos))
+            end = text.find(b"\0")
+            if end < 0:
+                raise _Bad()
+            pos += end + 1
+    if flags & 0x02:
+        pos += 2                                # FHCRC
+    if min(lengths) < 1 or sum(lengths) != size - pos - GZ_TAIL:
+        raise _Bad()
+    ranges = []
+    for i, n in enumerate(lengths):
+        _stop(cancel, i + 1)
+        ranges.append((pos, pos + n))
+        pos += n
+    return ranges
+
+
 # ---- 7z -------------------------------------------------------------------------------------------------------------
 
 _END, _HEADER, _ARCHIVE_PROPERTIES, _ADDITIONAL_STREAMS, _MAIN_STREAMS = 0x00, 0x01, 0x02, 0x03, 0x04
@@ -458,8 +515,8 @@ def _filters(method, props, size):
     raise _Reason(WHY_NOT_7Z)
 
 
-def _decoded(f, at, packed, folder, cancel):
-    """The start (HEADER_KEEP bytes at most) of the header an encoded header's folder decodes to, its CRC checked: its
+def _decoded(f, at, packed, folder, cancel, keep=HEADER_KEEP):
+    """The start (`keep` bytes at most) of the header an encoded header's folder decodes to, its CRC checked: its
     packed stream read and decoded a CHUNK at a time, refused before anything is decoded when it says it decodes to
     more than HEADER_MAX or more than HEADER_RATIO times its packed size."""
     coders, sizes, crc = folder
@@ -494,15 +551,15 @@ def _decoded(f, at, packed, folder, cancel):
             raise _Bad()                    # nothing in and nothing out, twice: it goes nowhere
         got += len(chunk)
         check = zlib.crc32(chunk, check)
-        if len(head) < HEADER_KEEP:
-            head += chunk[:HEADER_KEEP - len(head)]
+        if len(head) < keep:
+            head += chunk[:keep - len(head)]
     if crc is not None and check != crc:
         raise _Bad()
     return bytes(head)
 
 
-def _header_start(f, at, n, cancel):
-    """The start (HEADER_KEEP bytes at most) of the n header bytes at `at`, and the CRC32 of all of them."""
+def _header_start(f, at, n, cancel, keep=HEADER_KEEP):
+    """The start (`keep` bytes at most) of the n header bytes at `at`, and the CRC32 of all of them."""
     head = bytearray()
     check = steps = 0
     f.seek(at)
@@ -514,8 +571,8 @@ def _header_start(f, at, n, cancel):
         if not chunk:
             raise _Bad()
         check = zlib.crc32(chunk, check)
-        if len(head) < HEADER_KEEP:
-            head += chunk[:HEADER_KEEP - len(head)]
+        if len(head) < keep:
+            head += chunk[:keep - len(head)]
         left -= len(chunk)
     return bytes(head), check
 

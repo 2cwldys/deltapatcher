@@ -78,6 +78,11 @@ SCHEMA = [
                                     "(or exported from it here) was made (UTC): an older one, or that one again, is "
                                     "applied only when you say so."),
     ("publish", "htaccess", True, "Write a .htaccess for Apache into the store (yes/no)."),
+    ("publish", "repack_archives", False, "Repack archives so they patch inside (yes/no): .tar.gz, .gz and solid "
+                                          ".7z files are packed again one file at a time when you release, so an "
+                                          "update downloads only what changed inside them. The files inside stay "
+                                          "the same; the archive players get is DeltaPatcher's packing of them, "
+                                          "usually a little bigger."),
     ("publish", "serve_port", 8000, "The port of 'Serve locally'."),
     ("publish", "share_updates", True, "Each release carries this project's details (its name, description, website, "
                                        "where it goes, the address players update from and its publisher key), and "

@@ -73,26 +73,66 @@ inside less, or not at all:
   Publishing says so in one line (`data/maps.rar is a solid RAR: ...`, not a warning). Without `-s` (or with
   `-s-`), every file that did not change is reused.
 
-Other big archives are released as any file is, and sent whole whenever they change: gzip (`.gz`, `.tar.gz`), and
-an archive DeltaPatcher cannot index. Publishing says so once for each, in its log and on the **Release** page;
-for a zip, tar, 7z or RAR, the line says why:
+**Repacking.** *Repack archives so they patch inside* (on the **Release** page beside *Show players the file
+names*; the setting `repack_archives`, off by default): .tar.gz, .gz and solid .7z files are packed again one file
+at a time when you release, so an update downloads only what changed inside them. The files inside stay the same;
+the archive players get is DeltaPatcher's packing of them, and every tool still opens it. Your folder is never
+written: the repacked archive is what goes into the store, with its small parts index, and the store's repack cache
+remembers it, so an unchanged archive is not repacked again (and gives the same bytes on every computer). What it
+does, for each kind of 8 MiB or more that gets no index as it is:
+
+- a `.tar.gz` or `.tgz`: a gzip of the same tar, each file inside packed on its own within one gzip member, so
+  every gzip reader (gzip, `tar -xzf`, 7-Zip, Python, .NET) reads it as the ordinary gzip it is, with the
+  original's name and time (but Python's `tarfile` in stream mode, `r|gz` or `r|*`, cannot read a gzip with an
+  FEXTRA field, any such gzip, a bug of CPython's; `r:gz`, `r:*` and the `gzip` module read it);
+- a `.gz` of anything else: cut where its content says (about every MiB), each piece packed on its own: an edit
+  downloads the pieces it touched;
+- a solid `.7z`: a 7z of the same files, names, times and attributes, one block for each file, packed with LZMA2.
+  It is read back and checked before it is used. 7-Zip's Copy, LZMA, LZMA2, Deflate, BZip2, Delta and BCJ filters
+  are repacked; BCJ2 (7-Zip's default for programs at its highest levels), PPMd, AES and other coders are not, and
+  the warning names the coder.
+
+The cost in size: packing each file on its own loses what files share. With files that pack on their own (textures,
+sounds, levels) the repacked archive is about the same size (measured: a `.tar.gz` of 40 files 0.5% to 1% smaller,
+a solid `.7z` 0.4% bigger). An archive of many small, similar files can come out several times bigger, because each
+file is packed on its own (past 16,000 files, a few neighbours together): a `.tar.gz` of 150,000 JSON files of 6 KB
+that share most of their text came out 5 times bigger (14,934,462 bytes, then 74,315,500). It is repacked whatever
+its size, as long as it then gets an index; when most of its files are too small to be pieces even a few together,
+it is left as it is (180,000 JSON files of 1.9 KB, a `.tar.gz` of 8.4 MB: `repacked, it would still get no parts
+index`). The log gives each archive's growth (`repacked data/units.tar.gz to patch inside: 14.2 MB, then 70.9 MB
+(+56.6 MB)`) and the summary the growth in all (`1 archive repacked to patch inside, +56.6 MB`).
+
+The cost in time, at the first release that repacks an archive (measured on a desktop computer): zlib at level 9
+packs about 40 MB/s, LZMA2 at preset 6 about 7 MB/s, and cutting a `.gz` where its content says reads about 5 MB/s;
+a 1 GB `.tar.gz` takes a minute or so, a 1 GB solid `.7z` a few minutes. Later releases take it from the store's
+repack cache (the log says `(as before)`) until the archive changes.
+
+Players need nothing: a repacked archive is an ordinary file with a parts index; DeltaPatchers before this one
+download it whole. Turning repacking on or off makes players download each archive it touches whole once (the copy
+they have is the other packing); after that, only what changes. A game that reads a `.gz` itself gets an ordinary
+one-member gzip.
+
+Other big archives are released as any file is, and sent whole whenever they change: gzip (`.gz`, `.tar.gz`) and
+solid `.7z` while the switch is off, and an archive DeltaPatcher cannot index. Publishing says so once for each, in
+its log and on the **Release** page; for a zip, tar, 7z or RAR, the line says why, and for one repacking would
+take, what the switch does:
 
 ```
-Warning: data/music.tar.gz (1.2 GB) is sent whole whenever it changes: pack it as .zip or .pk3 so only the files that changed inside it travel.
+Warning: data/music.tar.gz (1.2 GB) is sent whole whenever it changes: turn on Repack archives so they patch inside (repack_archives) and each release packs it again one file at a time, so only what changed inside it travels.
 Warning: data/sounds.pk3 (9.6 MB) is sent whole whenever it changes: 100% of it would travel inside its index, more than a quarter: its files under 1 KiB (89%) and the bytes outside its files (11%).
-Warning: data/maps.7z (300.0 MB) is sent whole whenever it changes: packed as one solid stream: with 7-Zip, pack it with solid mode off (-ms=off) so only the files that changed travel.
+Warning: data/maps.7z (300.0 MB) is sent whole whenever it changes: packed as one solid stream with BCJ2, which repacking does not decode: with 7-Zip, pack it with solid mode off (-ms=off) so only the files that changed travel.
 ```
 
-Nothing is blocked, and players see nothing of it. To make a gzip archive patch inside, pack it as a `.zip`, a
-`.pk3` or a plain `.tar` instead (for a game that reads only `.gz`, leave it: it still updates, whole). A zip, tar,
-7z or RAR gets no index when more than a quarter of it, or more than 48 MiB, would travel inside the index (its
-files under 1 KiB and the bytes outside its files, together), when its reader cannot take it apart (a zip whose
-files overlap or are not where its directory says, or that Python's zip reader cannot open; a 7z, RAR or tar this
-reader does not know), when its headers are encrypted (a 7z made with `-mhe`, a RAR with `-hp`), when a 7z is one
-solid block or holds one file, when a tar holds a sparse file, a header longer than 64 KiB (a pax header or a GNU
-long name), a pax header of more than 256 records or more than 4,000,000 pax records in all, when a 7z's header is
-packed and the Python running DeltaPatcher has no lzma, when it has more files than an index can hold (1,000,000
-parts, about two for each file: about 500,000 files), or when its index would be larger than 64 MiB;
+Nothing is blocked, and players see nothing of it. To make a gzip archive patch inside without repacking, pack it
+as a `.zip`, a `.pk3` or a plain `.tar` instead (for a game that reads only `.gz`, leave it, or turn on repacking).
+A zip, tar, 7z or RAR gets no index when more than a quarter of it, or more than 48 MiB, would travel inside the
+index (its files under 1 KiB and the bytes outside its files, together), when its reader cannot take it apart (a
+zip whose files overlap or are not where its directory says, or that Python's zip reader cannot open; a 7z, RAR or
+tar this reader does not know), when its headers are encrypted (a 7z made with `-mhe`, a RAR with `-hp`), when a 7z
+is one solid block or holds one file, when a tar holds a sparse file, a header longer than 64 KiB (a pax header or
+a GNU long name), a pax header of more than 256 records or more than 4,000,000 pax records in all, when a 7z's
+header is packed and the Python running DeltaPatcher has no lzma, when it has more files than an index can hold
+(1,000,000 parts, about two for each file: about 500,000 files), or when its index would be larger than 64 MiB;
 [Troubleshooting](TROUBLESHOOTING.md#publishing) says what helps for each (for files under 1 KiB, nothing: it still
 updates, whole). An archive that cannot be read while its index is made gets no warning but one plain line (`could
 not read data/x.pk3 to index it (...): players get it whole this time`), and the next publish reads it again.

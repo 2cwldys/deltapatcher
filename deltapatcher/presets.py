@@ -38,6 +38,10 @@ or a passphrase: whoever opens it gives their own folders and key files, and the
 always signed with its projects' signing key, which every private part names (signing_public_key); an unsigned
 one is refused. A file without a private part is never version 4, and DeltaPatchers before version 4 say a
 private file was made by a newer DeltaPatcher.
+
+Version 5 is a private project file whose private parts also say whether archives are repacked to patch inside
+(repack_archives): a file is version 5 only when one of its projects repacks them; otherwise it is version 4,
+without that setting, which means it is off. DeltaPatchers before version 5 say it was made by a newer one.
 """
 
 import base64
@@ -54,7 +58,7 @@ from . import REPO, __version__, config, projects, signing, ssh
 from .source import DEFAULT_URL
 
 FORMAT = "deltapatcher-preset"
-VERSION = 4                     # the newest version read and written; a file without anything new is version 1
+VERSION = 5                     # the newest version read and written; a file without anything new is version 1
 EXTENSIONS = (".deltapatch", ".html", ".htm")
 LIMIT = 1 << 20
 MAX_PROJECTS = 100
@@ -72,7 +76,7 @@ PRIVATE_FIELD = "private"           # version 4: what releasing a project needs 
 # (backup_every_hours): that is each computer's own, as its backup folder is.
 PRIVATE_FIELDS = (
     ("publish", ("name", "version", "protect", "leave_out", "sign", "htaccess", "share_updates", "show_files",
-                 "signing_public_key")),
+                 "signing_public_key", "repack_archives")),
     ("server", ("deploy_mode", "ssh_host", "ssh_user", "ssh_port", "remote_root", "public_url", "access_log",
                 "host_keys")),
     ("torrent", ("torrent", "torrent_id", "torrent_name", "seeds")),
@@ -85,6 +89,7 @@ PRIVATE_LABELS = {
     "name": "the release's name", "version": "the release's version", "protect": "the files players keep",
     "leave_out": "the files left out", "sign": "signed releases", "htaccess": ".htaccess for Apache",
     "share_updates": "players follow it", "show_files": "file names shown to players",
+    "repack_archives": "archives repacked to patch inside",
     "signing_public_key": "the signing key", "deploy_mode": "where releases go", "ssh_host": "the server",
     "ssh_user": "the login name", "ssh_port": "the SSH port", "remote_root": "the folder on the server",
     "public_url": "the address players update from", "access_log": "the access log",
@@ -212,9 +217,10 @@ def _whole(value, low, high):
     return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
 
 
-def private_problem(part, e):
+def private_problem(part, e, version=VERSION):
     """What is wrong with the private part of a project file's project e ('' when nothing), field by field: exactly
-    the fields of PRIVATE_FIELDS, each of its kind; unknown ones are refused, never passed over."""
+    the fields of PRIVATE_FIELDS (repack_archives only from version 5), each of its kind; unknown ones are refused,
+    never passed over."""
     from . import backup, torrent
     if not isinstance(part, dict) or set(part) != set(s for s, _f in PRIVATE_FIELDS):
         return "its sections"
@@ -225,6 +231,8 @@ def private_problem(part, e):
             if "access_log" in given:
                 return "the access log: only for releases sent to a server over SFTP (elsewhere it is a path of a computer)"
             wanted.discard("access_log")
+        if section == "publish" and version < 5:
+            wanted.discard("repack_archives")
         if not isinstance(given, dict) or set(given) != wanted:
             return "the fields of %s missing or unknown" % section
     p, s, t, b = part["publish"], part["server"], part["torrent"], part["backup"]
@@ -234,8 +242,8 @@ def private_problem(part, e):
     for k in ("protect", "leave_out"):
         if rules_problem(p[k]):
             return "%s: %s" % (PRIVATE_LABELS[k], rules_problem(p[k]))
-    for k in ("sign", "htaccess", "share_updates", "show_files"):
-        if not isinstance(p[k], bool):
+    for k in ("sign", "htaccess", "share_updates", "show_files", "repack_archives"):
+        if k in p and not isinstance(p[k], bool):
             return "%s: yes or no" % PRIVATE_LABELS[k]
     try:
         if not isinstance(p["signing_public_key"], str) or \
@@ -363,7 +371,7 @@ def check_data(data):
         if version >= 4:
             if PRIVATE_FIELD not in e:
                 bad("%s has no private part" % e["title"])
-            problem = private_problem(e[PRIVATE_FIELD], e)
+            problem = private_problem(e[PRIVATE_FIELD], e, version)
             if problem:
                 bad("the private part of %s: %s" % (e["title"], problem))
     if version >= 4 and len(set(e[PRIVATE_FIELD]["publish"]["signing_public_key"] for e in entries)) != 1:
@@ -459,7 +467,8 @@ def private_part(cfg, signer_text, log=None):
     one, a torrent name and seeds that are not right, are left as what they mean (none). build() checks the rest."""
     from . import torrent
     publish = {k: _text(cfg, k) for k in ("name", "version", "protect", "leave_out")}
-    publish.update({k: bool(cfg.get(k)) for k in ("sign", "htaccess", "share_updates", "show_files")})
+    publish.update({k: bool(cfg.get(k)) for k in ("sign", "htaccess", "share_updates", "show_files",
+                                                  "repack_archives")})
     publish["signing_public_key"] = signer_text
     mode = cfg.get("deploy_mode") if cfg.get("deploy_mode") in config.CHOICES["deploy_mode"] else "sftp"
     url = _text(cfg, "public_url")
@@ -490,6 +499,7 @@ def private_values(e, part, cfg=None):
         for k in fields:
             if k in part[section] and k != "host_keys":
                 values[k] = part[section][k]
+    values["repack_archives"] = bool(part["publish"].get("repack_archives"))   # a version 4 file: off
     if cfg is not None and "access_log" not in part["server"] and cfg.get("deploy_mode") == "sftp" and \
             _text(cfg, "access_log"):
         values["access_log"] = ""
@@ -781,11 +791,16 @@ def build(entries, signer=None, made=None, updates=False):
     """The text of a project file holding these projects (entry() makes each), signed with `signer` (a private
     signing key) when one is given. updates=True: an update capable file (version 2); otherwise version 1, which
     every DeltaPatcher reads. A file with a project shared by torrent is version 3. A private file (each project with
-    its private part: private_part()) is version 4, and must be signed with the signing key its parts name."""
+    its private part: private_part()) is version 4, and must be signed with the signing key its parts name; version 5
+    when a project of it repacks archives (version 4 parts leave that setting out: off)."""
     entries = list(entries)
     private = any(PRIVATE_FIELD in e for e in entries)
     shared = any(TORRENT_FIELD in e for e in entries)
-    data = {"format": FORMAT, "version": 4 if private else (3 if shared else (2 if updates else 1))}
+    repacks = private and any(e[PRIVATE_FIELD]["publish"].get("repack_archives") for e in entries)
+    if private and not repacks:
+        entries = [dict(e, **{PRIVATE_FIELD: dict(e[PRIVATE_FIELD], publish={
+            k: v for k, v in e[PRIVATE_FIELD]["publish"].items() if k != "repack_archives"})}) for e in entries]
+    data = {"format": FORMAT, "version": (5 if repacks else 4) if private else (3 if shared else (2 if updates else 1))}
     if private:
         data["private"] = True
     data["made"] = made or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

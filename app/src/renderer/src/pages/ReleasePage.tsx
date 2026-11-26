@@ -110,6 +110,7 @@ export async function publishRelease(): Promise<Data | null> {
     args.push(...(items.length ? items.map((p) => `${option}=${p}`) : [`${option}=`]))
   }
   if (!s.htaccess) args.push('--no-htaccess')
+  args.push(s.repack_archives ? '--repack-archives' : '--no-repack-archives')
   const notes = (st.notes[st.project] ?? '').trim()
   if (notesProblem(notes)) {
     await ask.info('The release notes are too long', notesProblem(notes))
@@ -744,6 +745,8 @@ export default function ReleasePage(): JSX.Element {
           <NotesBox />
           <SettingToggle setting="show_files" label="Show players the file names"
             hint={'Players see which files a release adds, changes and removes, and its whole list.\nThe release is public either way: off, DeltaPatcher shows them only how many.'} />
+          <SettingToggle setting="repack_archives" label="Repack archives so they patch inside"
+            hint={'.tar.gz, .gz and solid .7z files are packed again one file at a time when you release, so an update downloads only what changed inside them.\nThe files inside stay the same; the archive players get is DeltaPatcher\'s packing of them, usually a little bigger.'} />
           <TorrentPart mode={mode} />
         </div>
       </Card>

@@ -50,7 +50,8 @@ flowchart LR
 
 1. **Release** hashes every file and writes a *store*: `manifest.json` lists every file, and `blobs/` holds each
    distinct file once, named by its SHA-256. A big archive (`.pk3`, `.zip`, `.tar`, `.7z`, `.rar`) also gets a
-   small index of the pieces it is made of.
+   small index of the pieces it is made of; with *Repack archives so they patch inside* on, a `.tar.gz`, `.gz` or
+   solid `.7z` is first packed again one file at a time so it gets one too.
 2. It sends the store to your server, missing files first and the manifest last, so players never see
    half a release.
 3. **Update** compares a player's folder with the manifest, downloads what it lacks (of a changed archive, only
@@ -103,11 +104,13 @@ Step by step, on the [wiki](https://github.com/2cwldys/deltapatcher/wiki):
 ## Limitations
 
 - `.gz` and `.tar.gz` files are fetched whole when they change (publishing warns about big ones), and so is a `.7z`
-  packed as one solid block; a solid `.rar` reuses only its files before the first one that changed. Only `.pk3`,
-  `.zip` and other zip archives, `.tar`, `.7z` and `.rar` of 8 MiB or more (smaller ones come whole) are rebuilt
-  from the files inside them, over http(s), and publishing says why when a big one cannot be. A rebuilt archive
-  needs a web server that answers Range requests: every real one does, and without it the whole file comes. From a
-  folder or by torrent alone, a changed archive comes whole.
+  packed as one solid block, unless the project turns on *Repack archives so they patch inside*: each release then
+  packs them again one file at a time, and players get DeltaPatcher's packing of them, usually a little bigger. A
+  solid `.rar` reuses only its files before the first one that changed. Only `.pk3`, `.zip` and other zip archives,
+  `.tar`, `.7z` and `.rar` (and repacked `.gz`, `.tar.gz` and `.7z`) of 8 MiB or more (smaller ones come whole) are
+  rebuilt from the files inside them, over http(s), and publishing says why when a big one cannot be. A rebuilt
+  archive needs a web server that answers Range requests: every real one does, and without it the whole file comes.
+  From a folder or by torrent alone, a changed archive comes whole.
 - SFTP uploads report progress per batch of files, not per byte, and a blob whose upload was cut is sent
   again whole (downloads resume; uploads do not).
 - Publishing the same files with the same project details keeps the manifest as it was; publish when
